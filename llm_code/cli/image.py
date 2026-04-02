@@ -81,10 +81,42 @@ def capture_clipboard_image() -> ImageBlock | None:
         return None
 
 
-def detect_image_references(text: str) -> tuple[str, list[ImageBlock]]:
-    """Detect image references in text.
+_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
 
-    Currently a no-op — only the /image slash command triggers image loading.
-    Returns the original text and an empty list.
+
+def extract_dropped_images(text: str) -> tuple[str, list[ImageBlock]]:
+    r"""Detect drag-and-dropped image file paths in user input.
+
+    Terminal drag-and-drop produces paths like:
+      /Users/adam/screenshot.png
+      '/Users/adam/my screenshot.png'
+      /Users/adam/my\ screenshot.png
+
+    Returns (cleaned_text, list_of_ImageBlocks).
     """
-    return text, []
+    import shlex
+    from pathlib import Path as P
+
+    images: list[ImageBlock] = []
+    remaining_parts: list[str] = []
+
+    try:
+        tokens = shlex.split(text)
+    except ValueError:
+        tokens = text.split()
+
+    for token in tokens:
+        token = token.strip()
+        if not token:
+            continue
+        path = P(token)
+        if path.suffix.lower() in _IMAGE_EXTENSIONS and path.is_file():
+            try:
+                img = load_image_from_path(str(path))
+                images.append(img)
+            except Exception:
+                remaining_parts.append(token)
+        else:
+            remaining_parts.append(token)
+
+    return " ".join(remaining_parts), images

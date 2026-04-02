@@ -47,7 +47,6 @@ dev = [
 
 [project.scripts]
 llm-code = "llm_code.cli.tui_main:main"
-llm-code-classic = "llm_code.cli.app:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

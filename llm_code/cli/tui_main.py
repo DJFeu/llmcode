@@ -1,4 +1,4 @@
-"""Entry point for Textual TUI mode."""
+"""Entry point for llm-code TUI."""
 from __future__ import annotations
 
 import os
@@ -23,7 +23,6 @@ _PERMISSION_CHOICES = ["prompt", "auto_accept", "read_only", "workspace_write", 
 )
 @click.option("--budget", type=int, default=None, help="Token budget target")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
-@click.option("--classic", is_flag=True, help="Use classic (non-TUI) interface")
 def main(
     prompt: str | None,
     model: str | None,
@@ -32,25 +31,8 @@ def main(
     permission: str | None,
     budget: int | None,
     verbose: bool = False,
-    classic: bool = False,
 ) -> None:
-    """llm-code: AI coding assistant CLI (TUI mode)."""
-    # Fall back to classic mode if requested or if stdout is not a TTY
-    if classic or not sys.stdout.isatty():
-        from llm_code.cli.app import main as classic_main
-        ctx = click.Context(classic_main)
-        ctx.params = {
-            "prompt": prompt,
-            "model": model,
-            "api": api,
-            "api_key": api_key,
-            "permission": permission,
-            "budget": budget,
-            "verbose": verbose,
-        }
-        classic_main.invoke(ctx)
-        return
-
+    """llm-code: AI coding assistant CLI."""
     from llm_code.logging import setup_logging
     from llm_code.runtime.config import load_config
 
@@ -79,11 +61,4 @@ def main(
     from llm_code.cli.tui import LLMCodeApp
 
     app = LLMCodeApp(config=config, cwd=cwd, budget=budget)
-
-    if prompt:
-        # One-shot mode: pipe stdin if available, then run prompt
-        # For now, just run the TUI and the user will see the prompt handled
-        # TODO: true one-shot mode (run turn then exit)
-        app.run()
-    else:
-        app.run()
+    app.run()

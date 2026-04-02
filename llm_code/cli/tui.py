@@ -350,14 +350,10 @@ class LLMCodeApp(App):
     def _render_welcome(self) -> None:
         log = self.query_one("#chat-log", RichLog)
 
-        # Banner — Claude Code style
-        log.write(Text.assemble(
-            ("  \u256d\u2500 ", "cyan"),
-            ("llm-code", "bold cyan"),
-            (" \u2500\u256e", "cyan"),
-        ))
-        log.write(Text.assemble(("  \u2502             \u2502", "cyan")))
-        log.write(Text.assemble(("  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f", "cyan")))
+        # Banner
+        log.write(Text("  ╭──────────────╮", style="cyan"))
+        log.write(Text("  │   llm-code   │", style="bold cyan"))
+        log.write(Text("  ╰──────────────╯", style="cyan"))
 
         model = self._config.model or "(not set)"
         branch = _detect_git_branch(self._cwd)
