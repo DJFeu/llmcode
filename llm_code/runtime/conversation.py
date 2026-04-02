@@ -1,9 +1,13 @@
 """Core agentic conversation runtime: turn loop with streaming and tool execution."""
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, AsyncIterator
+
+from pydantic import ValidationError
 
 from llm_code.api.types import (
     Message,
@@ -11,6 +15,7 @@ from llm_code.api.types import (
     StreamEvent,
     StreamMessageStop,
     StreamTextDelta,
+    StreamToolProgress,
     StreamToolUseInputDelta,
     StreamToolUseStart,
     TextBlock,
@@ -19,6 +24,7 @@ from llm_code.api.types import (
     ToolUseBlock,
 )
 from llm_code.runtime.permissions import PermissionOutcome
+from llm_code.tools.base import PermissionLevel
 from llm_code.tools.parsing import ParsedToolCall, parse_tool_calls
 
 if TYPE_CHECKING:
@@ -27,6 +33,10 @@ if TYPE_CHECKING:
     from llm_code.runtime.prompt import SystemPromptBuilder
     from llm_code.runtime.session import Session
     from llm_code.tools.registry import ToolRegistry
+
+
+# Thread pool for running blocking tool execution off the event loop
+_TOOL_EXECUTOR = ThreadPoolExecutor(max_workers=4)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -164,11 +174,14 @@ class ConversationRuntime:
             if not parsed_calls:
                 break
 
-            # 9. Execute tools and collect results
+            # 9. Execute tools via the validate→safety→permission→progress pipeline
             tool_result_blocks: list[ToolResultBlock] = []
             for call in parsed_calls:
-                result_block = await self._execute_tool(call)
-                tool_result_blocks.append(result_block)
+                async for event in self._execute_tool_with_streaming(call):
+                    if isinstance(event, ToolResultBlock):
+                        tool_result_blocks.append(event)
+                    else:
+                        yield event  # StreamToolProgress
 
             # Add tool results as user message
             if tool_result_blocks:
@@ -183,61 +196,119 @@ class ConversationRuntime:
         # Update session usage
         self.session = self.session.update_usage(accumulated_usage)
 
-    async def _execute_tool(self, call: ParsedToolCall) -> ToolResultBlock:
-        """Authorize, run hooks, execute tool, return ToolResultBlock."""
+    async def _execute_tool_with_streaming(
+        self, call: ParsedToolCall
+    ) -> AsyncIterator[StreamEvent | ToolResultBlock]:
+        """Validate → safety → permission → run in thread → yield progress + result."""
+        # 1. Look up tool
         tool = self._tool_registry.get(call.name)
-        required_level = tool.required_permission if tool else None
+        if tool is None:
+            yield ToolResultBlock(
+                tool_use_id=call.id,
+                content=f"Unknown tool '{call.name}'",
+                is_error=True,
+            )
+            return
 
-        from llm_code.tools.base import PermissionLevel
-        if required_level is None:
-            required_level = PermissionLevel.READ_ONLY
+        # 2. Validate input
+        try:
+            validated_args = tool.validate_input(call.args)
+        except ValidationError as exc:
+            # Format Pydantic validation errors into a readable message
+            errors = exc.errors()
+            fields = ", ".join(
+                f"{'.'.join(str(loc) for loc in e['loc'])}: {e['msg']}"
+                for e in errors
+            )
+            yield ToolResultBlock(
+                tool_use_id=call.id,
+                content=f"Invalid input for tool '{call.name}': {fields}",
+                is_error=True,
+            )
+            return
 
-        outcome = self._permissions.authorize(call.name, required_level)
+        # 3. Safety analysis → effective permission level
+        if tool.is_read_only(validated_args):
+            effective = PermissionLevel.READ_ONLY
+        elif tool.is_destructive(validated_args):
+            effective = PermissionLevel.FULL_ACCESS
+        else:
+            effective = tool.required_permission
+
+        # 4. Permission check (deny/allow lists still take precedence via authorize)
+        outcome = self._permissions.authorize(
+            call.name,
+            tool.required_permission,
+            effective_level=effective,
+        )
 
         if outcome == PermissionOutcome.DENY:
-            return ToolResultBlock(
+            yield ToolResultBlock(
                 tool_use_id=call.id,
                 content=f"Permission denied for tool '{call.name}'",
                 is_error=True,
             )
+            return
 
         if outcome == PermissionOutcome.NEED_PROMPT:
-            # In this implementation, NEED_PROMPT without a UI → deny
-            return ToolResultBlock(
+            # NEED_PROMPT without a UI → deny
+            yield ToolResultBlock(
                 tool_use_id=call.id,
                 content=f"Tool '{call.name}' requires user approval (not available in this context)",
                 is_error=True,
             )
+            return
 
-        # Pre-tool hook
-        args = call.args
+        # 5. Pre-tool hook
+        args = validated_args
         hook_runner = self._hooks
         if hasattr(hook_runner, "pre_tool_use"):
             hook_result = hook_runner.pre_tool_use(call.name, args)
-            # Support both sync HookOutcome and async/dict returns
             if hasattr(hook_result, "__await__"):
                 hook_result = await hook_result
-            # If it's a HookOutcome with denied=True, deny the tool
             if hasattr(hook_result, "denied") and hook_result.denied:
-                return ToolResultBlock(
+                yield ToolResultBlock(
                     tool_use_id=call.id,
                     content=f"Tool '{call.name}' blocked by hook",
                     is_error=True,
                 )
-            # If it returned modified args (dict), use those
+                return
             if isinstance(hook_result, dict):
                 args = hook_result
 
-        # Execute the tool
-        tool_result = self._tool_registry.execute(call.name, args)
+        # 6. Execute in thread pool with asyncio.Queue progress bridge
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue()
 
-        # Post-tool hook
+        def on_progress(p):
+            loop.call_soon_threadsafe(queue.put_nowait, p)
+
+        def run_tool():
+            result = tool.execute_with_progress(args, on_progress)
+            loop.call_soon_threadsafe(queue.put_nowait, None)  # sentinel
+            return result
+
+        future = loop.run_in_executor(_TOOL_EXECUTOR, run_tool)
+
+        while True:
+            progress = await queue.get()
+            if progress is None:
+                break
+            yield StreamToolProgress(
+                tool_name=progress.tool_name,
+                message=progress.message,
+                percent=progress.percent,
+            )
+
+        tool_result = await future
+
+        # 7. Post-tool hook
         if hasattr(hook_runner, "post_tool_use"):
             post_result = hook_runner.post_tool_use(call.name, args, tool_result)
             if hasattr(post_result, "__await__"):
                 await post_result
 
-        return ToolResultBlock(
+        yield ToolResultBlock(
             tool_use_id=call.id,
             content=tool_result.output,
             is_error=tool_result.is_error,
