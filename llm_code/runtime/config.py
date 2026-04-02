@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from pydantic import BaseModel, ValidationError, field_validator
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,49 @@ class RuntimeConfig:
     skills_dirs: tuple[str, ...] = ()
     lsp_servers: dict = field(default_factory=dict)
     lsp_auto_detect: bool = True
+
+
+class ConfigSchema(BaseModel):
+    """Pydantic schema for validating the merged config dict before conversion."""
+
+    model: str = ""
+    provider: dict = {}
+    permissions: dict = {}
+    model_routing: dict = {}
+    vision: dict = {}
+    hooks: list = []
+    mcpServers: dict = {}
+    lspServers: dict = {}
+    registries: dict = {}
+    lsp_auto_detect: bool = True
+    max_turn_iterations: int = 10
+    max_tokens: int = 4096
+    temperature: float = 0.7
+    compact_after_tokens: int = 80000
+    native_tools: bool = True
+
+    @field_validator("temperature")
+    @classmethod
+    def temp_range(cls, v: float) -> float:
+        if not 0.0 <= v <= 2.0:
+            raise ValueError("temperature must be between 0.0 and 2.0")
+        return v
+
+    @field_validator("max_tokens")
+    @classmethod
+    def tokens_positive(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("max_tokens must be positive")
+        return v
+
+    @field_validator("max_turn_iterations")
+    @classmethod
+    def iterations_positive(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("max_turn_iterations must be positive")
+        return v
+
+    model_config = {"extra": "allow"}
 
 
 def merge_configs(base: dict, override: dict) -> dict:
@@ -153,5 +199,11 @@ def load_config(
     merged = merge_configs(merged, local_cfg)
 
     merged = merge_configs(merged, cli_overrides)
+
+    # Validate merged config; on error, report and continue with best-effort defaults
+    try:
+        ConfigSchema.model_validate(merged)
+    except ValidationError as exc:
+        print(f"Config validation error: {exc}", file=sys.stderr)
 
     return _dict_to_runtime_config(merged)
