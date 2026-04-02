@@ -6,7 +6,7 @@ import warnings
 from llm_code.logging import get_logger
 from llm_code.mcp.bridge import McpToolBridge
 from llm_code.mcp.client import McpClient
-from llm_code.mcp.transport import HttpTransport, McpTransport, StdioTransport
+from llm_code.mcp.transport import HttpTransport, McpTransport, SseTransport, StdioTransport, WebSocketTransport
 from llm_code.mcp.types import McpServerConfig
 from llm_code.tools.registry import ToolRegistry
 
@@ -100,8 +100,20 @@ class McpServerManager:
 
     @staticmethod
     def _build_transport(config: McpServerConfig) -> McpTransport:
+        """Build the appropriate transport from *config*.
+
+        Supported ``transport_type`` values:
+        - ``"stdio"`` (default) — subprocess stdin/stdout
+        - ``"http"`` — HTTP POST requests
+        - ``"sse"`` — Server-Sent Events over HTTP
+        - ``"ws"`` / ``"websocket"`` — WebSocket (requires ``websockets`` package)
+        """
         if config.transport_type == "http" and config.url:
             return HttpTransport(url=config.url, headers=config.headers)
+        if config.transport_type == "sse" and config.url:
+            return SseTransport(url=config.url, headers=config.headers)
+        if config.transport_type in ("ws", "websocket") and config.url:
+            return WebSocketTransport(url=config.url, headers=config.headers)
         if config.command:
             return StdioTransport(
                 command=config.command,

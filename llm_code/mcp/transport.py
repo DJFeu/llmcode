@@ -1,4 +1,4 @@
-"""MCP transport layer: ABC, StdioTransport, HttpTransport."""
+"""MCP transport layer: ABC, StdioTransport, HttpTransport, SseTransport, WebSocketTransport."""
 from __future__ import annotations
 
 import asyncio
@@ -151,3 +151,104 @@ class HttpTransport(McpTransport):
         client = self._client
         self._client = None
         await client.aclose()
+
+
+class SseTransport(McpTransport):
+    """SSE (Server-Sent Events) transport for MCP.
+
+    Server-Sent Events are server→client by nature; outbound messages are
+    sent via HTTP POST to the same URL, and responses are queued for
+    retrieval via ``receive()``.
+    """
+
+    def __init__(
+        self,
+        url: str,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self._url = url
+        self._headers: dict[str, str] = headers or {}
+        self._client: httpx.AsyncClient | None = None
+        self._response_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+    async def start(self) -> None:
+        """Create the HTTP client with SSE accept header."""
+        self._client = httpx.AsyncClient(
+            headers={"Accept": "text/event-stream", **self._headers},
+            timeout=httpx.Timeout(30.0),
+        )
+
+    async def send(self, message: dict[str, Any]) -> None:
+        """Send a message via HTTP POST and enqueue the response."""
+        if self._client is None:
+            raise RuntimeError("Transport not started")
+        resp = await self._client.post(self._url, json=message)
+        resp.raise_for_status()
+        await self._response_queue.put(resp.json())
+
+    async def receive(self) -> dict[str, Any]:
+        """Return the next queued response."""
+        return await self._response_queue.get()
+
+    async def close(self) -> None:
+        """Close the HTTP client."""
+        if self._client is None:
+            return
+        client = self._client
+        self._client = None
+        await client.aclose()
+
+
+class WebSocketTransport(McpTransport):
+    """WebSocket transport for MCP.
+
+    Requires the optional ``websockets`` package::
+
+        pip install websockets
+        # or: pip install llm-code[websocket]
+    """
+
+    def __init__(
+        self,
+        url: str,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self._url = url
+        self._headers: dict[str, str] = headers or {}
+        self._ws: Any = None  # websockets.WebSocketClientProtocol
+
+    async def start(self) -> None:
+        """Connect to the WebSocket server."""
+        try:
+            import websockets  # type: ignore[import-untyped]
+        except ImportError as exc:
+            raise ImportError(
+                "WebSocket transport requires the 'websockets' package: "
+                "pip install websockets"
+            ) from exc
+
+        self._ws = await websockets.connect(
+            self._url,
+            additional_headers=self._headers,
+        )
+
+    async def send(self, message: dict[str, Any]) -> None:
+        """Send a JSON message over the WebSocket."""
+        if self._ws is None:
+            raise RuntimeError("WebSocket not connected")
+        await self._ws.send(json.dumps(message))
+
+    async def receive(self) -> dict[str, Any]:
+        """Receive and parse the next JSON message from the WebSocket."""
+        if self._ws is None:
+            raise RuntimeError("WebSocket not connected")
+        data = await self._ws.recv()
+        return json.loads(data)  # type: ignore[no-any-return]
+
+    async def close(self) -> None:
+        """Close the WebSocket connection."""
+        if self._ws is None:
+            return
+        ws = self._ws
+        self._ws = None
+        await ws.close()

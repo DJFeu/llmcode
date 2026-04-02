@@ -36,6 +36,7 @@ Issues = "https://github.com/user/llm-code/issues"
 
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.40"]
+websocket = ["websockets>=12.0"]
 docs = ["mkdocs>=1.6", "mkdocs-material>=9.5"]
 dev = [
     "pytest>=8.0",
