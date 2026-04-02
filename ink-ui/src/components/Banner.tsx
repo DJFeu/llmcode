@@ -11,33 +11,60 @@ interface BannerProps {
   };
 }
 
+const LOGO = [
+  '  ██╗     ██╗     ███╗   ███╗',
+  '  ██║     ██║     ████╗ ████║',
+  '  ██║     ██║     ██╔████╔██║',
+  '  ██║     ██║     ██║╚██╔╝██║',
+  '  ███████╗███████╗██║ ╚═╝ ██║',
+  '  ╚══════╝╚══════╝╚═╝     ╚═╝',
+  '   ██████╗ ██████╗ ██████╗ ███████╗',
+  '  ██╔════╝██╔═══██╗██╔══██╗██╔════╝',
+  '  ██║     ██║   ██║██║  ██║█████╗  ',
+  '  ██║     ██║   ██║██║  ██║██╔══╝  ',
+  '  ╚██████╗╚██████╔╝██████╔╝███████╗',
+  '   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝',
+];
+
 export function Banner({ data }: BannerProps) {
   const workspace = data.branch ? `${data.workspace} · ${data.branch}` : data.workspace;
   const pasteKey = process.platform === 'darwin' ? 'Cmd+V' : 'Ctrl+V';
 
-  const lines: [string, string][] = [
-    ['Model', data.model],
+  const info: [string, string][] = [
+    ['Model', data.model || '(not set)'],
     ['Workspace', workspace],
     ['Directory', data.cwd],
     ['Permissions', data.permissions],
+    ['', ''],
     ['Quick start', '/help · /skill · /mcp'],
-    ['Multiline', 'Shift+Enter inserts a newline'],
-    ['Images', `${pasteKey} pastes from clipboard`],
+    ['Multiline', 'Shift+Enter'],
+    ['Images', `${pasteKey} pastes`],
   ];
 
   return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Text color="cyan">  ╭────────────────────╮</Text>
-      <Text color="cyan" bold>  │                    │</Text>
-      <Text color="cyan" bold>  │     llm-code       │</Text>
-      <Text color="cyan" bold>  │                    │</Text>
-      <Text color="cyan">  ╰────────────────────╯</Text>
-      {lines.map(([label, value], i) => (
-        <Text key={i}>
-          <Text dimColor>  {label.padEnd(17)}</Text>
-          <Text>{value}</Text>
-        </Text>
-      ))}
+    <Box flexDirection="row" marginBottom={1}>
+      <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1}>
+        {LOGO.map((line, i) => (
+          <Text key={i} color="cyan" bold>{line}</Text>
+        ))}
+      </Box>
+
+      <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={2} marginLeft={1}>
+        <Text bold color="cyan">Local LLM Agent</Text>
+        <Text color="gray">────────────────────</Text>
+        {info.map(([label, value], i) => (
+          label ? (
+            <Text key={i}>
+              <Text dimColor>{label.padEnd(14)}</Text>
+              <Text>{value}</Text>
+            </Text>
+          ) : (
+            <Text key={i}> </Text>
+          )
+        ))}
+        <Text color="gray">────────────────────</Text>
+        <Text color="green">Ready</Text>
+      </Box>
     </Box>
   );
 }
