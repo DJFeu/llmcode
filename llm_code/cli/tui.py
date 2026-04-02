@@ -175,10 +175,20 @@ class LLMCodeCLI:
     # ── Welcome Banner ──────────────────────────────────────────────
 
     def _render_welcome(self) -> None:
-        console.print()
-        console.print("  [cyan]╭──────────────╮[/]")
-        console.print("  [bold cyan]│   llm-code   │[/]")
-        console.print("  [cyan]╰──────────────╯[/]")
+        logo = [
+            "  ██╗     ██╗     ███╗   ███╗",
+            "  ██║     ██║     ████╗ ████║",
+            "  ██║     ██║     ██╔████╔██║",
+            "  ██║     ██║     ██║╚██╔╝██║",
+            "  ███████╗███████╗██║ ╚═╝ ██║",
+            "  ╚══════╝╚══════╝╚═╝     ╚═╝",
+            "   ██████╗ ██████╗ ██████╗ ███████╗",
+            "  ██╔════╝██╔═══██╗██╔══██╗██╔════╝",
+            "  ██║     ██║   ██║██║  ██║█████╗  ",
+            "  ██║     ██║   ██║██║  ██║██╔══╝  ",
+            "  ╚██████╗╚██████╔╝██████╔╝███████╗",
+            "   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝",
+        ]
 
         model = self._config.model or "(not set)"
         branch = _detect_git_branch(self._cwd)
@@ -186,19 +196,49 @@ class LLMCodeCLI:
         if branch:
             workspace += f" · {branch}"
         perm = self._config.permission_mode or "prompt"
-
         paste_key = "Cmd+V" if sys.platform == "darwin" else "Ctrl+V"
 
-        for label, value in [
+        info_lines = [
+            ("[bold cyan]Local LLM Agent[/]", ""),
+            ("[grey50]────────────────────────[/]", ""),
             ("Model", model),
             ("Workspace", workspace),
             ("Directory", str(self._cwd)),
             ("Permissions", perm),
+            ("", ""),
             ("Quick start", "/help · /skill · /mcp"),
-            ("Multiline", "Shift+Enter inserts a newline"),
-            ("Images", f"{paste_key} pastes from clipboard"),
-        ]:
-            console.print(f"  [grey50]{label:<17}[/] {value}")
+            ("Multiline", "Shift+Enter"),
+            ("Images", f"{paste_key} pastes"),
+            ("[grey50]────────────────────────[/]", ""),
+            ("[green]Ready[/]", ""),
+        ]
+
+        # Print side by side
+        console.print()
+        max_logo = len(logo)
+        max_info = len(info_lines)
+        rows = max(max_logo, max_info)
+
+        for i in range(rows):
+            # Left: logo
+            if i < max_logo:
+                left = f"[bold cyan]{logo[i]}[/]"
+            else:
+                left = " " * 38
+
+            # Right: info
+            if i < max_info:
+                label, value = info_lines[i]
+                if not value and label:
+                    right = f"  {label}"
+                elif label and value:
+                    right = f"  [grey50]{label:<14}[/] {value}"
+                else:
+                    right = ""
+            else:
+                right = ""
+
+            console.print(f"{left}  {right}")
         console.print()
 
     # ── Session Initialization ──────────────────────────────────────
