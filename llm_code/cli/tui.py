@@ -173,7 +173,7 @@ class LLMCodeCLI:
         self._pending_images: list = []
         self._skills = None
         self._memory = None
-        self._cost_tracker = CostTracker(model=self._config.model)
+        self._cost_tracker = CostTracker(model=self._config.model, custom_pricing=self._config.pricing or None)
 
     # ── Welcome Banner ──────────────────────────────────────────────
 
@@ -254,7 +254,7 @@ class LLMCodeCLI:
         resolved_model = resolve_model(
             self._config.model, custom_aliases=self._config.model_aliases
         )
-        self._cost_tracker = CostTracker(model=resolved_model)
+        self._cost_tracker = CostTracker(model=resolved_model, custom_pricing=self._config.pricing or None)
 
         provider = ProviderClient.from_model(
             model=resolved_model,

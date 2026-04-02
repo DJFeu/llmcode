@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from llm_code.runtime.cost_tracker import CostTracker, MODEL_PRICING
+from llm_code.runtime.cost_tracker import CostTracker, BUILTIN_PRICING
 
 
 class TestCostTrackerDefaultPricing:
@@ -74,7 +74,7 @@ class TestFormatCost:
         result = tracker.format_cost()
         assert "in: 1,000" in result
         assert "out: 500" in result
-        assert "local model" in result
+        assert "$0" in result
 
     def test_format_cost_zero_usage(self) -> None:
         tracker = CostTracker(model="gpt-4o")
@@ -82,4 +82,4 @@ class TestFormatCost:
         assert "in: 0" in result
         assert "out: 0" in result
         # Zero usage means zero cost → shows local model message
-        assert "local model" in result
+        assert "$0" in result
