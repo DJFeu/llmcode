@@ -23,6 +23,7 @@ _PERMISSION_CHOICES = ["prompt", "auto_accept", "read_only", "workspace_write", 
 )
 @click.option("--budget", type=int, default=None, help="Token budget target")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
+@click.option("--ink", is_flag=True, help="Use React+Ink frontend (experimental)")
 def main(
     prompt: str | None,
     model: str | None,
@@ -31,6 +32,7 @@ def main(
     permission: str | None,
     budget: int | None,
     verbose: bool = False,
+    ink: bool = False,
 ) -> None:
     """llm-code: AI coding assistant CLI."""
     from llm_code.logging import setup_logging
@@ -59,7 +61,12 @@ def main(
     )
 
     import asyncio
-    from llm_code.cli.tui import LLMCodeCLI
 
-    cli = LLMCodeCLI(config=config, cwd=cwd, budget=budget)
-    asyncio.run(cli.run())
+    if ink:
+        from llm_code.cli.ink_bridge import InkBridge
+        bridge = InkBridge(config=config, cwd=cwd, budget=budget)
+        asyncio.run(bridge.start())
+    else:
+        from llm_code.cli.tui import LLMCodeCLI
+        cli = LLMCodeCLI(config=config, cwd=cwd, budget=budget)
+        asyncio.run(cli.run())
