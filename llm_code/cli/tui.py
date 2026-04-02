@@ -53,6 +53,10 @@ from llm_code.tools.registry import ToolRegistry
 from llm_code.tools.write_file import WriteFileTool
 
 
+_TRUNCATION_THRESHOLD = 50  # lines before truncation notice
+_SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
 def _format_tool_call(tool_name: str, args_summary: str) -> str:
     """Format tool call like Claude Code: Read(path) / Bash(cmd) / Edit(path)."""
     import json
@@ -157,7 +161,7 @@ class LLMCodeApp(App):
     CSS = """
     #chat-log {
         height: 1fr;
-        scrollbar-size: 1;
+        scrollbar-size: 1 1;
         padding: 0 1;
     }
     #prompt-input {
@@ -171,6 +175,7 @@ class LLMCodeApp(App):
     BINDINGS = [
         Binding("ctrl+d", "quit", "Quit", priority=True),
         Binding("escape", "cancel", "Cancel", show=True),
+        Binding("ctrl+v", "paste_image", "Paste Image", show=False, priority=True),
     ]
 
     def __init__(
@@ -184,17 +189,33 @@ class LLMCodeApp(App):
         self._cwd = cwd or Path.cwd()
         self._budget = budget
         self._runtime: ConversationRuntime | None = None
-        self._registry = ToolRegistry()
+        self._tool_reg = ToolRegistry()
         self._session_manager = SessionManager(Path.home() / ".llm-code" / "sessions")
         self._text_buffer = ""
         self._output_tokens = 0
         self._is_running = False
         self._current_worker = None
+        self._pending_images: list = []
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield RichLog(id="chat-log", wrap=True, highlight=True, markup=True)
-        yield Input(placeholder="Type a message... (/help for commands)", id="prompt-input")
+        from textual.suggester import SuggestFromList
+        _cmds = [
+            "/help", "/clear", "/model", "/skill", "/skill search", "/skill install",
+            "/skill enable", "/skill disable", "/skill remove",
+            "/mcp", "/mcp install", "/mcp remove", "/mcp search",
+            "/plugin", "/plugin install", "/plugin enable", "/plugin disable", "/plugin remove",
+            "/memory", "/memory get", "/memory set", "/memory delete",
+            "/session list", "/session save", "/session switch",
+            "/undo", "/undo list", "/index", "/index rebuild",
+            "/image", "/cost", "/budget", "/cd", "/lsp", "/exit",
+        ]
+        yield Input(
+            placeholder="Type a message... (/help for commands)",
+            id="prompt-input",
+            suggester=SuggestFromList(_cmds, case_sensitive=False),
+        )
         yield Footer()
 
     def on_mount(self) -> None:
@@ -208,25 +229,50 @@ class LLMCodeApp(App):
 
     def _render_welcome(self) -> None:
         log = self.query_one("#chat-log", RichLog)
-        bar = "\u2500" * 40
-        log.write(Text(f"\u256d{bar}\u256e", style="cyan"))
-        log.write(Text(f"\u2502  llm-code{' ' * 31}\u2502", style="bold cyan"))
-        log.write(Text(f"\u2570{bar}\u256f", style="cyan"))
+
+        # Compact banner box
+        inner = "llm-code"
+        box_width = len(inner) + 4  # "  " on each side
+        log.write(Text.assemble(
+            ("  \u256d", "cyan"),
+            ("\u2500" * box_width, "cyan"),
+            ("\u256e", "cyan"),
+        ))
+        log.write(Text.assemble(
+            ("  \u2502  ", "cyan"),
+            (inner, "bold cyan"),
+            ("  " * 2, "bold cyan"),  # padding to fill box
+            ("\u2502", "cyan"),
+        ))
+        log.write(Text.assemble(
+            ("  \u2570", "cyan"),
+            ("\u2500" * box_width, "cyan"),
+            ("\u256f", "cyan"),
+        ))
 
         model = self._config.model or "(not set)"
         branch = _detect_git_branch(self._cwd)
-        workspace = f"{self._cwd.name}"
+        workspace = self._cwd.name
         if branch:
-            workspace += f" . {branch}"
+            workspace += f" \u00b7 {branch}"
         perm = self._config.permission_mode or "prompt"
 
-        log.write(Text(f"  Model          {model}", style="dim"))
-        log.write(Text(f"  Workspace      {workspace}", style="dim"))
-        log.write(Text(f"  Directory      {self._cwd}", style="dim"))
-        log.write(Text(f"  Permissions    {perm}", style="dim"))
-        log.write(Text("  Quick start    /help . /skill . /mcp", style="dim"))
-        log.write(Text("  Multiline      Shift+Enter inserts a newline", style="dim"))
-        log.write(Text("  Images         Ctrl+V pastes from clipboard", style="dim"))
+        import sys
+        paste_key = "Cmd+V" if sys.platform == "darwin" else "Ctrl+V"
+
+        for label, value in [
+            ("Model", model),
+            ("Workspace", workspace),
+            ("Directory", str(self._cwd)),
+            ("Permissions", perm),
+            ("Quick start", "/help \u00b7 /skill \u00b7 /mcp"),
+            ("Multiline", "Shift+Enter inserts a newline"),
+            ("Images", f"{paste_key} pastes from clipboard"),
+        ]:
+            log.write(Text.assemble(
+                (f"  {label:<14} ", "dim"),
+                (value, ""),
+            ))
         log.write(Text(""))
 
     # ── Session Initialization ──────────────────────────────────────
@@ -255,7 +301,7 @@ class LLMCodeApp(App):
             GrepSearchTool(),
         ):
             try:
-                self._registry.register(tool)
+                self._tool_reg.register(tool)
             except ValueError:
                 pass
 
@@ -264,15 +310,15 @@ class LLMCodeApp(App):
             GitPushTool, GitStashTool, GitBranchTool,
         ):
             try:
-                self._registry.register(cls())
+                self._tool_reg.register(cls())
             except ValueError:
                 pass
 
         # Try to register AgentTool
         try:
             from llm_code.tools.agent import AgentTool
-            if self._registry.get("agent") is None:
-                self._registry.register(AgentTool(
+            if self._tool_reg.get("agent") is None:
+                self._tool_reg.register(AgentTool(
                     runtime_factory=None, max_depth=3, current_depth=0,
                 ))
         except (ImportError, ValueError):
@@ -312,7 +358,7 @@ class LLMCodeApp(App):
 
         self._runtime = ConversationRuntime(
             provider=provider,
-            tool_registry=self._registry,
+            tool_registry=self._tool_reg,
             permission_policy=permissions,
             hook_runner=hooks,
             prompt_builder=prompt_builder,
@@ -340,11 +386,30 @@ class LLMCodeApp(App):
         from llm_code.tools.memory_tools import MemoryStoreTool, MemoryRecallTool, MemoryListTool
         for tool_cls in (MemoryStoreTool, MemoryRecallTool, MemoryListTool):
             try:
-                self._registry.register(tool_cls(self._memory))
+                self._tool_reg.register(tool_cls(self._memory))
             except ValueError:
                 pass
 
     # ── Display Helpers ─────────────────────────────────────────────
+
+    @staticmethod
+    def _tool_border(tool_name: str, detail_lines: list) -> list:
+        """Create a bordered tool call box. detail_lines may be str or Text."""
+        border_len = len(tool_name) + 4
+        texts = []
+        texts.append(Text.assemble(
+            ("\u256d\u2500 ", "grey62"),
+            (tool_name, "bold cyan"),
+            (" \u2500\u256e", "grey62"),
+        ))
+        for line in detail_lines:
+            if isinstance(line, Text):
+                row = Text.assemble(("\u2502 ", "grey62"), line)
+            else:
+                row = Text.assemble(("\u2502 ", "grey62"), (str(line), ""))
+            texts.append(row)
+        texts.append(Text("\u2570" + "\u2500" * border_len + "\u256f", style="grey62"))
+        return texts
 
     def _show_user_message(self, text: str) -> None:
         log = self.query_one("#chat-log", RichLog)
@@ -357,46 +422,98 @@ class LLMCodeApp(App):
         log.write(Markdown(text))
 
     def _show_tool_start(self, tool_name: str, args_summary: str) -> None:
+        import json
         log = self.query_one("#chat-log", RichLog)
-        display = _format_tool_call(tool_name, args_summary)
-        log.write(Text(f"\u25cf {display}", style="bold blue"))
+
+        try:
+            args = json.loads(args_summary.replace("'", '"'))
+        except Exception:
+            args = {}
+        if not isinstance(args, dict):
+            args = {}
+
+        if tool_name == "bash":
+            cmd = args.get("command", args_summary)[:120]
+            detail = Text.assemble(("$ ", "bold white"), (cmd, "white on color(236)"))
+            lines = [detail]
+        elif tool_name == "read_file":
+            path = args.get("path", args_summary)
+            lines = [Text(f"\U0001f4c4 Reading {path}\u2026")]
+        elif tool_name == "write_file":
+            path = args.get("path", args_summary)
+            lines = [Text(f"\u270f\ufe0f  Writing {path}")]
+        elif tool_name == "edit_file":
+            path = args.get("path", args_summary)
+            lines = [Text(f"\U0001f4dd Editing {path}")]
+        elif tool_name in ("glob_search", "grep_search"):
+            pattern = args.get("pattern", args.get("glob", args_summary))
+            lines = [Text(f"\U0001f50e {pattern}")]
+        elif tool_name == "agent":
+            task = args.get("task", args_summary)[:80]
+            lines = [Text(f"\U0001f916 {task}")]
+        else:
+            parts = tool_name.split("_")
+            pretty = "".join(p.capitalize() for p in parts)
+            vals = list(args.values())
+            summary = str(vals[0])[:80] if vals else args_summary[:80]
+            lines = [Text(f"{pretty}({summary})")]
+
+        for t in self._tool_border(tool_name, lines):
+            log.write(t)
 
     def _show_tool_result(self, tool_name: str, output: str, is_error: bool) -> None:
         log = self.query_one("#chat-log", RichLog)
 
         if is_error:
-            log.write(Text(f"  \u2514 {output.strip()[:150]}", style="red"))
+            msg = output.strip()[:200]
+            log.write(Text.assemble(("\u2717 ", "bold red"), (msg, "red")))
         elif tool_name == "edit_file":
-            for line in output.strip().splitlines()[:8]:
+            raw_lines = output.strip().splitlines()[:12]
+            wrote_any = False
+            for line in raw_lines:
                 if line.startswith("- "):
-                    log.write(Text(f"  \u2514 {line}", style="red"))
+                    log.write(Text.assemble(("- ", "indian_red"), (line[2:], "indian_red")))
+                    wrote_any = True
                 elif line.startswith("+ "):
-                    log.write(Text(f"  \u2514 {line}", style="green"))
+                    log.write(Text.assemble(("+ ", "green"), (line[2:], "green")))
+                    wrote_any = True
                 else:
-                    log.write(Text(f"  \u2514 {line[:150]}", style="dim"))
+                    log.write(Text(line[:150], style="dim"))
+            if not wrote_any:
+                log.write(Text.assemble(("\u2713 ", "bold green"), (output.strip()[:150], "dim")))
         elif tool_name in ("write_file", "git_commit"):
-            log.write(Text(f"  \u2514 {output.strip()[:150]}", style="green"))
+            log.write(Text.assemble(("\u2713 ", "bold green"), (output.strip()[:150], "dim")))
         elif tool_name == "read_file":
             lines = output.strip().splitlines()
             preview = lines[0][:120] if lines else "(empty)"
             count = len(lines)
-            log.write(Text(f"  \u2514 {preview}", style="dim"))
-            if count > 1:
-                log.write(Text(f"    ... ({count} lines)", style="dim"))
+            summary = f"{preview}  \u2026 ({count} lines)" if count > 1 else preview
+            log.write(Text.assemble(("\u2713 ", "bold green"), (summary, "dim")))
+            if count > _TRUNCATION_THRESHOLD:
+                log.write(Text(
+                    "\u2026 output truncated for display; full result preserved in session.",
+                    style="dim",
+                ))
         elif tool_name == "bash":
-            lines = output.strip().splitlines()
-            for line in lines[:8]:
-                log.write(Text(f"  \u2514 {line[:150]}", style="dim"))
-            if len(lines) > 8:
-                log.write(Text(f"    ... ({len(lines)} lines)", style="dim"))
+            raw_lines = output.strip().splitlines()
+            for line in raw_lines[:10]:
+                log.write(Text(line[:150], style="dim"))
+            if len(raw_lines) > 10:
+                log.write(Text(
+                    "\u2026 output truncated for display; full result preserved in session.",
+                    style="dim",
+                ))
+            log.write(Text.assemble(("\u2713 ", "bold green"), ("done", "dim")))
         else:
-            lines = (
-                output.strip().splitlines() if output.strip() else ["(no output)"]
-            )
-            for line in lines[:3]:
-                log.write(Text(f"  \u2514 {line[:150]}", style="dim"))
-            if len(lines) > 3:
-                log.write(Text(f"    ... ({len(lines)} lines)", style="dim"))
+            raw_lines = output.strip().splitlines() if output.strip() else ["(no output)"]
+            for line in raw_lines[:5]:
+                log.write(Text(line[:150], style="dim"))
+            if len(raw_lines) > 5:
+                log.write(Text(
+                    "\u2026 output truncated for display; full result preserved in session.",
+                    style="dim",
+                ))
+            log.write(Text.assemble(("\u2713 ", "bold green"), ("done", "dim")))
 
         log.write(Text(""))
 
@@ -415,6 +532,34 @@ class LLMCodeApp(App):
 
     # ── Input Handling ──────────────────────────────────────────────
 
+    def on_paste(self, event) -> None:
+        """Cmd+V / system paste: check clipboard for image before inserting text."""
+        from llm_code.cli.image import capture_clipboard_image
+        img = capture_clipboard_image()
+        if img is not None:
+            event.prevent_default()
+            event.stop()
+            self._pending_images.append(img)
+            inp = self.query_one(Input)
+            inp.value = inp.value + "[image pasted] "
+            log = self.query_one("#chat-log", RichLog)
+            log.write(Text("📎 Image from clipboard attached", style="dim"))
+
+    def action_paste_image(self) -> None:
+        """Ctrl+V: check clipboard for image."""
+        from llm_code.cli.image import capture_clipboard_image
+        img = capture_clipboard_image()
+        if img is not None:
+            self._pending_images.append(img)
+            inp = self.query_one(Input)
+            inp.value = inp.value + "[image pasted] "
+            log = self.query_one("#chat-log", RichLog)
+            log.write(Text("📎 Image from clipboard attached", style="dim"))
+        else:
+            # No image — let Textual handle normal paste
+            inp = self.query_one(Input)
+            inp.action_paste()
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()
         event.input.value = ""
@@ -422,10 +567,27 @@ class LLMCodeApp(App):
         if not text:
             return
 
-        if text.startswith("/"):
-            self._handle_slash_command(text)
+        # Collect pending images
+        images = list(self._pending_images)
+        self._pending_images.clear()
+
+        # Detect drag-and-dropped image paths
+        from llm_code.cli.app import _extract_dropped_images
+        clean_text, dropped = _extract_dropped_images(text)
+        images.extend(dropped)
+
+        # Strip image paste marker
+        clean_text = clean_text.replace("[image pasted]", "").strip()
+        if not clean_text and images:
+            clean_text = "What is in this image?"
+
+        if clean_text.startswith("/"):
+            self._handle_slash_command(clean_text)
         else:
-            self._run_turn(text)
+            if images:
+                log = self.query_one("#chat-log", RichLog)
+                log.write(Text(f"📎 Sending with {len(images)} image(s)", style="dim"))
+            self._run_turn(clean_text, images=images or None)
 
     def action_cancel(self) -> None:
         """Cancel the current operation."""
@@ -452,13 +614,25 @@ class LLMCodeApp(App):
 
         elif name == "help":
             log.write(Text("Available commands:", style="bold"))
-            log.write(Text("  /help        Show this help", style="dim"))
-            log.write(Text("  /clear       Clear conversation", style="dim"))
-            log.write(Text("  /model <n>   Switch model", style="dim"))
-            log.write(Text("  /cost        Show token usage", style="dim"))
-            log.write(Text("  /cd <dir>    Change directory", style="dim"))
-            log.write(Text("  /budget <n>  Set token budget", style="dim"))
-            log.write(Text("  /exit        Quit", style="dim"))
+            for cmd, desc in [
+                ("/help", "Show this help"),
+                ("/clear", "Clear conversation"),
+                ("/model <name>", "Switch model"),
+                ("/skill", "Browse & manage skills"),
+                ("/mcp", "Browse & manage MCP servers"),
+                ("/plugin", "Browse & manage plugins"),
+                ("/memory", "Project memory"),
+                ("/session list|save|switch", "Manage sessions"),
+                ("/undo", "Undo last file change"),
+                ("/index", "Project index"),
+                ("/image <path>", "Attach image"),
+                ("/cost", "Token usage"),
+                ("/budget <n>", "Set token budget"),
+                ("/cd <dir>", "Change directory"),
+                ("/lsp", "LSP server status"),
+                ("/exit", "Quit"),
+            ]:
+                log.write(Text(f"  {cmd:<30s} {desc}", style="dim"))
             log.write(Text(""))
 
         elif name == "clear":
@@ -516,8 +690,200 @@ class LLMCodeApp(App):
                 else:
                     log.write(Text("No budget set.", style="dim"))
 
+        elif name == "skill":
+            self._tui_skill_command(args, log)
+
+        elif name == "mcp":
+            self._tui_mcp_command(args, log)
+
+        elif name == "plugin":
+            self._tui_plugin_command(args, log)
+
+        elif name == "memory":
+            self._tui_memory_command(args, log)
+
+        elif name == "undo":
+            if hasattr(self, '_checkpoint_mgr') and self._checkpoint_mgr:
+                if args.strip() == "list":
+                    for cp in self._checkpoint_mgr.list_checkpoints():
+                        log.write(Text(f"  {cp.id}  {cp.tool_name}  {cp.timestamp[:19]}", style="dim"))
+                elif self._checkpoint_mgr.can_undo():
+                    cp = self._checkpoint_mgr.undo()
+                    if cp:
+                        log.write(Text(f"Undone: {cp.tool_name} ({cp.tool_args_summary[:50]})", style="green"))
+                else:
+                    log.write(Text("Nothing to undo.", style="dim"))
+            else:
+                log.write(Text("Not in a git repository — undo not available.", style="red"))
+
+        elif name == "index":
+            if args.strip() == "rebuild":
+                from llm_code.runtime.indexer import ProjectIndexer
+                idx = ProjectIndexer(self._cwd).build_index()
+                log.write(Text(f"Index rebuilt: {len(idx.files)} files, {len(idx.symbols)} symbols", style="dim"))
+            elif hasattr(self, '_project_index') and self._project_index:
+                log.write(Text(f"Files: {len(self._project_index.files)}, Symbols: {len(self._project_index.symbols)}", style="dim"))
+                for s in self._project_index.symbols[:20]:
+                    log.write(Text(f"  {s.kind} {s.name} — {s.file}:{s.line}", style="dim"))
+            else:
+                log.write(Text("No index available.", style="dim"))
+
+        elif name == "session":
+            parts = args.split(None, 1)
+            subcmd = parts[0] if parts else "list"
+            subargs = parts[1] if len(parts) > 1 else ""
+            if subcmd == "list":
+                sessions = self._session_manager.list_sessions()
+                if not sessions:
+                    log.write(Text("No saved sessions.", style="dim"))
+                for s in sessions:
+                    log.write(Text(f"  {s.id}  {s.project_path}  ({s.message_count} msgs)", style="dim"))
+            elif subcmd == "save" and self._runtime:
+                path = self._session_manager.save(self._runtime.session)
+                log.write(Text(f"Session saved: {path}", style="dim"))
+
+        elif name == "image":
+            if args:
+                from llm_code.cli.image import load_image_from_path
+                try:
+                    img = load_image_from_path(args)
+                    self._pending_images.append(img)
+                    log.write(Text(f"📎 Image attached: {args}", style="dim"))
+                except FileNotFoundError:
+                    log.write(Text(f"Image not found: {args}", style="red"))
+            else:
+                log.write(Text("Usage: /image <path>", style="red"))
+
+        elif name == "lsp":
+            log.write(Text("LSP: not started in this session.", style="dim"))
+
         else:
             log.write(Text(f"Unknown command: /{name} -- type /help for help", style="red"))
+
+    # ── Marketplace Handlers ─────────────────────────────────────────
+
+    def _tui_skill_command(self, args: str, log: RichLog) -> None:
+        parts = args.strip().split(None, 1)
+        subcmd = parts[0] if parts else ""
+        subargs = parts[1] if len(parts) > 1 else ""
+
+        if subcmd == "enable" and subargs:
+            marker = Path.home() / ".llm-code" / "skills" / subargs / ".disabled"
+            marker.unlink(missing_ok=True)
+            log.write(Text(f"Enabled {subargs}", style="green"))
+        elif subcmd == "disable" and subargs:
+            marker = Path.home() / ".llm-code" / "skills" / subargs / ".disabled"
+            marker.touch()
+            log.write(Text(f"Disabled {subargs}", style="dim"))
+        elif subcmd == "remove" and subargs:
+            import shutil
+            d = Path.home() / ".llm-code" / "skills" / subargs
+            if d.is_dir():
+                shutil.rmtree(d)
+                log.write(Text(f"Removed {subargs}", style="green"))
+            else:
+                log.write(Text(f"Not found: {subargs}", style="red"))
+        else:
+            # List skills
+            all_skills = []
+            if self._skills:
+                all_skills = list(self._skills.auto_skills) + list(self._skills.command_skills)
+            log.write(Text(f"Skills ({len(all_skills)})", style="bold"))
+            for s in all_skills:
+                tokens = len(s.content) // 4
+                log.write(Text(f"  ● {s.name} · ~{tokens} tokens", style="green" if s.auto else "cyan"))
+            if not all_skills:
+                log.write(Text("  No skills loaded. Place SKILL.md in ~/.llm-code/skills/<name>/", style="dim"))
+
+    def _tui_mcp_command(self, args: str, log: RichLog) -> None:
+        parts = args.strip().split(None, 1)
+        subcmd = parts[0] if parts else ""
+        subargs = parts[1] if len(parts) > 1 else ""
+
+        if subcmd == "install" and subargs:
+            import json
+            package = subargs.strip()
+            server_name = package.split("/")[-1].replace("@", "").replace("server-", "")
+            config_path = Path.home() / ".llm-code" / "config.json"
+            config = {}
+            if config_path.exists():
+                try:
+                    config = json.loads(config_path.read_text())
+                except Exception:
+                    pass
+            config.setdefault("mcpServers", {})[server_name] = {"command": "npx", "args": ["-y", package]}
+            config_path.write_text(json.dumps(config, indent=2))
+            log.write(Text(f"✓ Added {server_name} to config. Restart to activate.", style="green"))
+        elif subcmd == "remove" and subargs:
+            import json
+            config_path = Path.home() / ".llm-code" / "config.json"
+            if config_path.exists():
+                config = json.loads(config_path.read_text())
+                if subargs in config.get("mcpServers", {}):
+                    del config["mcpServers"][subargs]
+                    config_path.write_text(json.dumps(config, indent=2))
+                    log.write(Text(f"✓ Removed {subargs}", style="green"))
+                else:
+                    log.write(Text(f"Not found: {subargs}", style="red"))
+        else:
+            servers = self._config.mcp_servers
+            log.write(Text(f"MCP Servers ({len(servers)} configured)", style="bold"))
+            for name, cfg in servers.items():
+                cmd = cfg.get("command", "")
+                srv_args = " ".join(cfg.get("args", []))
+                log.write(Text(f"  ● {name} · {cmd} {srv_args}", style="green"))
+            if not servers:
+                log.write(Text("  No MCP servers configured.", style="dim"))
+            log.write(Text("  /mcp install <npm-package>  /mcp remove <name>", style="dim"))
+
+    def _tui_plugin_command(self, args: str, log: RichLog) -> None:
+        from llm_code.marketplace.installer import PluginInstaller
+        installer = PluginInstaller(Path.home() / ".llm-code" / "plugins")
+        parts = args.strip().split(None, 1)
+        subcmd = parts[0] if parts else ""
+        subargs = parts[1] if len(parts) > 1 else ""
+
+        if subcmd == "enable" and subargs:
+            installer.enable(subargs)
+            log.write(Text(f"Enabled {subargs}", style="green"))
+        elif subcmd == "disable" and subargs:
+            installer.disable(subargs)
+            log.write(Text(f"Disabled {subargs}", style="dim"))
+        elif subcmd in ("remove", "uninstall") and subargs:
+            installer.uninstall(subargs)
+            log.write(Text(f"Removed {subargs}", style="green"))
+        else:
+            installed = installer.list_installed()
+            log.write(Text(f"Plugins ({len(installed)} installed)", style="bold"))
+            for p in installed:
+                status = "●" if p.enabled else "○"
+                log.write(Text(f"  {status} {p.manifest.name} v{p.manifest.version}", style="green" if p.enabled else "red"))
+            if not installed:
+                log.write(Text("  No plugins installed.", style="dim"))
+
+    def _tui_memory_command(self, args: str, log: RichLog) -> None:
+        if not hasattr(self, '_memory') or not self._memory:
+            log.write(Text("Memory not initialized.", style="red"))
+            return
+        parts = args.strip().split(None, 2)
+        subcmd = parts[0] if parts else ""
+
+        if subcmd == "set" and len(parts) > 2:
+            self._memory.store(parts[1], parts[2])
+            log.write(Text(f"Stored: {parts[1]}", style="dim"))
+        elif subcmd == "get" and len(parts) > 1:
+            val = self._memory.recall(parts[1])
+            log.write(Text(val or f"Key not found: {parts[1]}", style="dim" if val else "red"))
+        elif subcmd == "delete" and len(parts) > 1:
+            self._memory.delete(parts[1])
+            log.write(Text(f"Deleted: {parts[1]}", style="dim"))
+        else:
+            entries = self._memory.get_all()
+            log.write(Text(f"Memory ({len(entries)} entries)", style="bold"))
+            for k, v in entries.items():
+                log.write(Text(f"  {k}: {v.value[:60]}", style="dim"))
+            if not entries:
+                log.write(Text("  No memories stored.", style="dim"))
 
     # ── Streaming Turn ──────────────────────────────────────────────
 
@@ -529,12 +895,18 @@ class LLMCodeApp(App):
 
         self._show_user_message(user_input)
         self._update_status("Thinking...")
+        log = self.query_one("#chat-log", RichLog)
+        log.write(Text.assemble(
+            (_SPINNER_FRAMES[0] + " ", "bold blue"),
+            ("Thinking\u2026", "blue"),
+        ))
 
         start = time.monotonic()
         first_token = False
 
-        # tool_call tag filter state
+        # Tag filter state: hide <tool_call> and <think> blocks
         in_tool_call_tag = False
+        in_think_tag = False
         tool_tag_buffer = ""
 
         if self._runtime is None:
@@ -554,18 +926,28 @@ class LLMCodeApp(App):
                             f"Streaming... ({elapsed:.1f}s to first token)"
                         )
 
-                    # Filter <tool_call>...</tool_call> tags
+                    # Filter <tool_call>...</tool_call> and <think>...</think> tags
                     for char in event.text:
                         if in_tool_call_tag:
                             tool_tag_buffer += char
                             if tool_tag_buffer.endswith("</tool_call>"):
                                 in_tool_call_tag = False
                                 tool_tag_buffer = ""
+                        elif in_think_tag:
+                            tool_tag_buffer += char
+                            if tool_tag_buffer.endswith("</think>"):
+                                in_think_tag = False
+                                tool_tag_buffer = ""
                         elif tool_tag_buffer:
                             tool_tag_buffer += char
                             if tool_tag_buffer == "<tool_call>":
                                 in_tool_call_tag = True
-                            elif not "<tool_call>".startswith(tool_tag_buffer):
+                            elif tool_tag_buffer == "<think>":
+                                in_think_tag = True
+                            elif (
+                                not "<tool_call>".startswith(tool_tag_buffer)
+                                and not "<think>".startswith(tool_tag_buffer)
+                            ):
                                 self._text_buffer += tool_tag_buffer
                                 tool_tag_buffer = ""
                         elif char == "<":
@@ -618,19 +1000,15 @@ class LLMCodeApp(App):
 
         # Turn summary
         elapsed = time.monotonic() - start
-        if elapsed > 0.5:
-            tokens_str = (
-                f"\u2193 {self._output_tokens:,} tokens"
-                if self._output_tokens > 0
-                else ""
-            )
-            time_str = (
-                f"{elapsed:.1f}s" if elapsed < 60 else f"{elapsed / 60:.1f}m"
-            )
-            parts = [p for p in [time_str, tokens_str] if p]
-            log = self.query_one("#chat-log", RichLog)
-            log.write(Text(f"({' . '.join(parts)})", style="dim"))
-            log.write(Text(""))
+        time_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{elapsed / 60:.1f}m"
+        log = self.query_one("#chat-log", RichLog)
+        tokens_str = f"  \u2193{self._output_tokens:,} tok" if self._output_tokens > 0 else ""
+        log.write(Text.assemble(
+            ("\u2713 ", "bold green"),
+            (f"Done ({time_str})", "green"),
+            (tokens_str, "dim"),
+        ))
+        log.write(Text(""))
 
         self._update_status("Ready")
         self._is_running = False
