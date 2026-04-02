@@ -26,6 +26,7 @@ dependencies = [
     "prompt-toolkit>=3.0",
     "pydantic>=2.0",
     "click>=8.0",
+    "textual>=1.0",
 ]
 
 [project.urls]
@@ -45,7 +46,8 @@ dev = [
 ]
 
 [project.scripts]
-llm-code = "llm_code.cli.app:main"
+llm-code = "llm_code.cli.tui_main:main"
+llm-code-classic = "llm_code.cli.app:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
