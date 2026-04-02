@@ -1,7 +1,6 @@
 """Tests for LSP client (Task 1) — uses MockTransport."""
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
@@ -89,7 +88,7 @@ class TestLspClientInitialize:
             ]
         )
         client = LspClient(transport)
-        result = await client.initialize("file:///workspace")
+        await client.initialize("file:///workspace")
 
         assert len(transport.sent) == 1
         msg = transport.sent[0]

@@ -64,8 +64,6 @@ class TestMcpManagerInstructions:
     async def test_collects_instructions(self) -> None:
         manager = McpServerManager()
         transport = MockTransport([_make_init_response(1, instructions="Do the thing.")])
-        config = McpServerConfig(command="fake", transport_type="stdio")
-
         # Patch transport building so we can inject our mock
         manager._transports["srv"] = transport
         client = McpClient(transport)

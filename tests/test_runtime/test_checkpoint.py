@@ -108,7 +108,7 @@ def test_undo_restores_file(git_repo):
     subprocess.run(["git", "add", "-A"], cwd=git_repo, capture_output=True)
     subprocess.run(["git", "commit", "-m", "add data.txt"], cwd=git_repo, capture_output=True)
 
-    cp = manager.create("delete_file", {"path": "data.txt"})
+    manager.create("delete_file", {"path": "data.txt"})
 
     # Delete the file (simulating a destructive operation)
     (git_repo / "data.txt").unlink()

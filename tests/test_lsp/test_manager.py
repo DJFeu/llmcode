@@ -90,8 +90,6 @@ class TestLspServerManagerStartAll:
             "go": LspServerConfig(command="gopls", args=("serve",), language="go"),
         }
         mock_transport = make_mock_transport()
-        calls: list[str] = []
-
         def make_client(_transport):
             client = make_mock_client()
             return client
