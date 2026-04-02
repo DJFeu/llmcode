@@ -1,0 +1,10 @@
+{
+  "model": "llama3.1:70b",
+  "provider": {
+    "base_url": "http://localhost:11434/v1"
+  },
+  "permissions": {
+    "mode": "auto_accept"
+  },
+  "native_tools": false
+}
