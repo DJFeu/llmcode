@@ -27,9 +27,11 @@ export function Banner({ data }: BannerProps) {
 
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text color="cyan">  ╭──────────────╮</Text>
-      <Text bold color="cyan">  │   llm-code   │</Text>
-      <Text color="cyan">  ╰──────────────╯</Text>
+      <Text color="cyan">  ╭────────────────────╮</Text>
+      <Text color="cyan" bold>  │                    │</Text>
+      <Text color="cyan" bold>  │     llm-code       │</Text>
+      <Text color="cyan" bold>  │                    │</Text>
+      <Text color="cyan">  ╰────────────────────╯</Text>
       {lines.map(([label, value], i) => (
         <Text key={i}>
           <Text dimColor>  {label.padEnd(17)}</Text>

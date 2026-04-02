@@ -31,7 +31,7 @@ export function ChatLog({ entries, currentText }: ChatLogProps) {
 function ChatEntryView({ entry }: { entry: ChatEntry }) {
   switch (entry.type) {
     case 'user':
-      return <Text><Text bold>❯</Text> {entry.text}</Text>;
+      return <Text><Text bold color="white">❯</Text> {entry.text}</Text>;
 
     case 'assistant':
       return (

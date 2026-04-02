@@ -24,19 +24,24 @@ class InkBridge:
         self._memory = None
         self._project_index = None
         self._checkpoint_mgr = None
+        self._current_marketplace: dict | None = None
+        self._selected_item: dict | None = None
 
     async def start(self) -> None:
         """Start the Ink frontend process and begin communication."""
         # Find ink-ui location
         ink_dir = self._find_ink_dir()
 
-        # Spawn Ink process
+        # Spawn Ink process with forced color support
+        import os as _os
+        env = {**_os.environ, "FORCE_COLOR": "3", "COLORTERM": "truecolor"}
         self._ink_process = await asyncio.create_subprocess_exec(
             "npx", "tsx", str(ink_dir / "src" / "index.tsx"),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=None,  # Pass through to terminal — Ink renders here
             cwd=str(ink_dir),
+            env=env,
         )
 
         # Initialize backend
@@ -97,6 +102,18 @@ class InkBridge:
         elif msg_type == "permission_response":
             # TODO: wire into permission system
             pass
+
+        elif msg_type == "marketplace_select":
+            index = msg.get("index", -1)
+            await self._handle_marketplace_selection(index)
+
+        elif msg_type == "action_select":
+            action_id = msg.get("actionId", "")
+            await self._handle_marketplace_action(action_id)
+
+        elif msg_type == "marketplace_close":
+            self._current_marketplace = None
+            self._selected_item = None
 
         elif msg_type == "image_paste":
             # TODO: handle image paste
@@ -238,8 +255,268 @@ class InkBridge:
                 u = self._runtime.session.total_usage
                 await self._send({"type": "message", "text": f"Tokens — in: {u.input_tokens:,}  out: {u.output_tokens:,}"})
 
+        elif name == "skill":
+            await self._show_skill_marketplace()
+
+        elif name == "mcp":
+            await self._show_mcp_marketplace()
+
+        elif name == "plugin":
+            await self._show_plugin_marketplace()
+
+        elif name == "cancel":
+            # Cancel current generation
+            # TODO: implement actual cancellation
+            await self._send({"type": "thinking_stop", "elapsed": 0, "tokens": 0})
+            await self._send({"type": "message", "text": "(cancelled)"})
+
         else:
-            await self._send({"type": "message", "text": f"Command /{name} — use the print-based CLI for full marketplace support."})
+            await self._send({"type": "message", "text": f"Command /{name} not recognized. Type /help for available commands."})
+
+    async def _show_skill_marketplace(self) -> None:
+        """Build and send the skill marketplace list."""
+        all_skills = []
+        if self._skills:
+            all_skills = list(self._skills.auto_skills) + list(self._skills.command_skills)
+
+        items = []
+        for s in all_skills:
+            tokens = len(s.content) // 4
+            items.append({
+                "name": s.name,
+                "description": f"~{tokens} tokens",
+                "installed": True,
+                "index": len(items),
+            })
+
+        # Fetch npm marketplace skills
+        try:
+            market = await self._fetch_npm_skills()
+            installed_names = {s.name for s in all_skills}
+            for pkg_name, desc in market:
+                if pkg_name not in installed_names:
+                    items.append({
+                        "name": pkg_name,
+                        "description": desc,
+                        "installed": False,
+                        "index": len(items),
+                    })
+        except Exception:
+            pass
+
+        self._current_marketplace = {"type": "skill", "items": items}
+        await self._send({"type": "marketplace_show", "title": f"Skills ({len(items)})", "items": items})
+
+    async def _show_mcp_marketplace(self) -> None:
+        """Build and send the MCP server list."""
+        items: list[dict] = []
+        try:
+            mcp_config_path = Path.home() / ".claude" / "claude_desktop_config.json"
+            if mcp_config_path.exists():
+                import json as _json
+                cfg = _json.loads(mcp_config_path.read_text())
+                servers = cfg.get("mcpServers", {})
+                for server_name in servers:
+                    items.append({
+                        "name": server_name,
+                        "description": "configured MCP server",
+                        "installed": True,
+                        "index": len(items),
+                    })
+        except Exception:
+            pass
+
+        self._current_marketplace = {"type": "mcp", "items": items}
+        title = f"MCP Servers ({len(items)})" if items else "MCP Servers (none configured)"
+        await self._send({"type": "marketplace_show", "title": title, "items": items})
+
+    async def _show_plugin_marketplace(self) -> None:
+        """Build and send the plugin list."""
+        items: list[dict] = []
+        try:
+            from llm_code.marketplace.installer import PluginInstaller
+            plugin_dir = Path.home() / ".llm-code" / "plugins"
+            if plugin_dir.is_dir():
+                pi = PluginInstaller(plugin_dir)
+                for p in pi.list_installed():
+                    items.append({
+                        "name": p.name,
+                        "description": f"v{p.version}" if hasattr(p, "version") else "installed",
+                        "installed": p.enabled,
+                        "index": len(items),
+                    })
+        except Exception:
+            pass
+
+        # Fetch npm marketplace plugins
+        try:
+            market = await self._fetch_npm_plugins()
+            installed_names = {it["name"] for it in items}
+            for pkg_name, desc in market:
+                if pkg_name not in installed_names:
+                    items.append({
+                        "name": pkg_name,
+                        "description": desc,
+                        "installed": False,
+                        "index": len(items),
+                    })
+        except Exception:
+            pass
+
+        self._current_marketplace = {"type": "plugin", "items": items}
+        await self._send({"type": "marketplace_show", "title": f"Plugins ({len(items)})", "items": items})
+
+    async def _handle_marketplace_selection(self, index: int) -> None:
+        """Handle an item selection from the marketplace list."""
+        if not self._current_marketplace:
+            return
+
+        items = self._current_marketplace.get("items", [])
+        if index < 0 or index >= len(items):
+            return
+
+        item = items[index]
+        self._selected_item = item
+        market_type = self._current_marketplace.get("type", "")
+        installed = item.get("installed", False)
+
+        # Build actions based on marketplace type and install state
+        actions: list[dict] = []
+        if market_type == "skill":
+            if installed:
+                actions = [
+                    {"id": "view", "label": "View skill content"},
+                    {"id": "uninstall", "label": "Remove skill"},
+                    {"id": "cancel", "label": "Cancel"},
+                ]
+            else:
+                actions = [
+                    {"id": "install", "label": f"Install {item['name']}"},
+                    {"id": "cancel", "label": "Cancel"},
+                ]
+        elif market_type == "plugin":
+            if installed:
+                actions = [
+                    {"id": "disable", "label": "Disable plugin"},
+                    {"id": "uninstall", "label": "Uninstall plugin"},
+                    {"id": "cancel", "label": "Cancel"},
+                ]
+            else:
+                actions = [
+                    {"id": "install", "label": f"Install {item['name']}"},
+                    {"id": "cancel", "label": "Cancel"},
+                ]
+        elif market_type == "mcp":
+            actions = [
+                {"id": "info", "label": "Show server info"},
+                {"id": "cancel", "label": "Cancel"},
+            ]
+        else:
+            actions = [{"id": "cancel", "label": "Cancel"}]
+
+        await self._send({"type": "action_show", "name": item["name"], "actions": actions})
+
+    async def _handle_marketplace_action(self, action_id: str) -> None:
+        """Execute a marketplace action on the selected item."""
+        if action_id == "cancel" or not self._selected_item:
+            self._current_marketplace = None
+            self._selected_item = None
+            return
+
+        item = self._selected_item
+        market_type = (self._current_marketplace or {}).get("type", "")
+        self._current_marketplace = None
+        self._selected_item = None
+
+        if action_id == "install":
+            if market_type == "skill":
+                await self._send({"type": "message", "text": f"Installing skill '{item['name']}' via npm…"})
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        "npx", "-y", "claude-skills-cli", "install", item["name"],
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    _, stderr = await proc.communicate()
+                    if proc.returncode == 0:
+                        await self._send({"type": "message", "text": f"Skill '{item['name']}' installed."})
+                        self._init_session()  # Reload skills
+                    else:
+                        await self._send({"type": "error", "message": f"Install failed: {stderr.decode()[:200]}"})
+                except Exception as exc:
+                    await self._send({"type": "error", "message": f"Install failed: {exc}"})
+            elif market_type == "plugin":
+                await self._send({"type": "message", "text": f"Installing plugin '{item['name']}' via npm…"})
+                try:
+                    from llm_code.marketplace.installer import PluginInstaller
+                    plugin_dir = Path.home() / ".llm-code" / "plugins"
+                    plugin_dir.mkdir(parents=True, exist_ok=True)
+                    pi = PluginInstaller(plugin_dir)
+                    await asyncio.get_event_loop().run_in_executor(None, pi.install, item["name"])
+                    await self._send({"type": "message", "text": f"Plugin '{item['name']}' installed."})
+                    self._init_session()
+                except Exception as exc:
+                    await self._send({"type": "error", "message": f"Plugin install failed: {exc}"})
+
+        elif action_id == "view":
+            if self._skills:
+                all_skills = list(self._skills.auto_skills) + list(self._skills.command_skills)
+                skill = next((s for s in all_skills if s.name == item["name"]), None)
+                if skill:
+                    preview = skill.content[:300] + ("…" if len(skill.content) > 300 else "")
+                    await self._send({"type": "message", "text": f"[{item['name']}]\n{preview}"})
+                    return
+            await self._send({"type": "message", "text": f"Skill '{item['name']}' content not found."})
+
+        elif action_id == "info":
+            await self._send({"type": "message", "text": f"MCP server: {item['name']}"})
+
+        elif action_id in ("uninstall", "disable"):
+            await self._send({"type": "message", "text": f"Action '{action_id}' for '{item['name']}' — use the CLI for full management."})
+
+    async def _fetch_npm_skills(self) -> list[tuple[str, str]]:
+        """Fetch skill packages from the npm registry."""
+        try:
+            import httpx
+        except ImportError:
+            return []
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://registry.npmjs.org/-/v1/search",
+                params={"text": "claude-code skill", "size": 50},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        results = []
+        for obj in data.get("objects", []):
+            pkg = obj.get("package", {})
+            name = pkg.get("name", "")
+            desc = pkg.get("description", "")[:70]
+            if "skill" in name.lower() or ("claude" in name.lower() and "skill" in desc.lower()):
+                results.append((name, desc))
+        return results
+
+    async def _fetch_npm_plugins(self) -> list[tuple[str, str]]:
+        """Fetch plugin packages from the npm registry."""
+        try:
+            import httpx
+        except ImportError:
+            return []
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://registry.npmjs.org/-/v1/search",
+                params={"text": "claude-code plugin", "size": 50},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        results = []
+        for obj in data.get("objects", []):
+            pkg = obj.get("package", {})
+            name = pkg.get("name", "")
+            desc = pkg.get("description", "")[:70]
+            if "plugin" in name.lower() or ("claude" in name.lower() and "plugin" in desc.lower()):
+                results.append((name, desc))
+        return results
 
     def _init_session(self) -> None:
         """Initialize the conversation runtime — same as LLMCodeCLI._init_session."""

@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Box, Text, useApp } from 'ink';
+import { Box, Text, useApp, useInput } from 'ink';
 import { Banner } from './components/Banner.js';
 import { ChatLog, ChatEntry } from './components/ChatLog.js';
 import { InputBar } from './components/InputBar.js';
 import { ThinkingSpinner } from './components/ThinkingSpinner.js';
 import { PermissionDialog } from './components/PermissionDialog.js';
-import type { BackendMessage, FrontendMessage } from './protocol.js';
+import { MarketplaceSelect } from './components/MarketplaceSelect.js';
+import { ActionSelect } from './components/ActionSelect.js';
+import { StatusBar } from './components/StatusBar.js';
+import type { BackendMessage, FrontendMessage, MarketplaceItem } from './protocol.js';
 import * as readline from 'readline';
 
 function sendToBackend(msg: FrontendMessage) {
@@ -17,6 +20,7 @@ export function App() {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [isThinking, setIsThinking] = useState(false);
   const [currentText, setCurrentText] = useState('');
+  const [totalTokens, setTotalTokens] = useState(0);
   const [welcomeData, setWelcomeData] = useState<{
     model: string;
     workspace: string;
@@ -28,6 +32,8 @@ export function App() {
     toolName: string;
     args: string;
   } | null>(null);
+  const [marketplace, setMarketplace] = useState<{title: string; items: MarketplaceItem[]} | null>(null);
+  const [actionPicker, setActionPicker] = useState<{name: string; actions: Array<{id: string; label: string}>} | null>(null);
 
   const addEntry = useCallback((entry: ChatEntry) => {
     setEntries(prev => [...prev, entry]);
@@ -70,6 +76,7 @@ export function App() {
         break;
       case 'turn_done':
         addEntry({ type: 'status', text: `✓ Done (${msg.elapsed.toFixed(1)}s)  ↓${msg.tokens} tok` });
+        setTotalTokens(prev => prev + (msg.tokens || 0));
         break;
       case 'permission_request':
         setPermissionRequest({ toolName: msg.toolName, args: msg.args });
@@ -82,6 +89,12 @@ export function App() {
         break;
       case 'help':
         addEntry({ type: 'help', commands: msg.commands });
+        break;
+      case 'marketplace_show':
+        setMarketplace({ title: msg.title, items: msg.items });
+        break;
+      case 'action_show':
+        setActionPicker({ name: msg.name, actions: msg.actions });
         break;
     }
   }, [addEntry]);
@@ -105,6 +118,13 @@ export function App() {
     sendToBackend({ type: 'user_input', text });
   }, []);
 
+  useInput((_input, key) => {
+    if (key.escape && isThinking) {
+      sendToBackend({ type: 'user_input', text: '/cancel' });
+      setIsThinking(false);
+    }
+  });
+
   const handlePermission = useCallback((action: 'allow' | 'deny' | 'always') => {
     sendToBackend({ type: 'permission_response', action });
     setPermissionRequest(null);
@@ -115,6 +135,33 @@ export function App() {
       {welcomeData && <Banner data={welcomeData} />}
       <ChatLog entries={entries} currentText={currentText} />
       {isThinking && <ThinkingSpinner />}
+      {marketplace && (
+        <MarketplaceSelect
+          title={marketplace.title}
+          items={marketplace.items}
+          onSelect={(item) => {
+            sendToBackend({ type: 'marketplace_select', index: item.index });
+            setMarketplace(null);
+          }}
+          onCancel={() => {
+            sendToBackend({ type: 'marketplace_close' });
+            setMarketplace(null);
+          }}
+        />
+      )}
+      {actionPicker && (
+        <ActionSelect
+          title={actionPicker.name}
+          actions={actionPicker.actions}
+          onSelect={(actionId) => {
+            sendToBackend({ type: 'action_select', actionId });
+            setActionPicker(null);
+          }}
+          onCancel={() => {
+            setActionPicker(null);
+          }}
+        />
+      )}
       {permissionRequest ? (
         <PermissionDialog
           toolName={permissionRequest.toolName}
@@ -124,6 +171,11 @@ export function App() {
       ) : (
         <InputBar onSubmit={handleSubmit} disabled={isThinking} />
       )}
+      <StatusBar
+        model={welcomeData?.model || ''}
+        tokens={totalTokens}
+        isThinking={isThinking}
+      />
     </Box>
   );
 }
