@@ -49,20 +49,20 @@ export function Banner({ data }: BannerProps) {
         ))}
       </Box>
 
-      <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={2} marginLeft={1}>
+      <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={2} marginLeft={1}>
         <Text bold color="cyan">Local LLM Agent</Text>
-        <Text color="gray">────────────────────</Text>
+        <Text color="yellow">────────────────────────</Text>
         {info.map(([label, value], i) => (
           label ? (
             <Text key={i}>
-              <Text dimColor>{label.padEnd(14)}</Text>
-              <Text>{value}</Text>
+              <Text color="yellow">{label.padEnd(14)}</Text>
+              <Text color="white" bold>{value}</Text>
             </Text>
           ) : (
             <Text key={i}> </Text>
           )
         ))}
-        <Text color="gray">────────────────────</Text>
+        <Text color="yellow">────────────────────────</Text>
         <Text color="green">Ready</Text>
       </Box>
     </Box>
