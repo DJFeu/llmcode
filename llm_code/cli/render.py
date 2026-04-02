@@ -66,6 +66,7 @@ SLASH_COMMANDS_HELP = [
     ("/index", "Show project index summary"),
     ("/index rebuild", "Rebuild project index"),
     ("/lsp", "Show LSP server status"),
+    ("/budget <tokens>", "Set output token budget"),
     ("/exit", "Exit the application"),
 ]
 

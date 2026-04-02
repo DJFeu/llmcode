@@ -20,6 +20,7 @@ KNOWN_COMMANDS = frozenset({
     "memory",
     "index",
     "lsp",
+    "budget",
 })
 
 

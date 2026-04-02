@@ -67,6 +67,7 @@ class ConversationRuntime:
         session: "Session",
         context: "ProjectContext",
         checkpoint_manager: Any = None,
+        token_budget: Any = None,
     ) -> None:
         self._provider = provider
         self._tool_registry = tool_registry
@@ -77,6 +78,7 @@ class ConversationRuntime:
         self.session = session
         self._context = context
         self._checkpoint_mgr = checkpoint_manager
+        self._token_budget = token_budget
         self._has_attempted_reactive_compact = False
 
     async def run_turn(self, user_input: str) -> AsyncIterator[StreamEvent]:

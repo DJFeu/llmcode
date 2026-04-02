@@ -56,12 +56,14 @@ _PERMISSION_CHOICES = ["prompt", "auto_accept", "read_only", "workspace_write", 
     default=None,
     help="Permission mode",
 )
+@click.option("--budget", type=int, default=None, help="Token budget target")
 def main(
     prompt: str | None,
     model: str | None,
     api: str | None,
     api_key: str | None,
     permission: str | None,
+    budget: int | None,
 ) -> None:
     """llm-code: AI coding assistant CLI."""
     cwd = Path.cwd()
@@ -86,7 +88,7 @@ def main(
         cli_overrides=cli_overrides,
     )
 
-    app = CliApp(config=config, cwd=cwd)
+    app = CliApp(config=config, cwd=cwd, budget=budget)
 
     # Detect stdin pipe mode
     stdin_is_pipe = not sys.stdin.isatty()
@@ -113,9 +115,10 @@ def main(
 class CliApp:
     """Main CLI application class."""
 
-    def __init__(self, config: RuntimeConfig, cwd: Path | None = None) -> None:
+    def __init__(self, config: RuntimeConfig, cwd: Path | None = None, budget: int | None = None) -> None:
         self._config = config
         self._cwd = cwd or Path.cwd()
+        self._budget = budget
         self._console = Console()
         self._renderer = TerminalRenderer(self._console)
         self._input = InputHandler(
@@ -199,6 +202,12 @@ class CliApp:
             checkpoint_mgr = CheckpointManager(self._cwd)
         self._checkpoint_mgr = checkpoint_mgr
 
+        # Create token budget if specified
+        token_budget = None
+        if self._budget is not None:
+            from llm_code.runtime.token_budget import TokenBudget
+            token_budget = TokenBudget(target=self._budget)
+
         self._runtime = ConversationRuntime(
             provider=provider,
             tool_registry=self._registry,
@@ -209,6 +218,7 @@ class CliApp:
             session=session,
             context=context,
             checkpoint_manager=checkpoint_mgr,
+            token_budget=token_budget,
         )
 
         # Register AgentTool if available (needs runtime, built after runtime init)
@@ -415,6 +425,20 @@ class CliApp:
 
         elif name == "lsp":
             self._console.print("[dim]LSP: not yet started in this session[/dim]")
+
+        elif name == "budget":
+            if args.strip():
+                try:
+                    target = int(args.strip())
+                    self._budget = target
+                    self._console.print(f"[dim]Token budget set: {target:,}[/dim]")
+                except ValueError:
+                    self._console.print("[red]Usage: /budget <number>[/red]")
+            else:
+                if self._budget is not None:
+                    self._console.print(f"[dim]Current token budget: {self._budget:,}[/dim]")
+                else:
+                    self._console.print("[dim]No budget set.[/dim]")
 
         else:
             self._console.print(f"[red]Unknown command: /{name}[/red] — type /help for help")
