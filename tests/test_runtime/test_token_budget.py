@@ -1,7 +1,6 @@
 """Tests for TokenBudget."""
 from __future__ import annotations
 
-import pytest
 
 from llm_code.runtime.token_budget import TokenBudget
 

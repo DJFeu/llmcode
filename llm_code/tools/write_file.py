@@ -3,7 +3,14 @@ from __future__ import annotations
 
 import pathlib
 
+from pydantic import BaseModel
+
 from llm_code.tools.base import PermissionLevel, Tool, ToolResult
+
+
+class WriteFileInput(BaseModel):
+    path: str
+    content: str
 
 
 class WriteFileTool(Tool):
@@ -29,6 +36,10 @@ class WriteFileTool(Tool):
     @property
     def required_permission(self) -> PermissionLevel:
         return PermissionLevel.WORKSPACE_WRITE
+
+    @property
+    def input_model(self) -> type[WriteFileInput]:
+        return WriteFileInput
 
     def execute(self, args: dict) -> ToolResult:
         path = pathlib.Path(args["path"])

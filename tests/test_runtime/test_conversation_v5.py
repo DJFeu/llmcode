@@ -205,8 +205,7 @@ class TestReactiveCompact:
     @pytest.mark.asyncio
     async def test_session_compressed_before_retry(self, tmp_path: Path) -> None:
         """After 413 error, the session is compressed before the retry."""
-        from llm_code.api.types import Message, TextBlock, ToolResultBlock
-        import dataclasses
+        from llm_code.api.types import Message, ToolResultBlock
 
         class _FailOnceSaveRequestProvider:
             def __init__(self) -> None:

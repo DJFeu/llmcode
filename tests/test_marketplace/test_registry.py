@@ -1,9 +1,6 @@
 """Tests for llm_code.marketplace.registry — TDD: written before implementation."""
 from __future__ import annotations
 
-import json
-from abc import ABC
-from typing import Any
 
 import httpx
 import pytest

@@ -1,14 +1,13 @@
 """Tests for McpToolBridge and McpServerManager (Task 4)."""
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 import pytest
 
 from llm_code.mcp.client import McpClient
 from llm_code.mcp.transport import McpTransport
-from llm_code.mcp.types import McpServerConfig, McpToolDefinition
+from llm_code.mcp.types import McpToolDefinition
 from llm_code.mcp.bridge import McpToolBridge
 from llm_code.mcp.manager import McpServerManager
 from llm_code.tools.base import PermissionLevel, ToolResult

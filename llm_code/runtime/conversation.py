@@ -84,19 +84,24 @@ class ConversationRuntime:
         self._token_budget = token_budget
         self._has_attempted_reactive_compact = False
 
-    async def run_turn(self, user_input: str) -> AsyncIterator[StreamEvent]:
+    async def run_turn(self, user_input: str, images: list | None = None) -> AsyncIterator[StreamEvent]:
         """Run one user turn (may involve multiple LLM calls for tool use)."""
         logger.debug("Starting turn: %s", user_input[:80])
-        # 1. Add user message to session
-        user_msg = Message(role="user", content=(TextBlock(text=user_input),))
+        # 1. Add user message to session (with optional images)
+        from llm_code.api.types import ImageBlock as IB
+        content_blocks: list = [TextBlock(text=user_input)]
+        if images:
+            content_blocks.extend(images)
+        user_msg = Message(role="user", content=tuple(content_blocks))
         self.session = self.session.add_message(user_msg)
 
         accumulated_usage = TokenUsage(input_tokens=0, output_tokens=0)
         self._has_attempted_reactive_compact = False
+        force_xml = getattr(self, "_force_xml_mode", False)
 
         for _iteration in range(self._config.max_turn_iterations):
             # 2. Build system prompt
-            use_native = getattr(self._provider, "supports_native_tools", lambda: True)()
+            use_native = getattr(self._provider, "supports_native_tools", lambda: True)() and not force_xml
             tool_defs = self._tool_registry.definitions()
             system_prompt = self._prompt_builder.build(
                 self._context,
@@ -114,12 +119,29 @@ class ConversationRuntime:
                 temperature=self._config.temperature,
             )
 
-            # Reactive compact: catch 413 / "prompt too long" and retry once
+            # Error recovery: tool choice fallback + reactive compact
             try:
                 stream = await self._provider.stream_message(request)
             except Exception as exc:
                 _exc_str = str(exc)
-                if (
+                # Auto-fallback: if native tool calling is not supported by server
+                if "tool-call-parser" in _exc_str or "tool choice" in _exc_str.lower():
+                    logger.warning("Server does not support native tool calling; falling back to XML tag mode")
+                    self._force_xml_mode = True
+                    # Rebuild request without tools
+                    system_prompt = self._prompt_builder.build(
+                        self._context, tools=tool_defs, native_tools=False,
+                    )
+                    request = MessageRequest(
+                        model=getattr(self._config, "model", ""),
+                        messages=self.session.messages,
+                        system=system_prompt,
+                        tools=(),
+                        max_tokens=self._config.max_tokens,
+                        temperature=self._config.temperature,
+                    )
+                    stream = await self._provider.stream_message(request)
+                elif (
                     ("413" in _exc_str or "prompt too long" in _exc_str.lower())
                     and not self._has_attempted_reactive_compact
                 ):

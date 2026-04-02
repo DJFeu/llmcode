@@ -11,11 +11,9 @@ from llm_code.api.types import (
     StreamEvent,
     StreamMessageStop,
     StreamTextDelta,
-    StreamToolProgress,
     StreamToolUseInputDelta,
     StreamToolUseStart,
     TokenUsage,
-    ToolResultBlock,
 )
 from llm_code.runtime.context import ProjectContext
 from llm_code.runtime.conversation import ConversationRuntime

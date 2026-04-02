@@ -3,7 +3,16 @@ from __future__ import annotations
 
 import pathlib
 
+from pydantic import BaseModel
+
 from llm_code.tools.base import PermissionLevel, Tool, ToolResult
+
+
+class EditFileInput(BaseModel):
+    path: str
+    old: str
+    new: str
+    replace_all: bool = False
 
 
 class EditFileTool(Tool):
@@ -35,6 +44,10 @@ class EditFileTool(Tool):
     @property
     def required_permission(self) -> PermissionLevel:
         return PermissionLevel.WORKSPACE_WRITE
+
+    @property
+    def input_model(self) -> type[EditFileInput]:
+        return EditFileInput
 
     def execute(self, args: dict) -> ToolResult:
         path = pathlib.Path(args["path"])

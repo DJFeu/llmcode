@@ -3,11 +3,22 @@ from __future__ import annotations
 
 import pathlib
 import re
+from typing import Callable
 
-from llm_code.tools.base import PermissionLevel, Tool, ToolResult
+from pydantic import BaseModel
+
+from llm_code.tools.base import PermissionLevel, Tool, ToolProgress, ToolResult
 
 _MAX_MATCHES = 100
 _MAX_FILES_SCANNED = 500
+_PROGRESS_INTERVAL = 100  # emit a progress event every N files scanned
+
+
+class GrepSearchInput(BaseModel):
+    pattern: str
+    path: str = "."
+    glob: str = "**/*"
+    context: int = 0
 
 
 class GrepSearchTool(Tool):
@@ -49,7 +60,31 @@ class GrepSearchTool(Tool):
     def required_permission(self) -> PermissionLevel:
         return PermissionLevel.READ_ONLY
 
+    @property
+    def input_model(self) -> type[GrepSearchInput]:
+        return GrepSearchInput
+
+    def is_read_only(self, args: dict) -> bool:
+        return True
+
+    def is_concurrency_safe(self, args: dict) -> bool:
+        return True
+
     def execute(self, args: dict) -> ToolResult:
+        return self._search(args, on_progress=None)
+
+    def execute_with_progress(
+        self,
+        args: dict,
+        on_progress: Callable[[ToolProgress], None],
+    ) -> ToolResult:
+        return self._search(args, on_progress=on_progress)
+
+    def _search(
+        self,
+        args: dict,
+        on_progress: Callable[[ToolProgress], None] | None,
+    ) -> ToolResult:
         pattern_str: str = args["pattern"]
         search_path = pathlib.Path(args.get("path", "."))
         glob_filter: str = args.get("glob", "**/*")
@@ -67,13 +102,26 @@ class GrepSearchTool(Tool):
             return ToolResult(output=f"Glob error: {exc}", is_error=True)
 
         candidates = candidates[:_MAX_FILES_SCANNED]
+        total = len(candidates)
 
         results: list[str] = []
         match_count = 0
 
-        for file_path in candidates:
+        for file_idx, file_path in enumerate(candidates, start=1):
             if match_count >= _MAX_MATCHES:
                 break
+
+            # Emit progress every PROGRESS_INTERVAL files
+            if on_progress is not None and file_idx % _PROGRESS_INTERVAL == 0:
+                percent = round(file_idx / total * 100.0, 1) if total else 100.0
+                on_progress(
+                    ToolProgress(
+                        tool_name=self.name,
+                        message=f"Scanned {file_idx}/{total} files",
+                        percent=percent,
+                    )
+                )
+
             try:
                 lines = file_path.read_text(errors="replace").splitlines()
             except Exception:

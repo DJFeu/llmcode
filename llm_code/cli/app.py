@@ -44,6 +44,54 @@ _BANNER = """[bold cyan]llm-code[/bold cyan] — AI coding assistant
 Type [bold]/help[/bold] for commands, [bold]/exit[/bold] to quit.
 """
 
+_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
+
+
+def _extract_dropped_images(text: str) -> tuple[str, list]:
+    r"""Detect drag-and-dropped image file paths in user input.
+
+    Terminal drag-and-drop produces paths like:
+      /Users/adam/screenshot.png
+      '/Users/adam/my screenshot.png'
+      /Users/adam/my\ screenshot.png
+
+    Returns (cleaned_text, list_of_ImageBlocks).
+    """
+    import re
+    import shlex
+    from pathlib import Path as P
+
+    from llm_code.cli.image import load_image_from_path
+
+    images = []
+    remaining_parts = []
+
+    # Split input by whitespace, but respect quotes and backslash-escapes
+    try:
+        tokens = shlex.split(text)
+    except ValueError:
+        # Unmatched quotes — fall back to simple split
+        tokens = text.split()
+
+    for token in tokens:
+        # Strip trailing whitespace/newlines that drag-drop sometimes adds
+        token = token.strip()
+        if not token:
+            continue
+
+        path = P(token)
+        if path.suffix.lower() in _IMAGE_EXTENSIONS and path.is_file():
+            try:
+                img = load_image_from_path(str(path))
+                images.append(img)
+            except Exception:
+                remaining_parts.append(token)
+        else:
+            remaining_parts.append(token)
+
+    cleaned = " ".join(remaining_parts)
+    return cleaned, images
+
 _PERMISSION_CHOICES = ["prompt", "auto_accept", "read_only", "workspace_write", "full_access"]
 
 logger = get_logger(__name__)
@@ -87,7 +135,7 @@ def main(
         cli_overrides.setdefault("permissions", {})["mode"] = permission
 
     # Load config
-    user_dir = Path.home() / ".config" / "llm-code"
+    user_dir = Path.home() / ".llm-code"
     config = load_config(
         user_dir=user_dir,
         project_dir=cwd,
@@ -129,9 +177,10 @@ class CliApp:
         self._console = Console()
         self._renderer = TerminalRenderer(self._console)
         self._input = InputHandler(
-            history_path=Path.home() / ".config" / "llm-code" / "history"
+            history_path=Path.home() / ".llm-code" / "history"
         )
         self._cleanup_registered = False
+        self._pending_images: list = []  # Images queued for next turn
 
         # Build tool registry with all tools
         self._registry = ToolRegistry()
@@ -159,7 +208,7 @@ class CliApp:
         self._lsp_manager = None
 
         # Session manager
-        session_dir = Path.home() / ".config" / "llm-code" / "sessions"
+        session_dir = Path.home() / ".llm-code" / "sessions"
         self._session_manager = SessionManager(session_dir)
 
         # Runtime will be initialized on first use
@@ -329,7 +378,7 @@ class CliApp:
         logger.debug("REPL started")
 
         while True:
-            user_input = self._input.read("> ")
+            user_input = await self._input.read("> ")
             if user_input is None:
                 # Ctrl+C or Ctrl+D
                 self._console.print("\n[dim]Goodbye![/dim]")
@@ -347,8 +396,22 @@ class CliApp:
                     break
                 continue
 
-            # Regular user message
-            await self._run_turn(user_input)
+            # Regular user message — collect images (pending + paste + drag-drop)
+            images = list(self._pending_images)
+            self._pending_images.clear()
+            pasted = self._input.get_pasted_image()
+            if pasted:
+                images.append(pasted)
+            # Strip the [📎 image pasted] marker from input text
+            clean_input = user_input.replace("[📎 image pasted] ", "").strip()
+            # Detect drag-and-dropped image file paths in input
+            clean_input, dropped = _extract_dropped_images(clean_input)
+            images.extend(dropped)
+            if not clean_input and images:
+                clean_input = "What is in this image?"
+            if images:
+                self._console.print(f"[dim]📎 Sending with {len(images)} image(s)[/dim]")
+            await self._run_turn(clean_input, images=images or None)
 
     async def run_prompt(self, prompt: str) -> None:
         """Run a single prompt in one-shot mode."""
@@ -356,7 +419,7 @@ class CliApp:
         self._init_session()
         await self._run_turn(prompt)
 
-    async def _run_turn(self, user_input: str) -> None:
+    async def _run_turn(self, user_input: str, images: list | None = None) -> None:
         """Stream events from a turn and render output."""
         if self._runtime is None:
             self._init_session()
@@ -367,7 +430,7 @@ class CliApp:
         streamer = IncrementalMarkdownRenderer(self._console)
 
         assert self._runtime is not None
-        async for event in self._runtime.run_turn(user_input):
+        async for event in self._runtime.run_turn(user_input, images=images):
             if isinstance(event, StreamTextDelta):
                 streamer.feed(event.text)
             elif isinstance(event, StreamToolProgress):
@@ -450,10 +513,10 @@ class CliApp:
             if args:
                 try:
                     img = load_image_from_path(args)
+                    self._pending_images.append(img)
                     self._console.print(
-                        f"[dim]Image loaded: {args} ({img.media_type})[/dim]"
+                        f"[dim]📎 Image attached: {args} — will be sent with your next message[/dim]"
                     )
-                    # TODO: attach to next message
                 except FileNotFoundError:
                     self._console.print(f"[red]Image not found: {args}[/red]")
             else:

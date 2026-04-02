@@ -1,7 +1,5 @@
 """Tests for MCP transport layer (Task 2)."""
-import json
 import pytest
-import pytest_asyncio
 
 from llm_code.mcp.transport import McpTransport, StdioTransport, HttpTransport
 

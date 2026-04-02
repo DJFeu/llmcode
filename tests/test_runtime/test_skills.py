@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from llm_code.runtime.skills import Skill, SkillLoader, SkillSet
+from llm_code.runtime.skills import Skill, SkillLoader
 
 
 # ---------------------------------------------------------------------------

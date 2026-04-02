@@ -1,8 +1,6 @@
 """Tests for AgentTool — TDD (RED first)."""
 from __future__ import annotations
 
-import asyncio
-import pytest
 
 from llm_code.api.types import StreamMessageStop, StreamTextDelta, TokenUsage
 from llm_code.tools.base import PermissionLevel
