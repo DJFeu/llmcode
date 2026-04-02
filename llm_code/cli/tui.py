@@ -200,7 +200,7 @@ class LLMCodeCLI:
 
         info_lines = [
             ("[bold cyan]Local LLM Agent[/]", ""),
-            ("[grey50]────────────────────────[/]", ""),
+            ("[yellow]────────────────────────[/]", ""),
             ("Model", model),
             ("Workspace", workspace),
             ("Directory", str(self._cwd)),
@@ -209,7 +209,7 @@ class LLMCodeCLI:
             ("Quick start", "/help · /skill · /mcp"),
             ("Multiline", "Shift+Enter"),
             ("Images", f"{paste_key} pastes"),
-            ("[grey50]────────────────────────[/]", ""),
+            ("[yellow]────────────────────────[/]", ""),
             ("[green]Ready[/]", ""),
         ]
 
@@ -232,7 +232,7 @@ class LLMCodeCLI:
                 if not value and label:
                     right = f"  {label}"
                 elif label and value:
-                    right = f"  [grey50]{label:<14}[/] {value}"
+                    right = f"  [yellow]{label:<14}[/] [bold white]{value}[/]"
                 else:
                     right = ""
             else:
