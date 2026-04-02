@@ -128,6 +128,8 @@ class CliApp:
 
         # Runtime will be initialized on first use
         self._runtime: ConversationRuntime | None = None
+        self._mcp_manager = None
+        self._skills = None
 
     def _init_session(self) -> None:
         """Initialize the runtime with a fresh session."""
@@ -175,6 +177,13 @@ class CliApp:
             context=context,
         )
 
+        from llm_code.runtime.skills import SkillLoader
+        skill_dirs = [
+            Path.home() / ".llm-code" / "skills",
+            self._cwd / ".llm-code" / "skills",
+        ]
+        self._skills = SkillLoader().load_from_dirs(skill_dirs)
+
     async def run_repl(self) -> None:
         """Run the interactive REPL loop."""
         self._console.print(_BANNER)
@@ -212,42 +221,26 @@ class CliApp:
         if self._runtime is None:
             self._init_session()
 
-        import re
+        from llm_code.api.types import StreamMessageStop, StreamTextDelta, StreamToolProgress
+        from llm_code.cli.streaming import IncrementalMarkdownRenderer
 
-        from llm_code.api.types import StreamTextDelta, StreamMessageStop, StreamToolProgress
-
-        text_buffer: list[str] = []
+        streamer = IncrementalMarkdownRenderer(self._console)
 
         assert self._runtime is not None
         async for event in self._runtime.run_turn(user_input):
             if isinstance(event, StreamTextDelta):
-                text_buffer.append(event.text)
+                streamer.feed(event.text)
             elif isinstance(event, StreamToolProgress):
                 self._renderer.render_tool_progress(
                     event.tool_name, event.message, event.percent,
                 )
             elif isinstance(event, StreamMessageStop):
-                # Render accumulated text
-                full_text = "".join(text_buffer)
-                # Strip XML tool_call tags if present
-                clean_text = re.sub(
-                    r"<tool_call>.*?</tool_call>", "", full_text, flags=re.DOTALL
-                ).strip()
-                if clean_text:
-                    self._renderer.render_markdown(clean_text)
-                text_buffer.clear()
+                streamer.finish()
                 # Render usage
                 if event.usage:
                     self._renderer.render_usage(event.usage)
 
-        # In case we got text without a stop event
-        if text_buffer:
-            full_text = "".join(text_buffer)
-            clean_text = re.sub(
-                r"<tool_call>.*?</tool_call>", "", full_text, flags=re.DOTALL
-            ).strip()
-            if clean_text:
-                self._renderer.render_markdown(clean_text)
+        streamer.finish()
 
     def _handle_command(self, cmd: SlashCommand) -> bool:
         """Handle a slash command.
@@ -285,6 +278,19 @@ class CliApp:
 
         elif name == "config":
             self._handle_config_command(args)
+
+        elif name == "plugin":
+            self._handle_plugin_command(args)
+
+        elif name == "skill":
+            # Show available skills
+            if self._skills:
+                for s in self._skills.auto_skills:
+                    self._console.print(f"  [green]auto[/green] {s.name} — {s.description}")
+                for s in self._skills.command_skills:
+                    self._console.print(f"  [cyan]/{s.trigger}[/cyan] {s.name} — {s.description}")
+            else:
+                self._console.print("[dim]No skills loaded.[/dim]")
 
         elif name == "cd":
             if args:
@@ -375,6 +381,32 @@ class CliApp:
             self._console.print(
                 "[red]Unknown session subcommand.[/red] Use: list, save, switch <id>"
             )
+
+    def _handle_plugin_command(self, args: str) -> None:
+        """Handle /plugin subcommands: list, enable, disable, uninstall."""
+        parts = args.split(None, 1)
+        subcmd = parts[0] if parts else "list"
+        subargs = parts[1] if len(parts) > 1 else ""
+
+        from llm_code.marketplace.installer import PluginInstaller
+        installer = PluginInstaller(Path.home() / ".llm-code" / "plugins")
+
+        if subcmd == "list":
+            plugins = installer.list_installed()
+            if not plugins:
+                self._console.print("[dim]No plugins installed.[/dim]")
+            for p in plugins:
+                status = "[green]on[/green]" if p.enabled else "[red]off[/red]"
+                self._console.print(f"  {status} {p.manifest.name} v{p.manifest.version}")
+        elif subcmd == "enable" and subargs:
+            installer.enable(subargs)
+            self._console.print(f"[dim]Enabled: {subargs}[/dim]")
+        elif subcmd == "disable" and subargs:
+            installer.disable(subargs)
+            self._console.print(f"[dim]Disabled: {subargs}[/dim]")
+        elif subcmd == "uninstall" and subargs:
+            installer.uninstall(subargs)
+            self._console.print(f"[dim]Uninstalled: {subargs}[/dim]")
 
     def _handle_config_command(self, args: str) -> None:
         """Handle /config set <key> <value>."""

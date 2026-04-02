@@ -57,6 +57,8 @@ SLASH_COMMANDS_HELP = [
     ("/cd <path>", "Change the working directory"),
     ("/image <path>", "Attach an image from file path"),
     ("/cost", "Show token usage and estimated cost"),
+    ("/plugin list|enable|disable|uninstall", "Manage plugins"),
+    ("/skill", "List available skills"),
     ("/exit", "Exit the application"),
 ]
 

@@ -39,6 +39,9 @@ class RuntimeConfig:
     max_retries: int = 2
     native_tools: bool = True
     vision: VisionConfig = field(default_factory=VisionConfig)
+    mcp_servers: dict = field(default_factory=dict)
+    registries: dict = field(default_factory=dict)
+    skills_dirs: tuple[str, ...] = ()
 
 
 def merge_configs(base: dict, override: dict) -> dict:
@@ -103,6 +106,9 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         max_retries=data.get("max_retries", 2),
         native_tools=data.get("native_tools", True),
         vision=vision,
+        mcp_servers=data.get("mcpServers", {}),
+        registries=data.get("registries", {}),
+        skills_dirs=tuple(data.get("skills_dirs", [])),
     )
 
 

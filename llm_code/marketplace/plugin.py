@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +20,7 @@ class PluginManifest:
     keywords: tuple[str, ...] = ()
     commands: tuple[str, ...] = ()
     agents: tuple[str, ...] | None = None
-    skills: tuple[str, ...] | None = None
+    skills: str | tuple[str, ...] | None = None
     hooks: dict[str, Any] | None = None
     mcp_servers: tuple[dict[str, Any], ...] | None = None
     lsp_servers: tuple[dict[str, Any], ...] | None = None
@@ -60,7 +60,7 @@ class PluginManifest:
             keywords=tuple(keywords_raw) if keywords_raw else (),
             commands=tuple(commands_raw) if commands_raw else (),
             agents=tuple(agents_raw) if agents_raw is not None else None,
-            skills=tuple(skills_raw) if skills_raw is not None else None,
+            skills=skills_raw if isinstance(skills_raw, str) else (tuple(skills_raw) if skills_raw is not None else None),
             hooks=hooks_raw,
             mcp_servers=tuple(mcp_raw) if mcp_raw is not None else None,
             lsp_servers=tuple(lsp_raw) if lsp_raw is not None else None,

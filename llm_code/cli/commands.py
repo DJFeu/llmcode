@@ -3,6 +3,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+KNOWN_COMMANDS = frozenset({
+    "help",
+    "clear",
+    "model",
+    "session",
+    "config",
+    "cd",
+    "image",
+    "cost",
+    "exit",
+    "quit",
+    "plugin",
+    "skill",
+})
+
 
 @dataclass(frozen=True)
 class SlashCommand:
