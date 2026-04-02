@@ -23,8 +23,9 @@ from llm_code.api.types import (
     ToolResultBlock,
     ToolUseBlock,
 )
+from llm_code.runtime.compressor import ContextCompressor
 from llm_code.runtime.permissions import PermissionOutcome
-from llm_code.tools.base import PermissionLevel
+from llm_code.tools.base import PermissionLevel, ToolResult
 from llm_code.tools.parsing import ParsedToolCall, parse_tool_calls
 
 if TYPE_CHECKING:
@@ -37,6 +38,9 @@ if TYPE_CHECKING:
 
 # Thread pool for running blocking tool execution off the event loop
 _TOOL_EXECUTOR = ThreadPoolExecutor(max_workers=4)
+
+# Maximum number of characters to inline in tool results
+_MAX_INLINE_RESULT = 4000
 
 
 @dataclasses.dataclass(frozen=True)
@@ -73,6 +77,7 @@ class ConversationRuntime:
         self.session = session
         self._context = context
         self._checkpoint_mgr = checkpoint_manager
+        self._has_attempted_reactive_compact = False
 
     async def run_turn(self, user_input: str) -> AsyncIterator[StreamEvent]:
         """Run one user turn (may involve multiple LLM calls for tool use)."""
@@ -81,6 +86,7 @@ class ConversationRuntime:
         self.session = self.session.add_message(user_msg)
 
         accumulated_usage = TokenUsage(input_tokens=0, output_tokens=0)
+        self._has_attempted_reactive_compact = False
 
         for _iteration in range(self._config.max_turn_iterations):
             # 2. Build system prompt
@@ -102,7 +108,23 @@ class ConversationRuntime:
                 temperature=self._config.temperature,
             )
 
-            stream = await self._provider.stream_message(request)
+            # Reactive compact: catch 413 / "prompt too long" and retry once
+            try:
+                stream = await self._provider.stream_message(request)
+            except Exception as exc:
+                _exc_str = str(exc)
+                if (
+                    ("413" in _exc_str or "prompt too long" in _exc_str.lower())
+                    and not self._has_attempted_reactive_compact
+                ):
+                    self._has_attempted_reactive_compact = True
+                    _compressor = ContextCompressor()
+                    self.session = _compressor.compress(
+                        self.session,
+                        self._config.compact_after_tokens // 2,
+                    )
+                    continue  # retry this iteration of the turn loop
+                raise
 
             # 4. Collect events and buffers
             text_parts: list[str] = []
@@ -342,6 +364,7 @@ class ConversationRuntime:
             )
 
         tool_result = await future
+        tool_result = self._budget_tool_result(tool_result, call.id)
 
         # 7. Post-tool hook
         if hasattr(hook_runner, "post_tool_use"):
@@ -354,3 +377,21 @@ class ConversationRuntime:
             content=tool_result.output,
             is_error=tool_result.is_error,
         )
+
+    def _budget_tool_result(self, result: ToolResult, call_id: str) -> ToolResult:
+        """If result is too large, persist to disk and return truncated summary."""
+        if len(result.output) <= _MAX_INLINE_RESULT:
+            return result
+
+        # Save full output
+        cache_dir = self._context.cwd / ".llm-code" / "result_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_path = cache_dir / f"{call_id}.txt"
+        cache_path.write_text(result.output, encoding="utf-8")
+
+        # Truncated summary
+        summary = (
+            result.output[:1000]
+            + f"\n\n... [{len(result.output)} chars total, full output saved to {cache_path}. Use read_file to access.]"
+        )
+        return ToolResult(output=summary, is_error=result.is_error, metadata=result.metadata)
