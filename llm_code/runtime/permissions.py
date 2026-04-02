@@ -51,7 +51,12 @@ class PermissionPolicy:
         self._deny_tools = deny_tools
         self._deny_patterns = deny_patterns
 
-    def authorize(self, tool_name: str, required: PermissionLevel) -> PermissionOutcome:
+    def authorize(
+        self,
+        tool_name: str,
+        required: PermissionLevel,
+        effective_level: PermissionLevel | None = None,
+    ) -> PermissionOutcome:
         """Determine whether a tool invocation is authorized.
 
         Precedence:
@@ -59,8 +64,19 @@ class PermissionPolicy:
           2. allow_tools → ALLOW
           3. AUTO_ACCEPT → always ALLOW
           4. PROMPT mode: READ_ONLY always allowed, elevated → NEED_PROMPT
-          5. Other modes: compare required level vs mode max level
+          5. Other modes: compare effective level vs mode max level
+
+        Args:
+            tool_name: The name of the tool being authorized.
+            required: The tool's declared required permission level.
+            effective_level: If provided, used instead of ``required`` for
+                level comparisons (e.g. after safety analysis determines the
+                actual operation is less or more privileged than declared).
+                Deny/allow lists still take full precedence.
         """
+        # Use effective_level for comparisons when provided, else fall back to required
+        level = effective_level if effective_level is not None else required
+
         # 1. Deny list and patterns always win
         if tool_name in self._deny_tools:
             return PermissionOutcome.DENY
@@ -78,13 +94,13 @@ class PermissionPolicy:
 
         # 4. PROMPT mode: read-only is always allowed, elevated needs prompt
         if self._mode == PermissionMode.PROMPT:
-            if required == PermissionLevel.READ_ONLY:
+            if level == PermissionLevel.READ_ONLY:
                 return PermissionOutcome.ALLOW
             return PermissionOutcome.NEED_PROMPT
 
         # 5. Level-based comparison for READ_ONLY, WORKSPACE_WRITE, FULL_ACCESS modes
-        required_rank = _LEVEL_RANK[required]
+        level_rank = _LEVEL_RANK[level]
         mode_max = _MODE_MAX_LEVEL[self._mode]
-        if required_rank <= mode_max:
+        if level_rank <= mode_max:
             return PermissionOutcome.ALLOW
         return PermissionOutcome.DENY
