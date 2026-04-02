@@ -482,22 +482,35 @@ class LLMCodeCLI:
 
     # ── NPM Fetchers ───────────────────────────────────────────────
 
-    async def _fetch_npm_skills(self) -> list[tuple[str, str]]:
-        import httpx
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                "https://registry.npmjs.org/-/v1/search",
-                params={"text": "claude-code skill", "size": 50},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        results = []
-        for obj in data.get("objects", []):
-            pkg = obj.get("package", {})
-            name = pkg.get("name", "")
-            desc = pkg.get("description", "")[:70]
-            if "skill" in name.lower() or ("claude" in name.lower() and "skill" in desc.lower()):
-                results.append((name, desc))
+    async def _fetch_marketplace_skills(self) -> list[tuple[str, str]]:
+        """Fetch skills from ClawHub (44k+) + npm."""
+        results: list[tuple[str, str]] = []
+        # ClawHub first (largest marketplace)
+        try:
+            from llm_code.marketplace.builtin_registry import search_clawhub_skills
+            clawhub = await search_clawhub_skills("", limit=30)
+            for slug, desc in clawhub:
+                results.append((f"clawhub:{slug}", f"[ClawHub] {desc}"))
+        except Exception:
+            pass
+        # npm second
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    "https://registry.npmjs.org/-/v1/search",
+                    params={"text": "claude-code skill", "size": 20},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            for obj in data.get("objects", []):
+                pkg = obj.get("package", {})
+                name = pkg.get("name", "")
+                desc = pkg.get("description", "")[:70]
+                if "skill" in name.lower() or ("claude" in name.lower() and "skill" in desc.lower()):
+                    results.append((name, f"[npm] {desc}"))
+        except Exception:
+            pass
         return results
 
     async def _fetch_npm_mcp(self) -> list[tuple[str, str]]:
@@ -771,9 +784,9 @@ class LLMCodeCLI:
                     _aio.get_running_loop()
                     import concurrent.futures
                     with concurrent.futures.ThreadPoolExecutor() as pool:
-                        market = pool.submit(_aio.run, self._fetch_npm_skills()).result()
+                        market = pool.submit(_aio.run, self._fetch_marketplace_skills()).result()
                 except RuntimeError:
-                    market = _aio.run(self._fetch_npm_skills())
+                    market = _aio.run(self._fetch_marketplace_skills())
             except Exception:
                 market = []
 

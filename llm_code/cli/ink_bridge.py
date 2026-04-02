@@ -295,7 +295,7 @@ class InkBridge:
 
         # Fetch npm marketplace skills
         try:
-            market = await self._fetch_npm_skills()
+            market = await self._fetch_marketplace_skills()
             installed_names = {s.name for s in all_skills}
             for pkg_name, desc in market:
                 if pkg_name not in installed_names:
@@ -478,26 +478,33 @@ class InkBridge:
         elif action_id in ("uninstall", "disable"):
             await self._send({"type": "message", "text": f"Action '{action_id}' for '{item['name']}' — use the CLI for full management."})
 
-    async def _fetch_npm_skills(self) -> list[tuple[str, str]]:
-        """Fetch skill packages from the npm registry."""
+    async def _fetch_marketplace_skills(self) -> list[tuple[str, str]]:
+        """Fetch skills from ClawHub (44k+) + npm."""
+        results: list[tuple[str, str]] = []
+        try:
+            from llm_code.marketplace.builtin_registry import search_clawhub_skills
+            clawhub = await search_clawhub_skills("", limit=30)
+            for slug, desc in clawhub:
+                results.append((f"clawhub:{slug}", f"[ClawHub] {desc}"))
+        except Exception:
+            pass
         try:
             import httpx
-        except ImportError:
-            return []
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                "https://registry.npmjs.org/-/v1/search",
-                params={"text": "claude-code skill", "size": 50},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        results = []
-        for obj in data.get("objects", []):
-            pkg = obj.get("package", {})
-            name = pkg.get("name", "")
-            desc = pkg.get("description", "")[:70]
-            if "skill" in name.lower() or ("claude" in name.lower() and "skill" in desc.lower()):
-                results.append((name, desc))
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    "https://registry.npmjs.org/-/v1/search",
+                    params={"text": "claude-code skill", "size": 20},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            for obj in data.get("objects", []):
+                pkg = obj.get("package", {})
+                name = pkg.get("name", "")
+                desc = pkg.get("description", "")[:70]
+                if "skill" in name.lower():
+                    results.append((name, f"[npm] {desc}"))
+        except Exception:
+            pass
         return results
 
     async def _fetch_npm_plugins(self) -> list[tuple[str, str]]:

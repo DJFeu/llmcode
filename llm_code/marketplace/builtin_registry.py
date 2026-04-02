@@ -47,3 +47,41 @@ def get_all_known_plugins() -> list[dict]:
         all_plugins.append({**p, "source": "community"})
     all_plugins.sort(key=lambda x: (-x["skills"], x["name"]))
     return all_plugins
+
+
+async def search_clawhub_skills(query: str, limit: int = 30) -> list[tuple[str, str]]:
+    """Search ClawHub.ai skill marketplace (44,000+ skills)."""
+    import httpx
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(
+            "https://clawhub.ai/api/search",
+            params={"q": query, "limit": limit},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    results = []
+    for item in data.get("results", []):
+        name = item.get("displayName") or item.get("slug", "")
+        slug = item.get("slug", "")
+        summary = item.get("summary", "")[:70]
+        results.append((slug, f"{name} — {summary}"))
+    return results
+
+
+async def search_clawhub_plugins(query: str, limit: int = 30) -> list[tuple[str, str]]:
+    """Search ClawHub.ai plugin marketplace."""
+    import httpx
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(
+            "https://clawhub.ai/api/search",
+            params={"q": f"plugin {query}", "limit": limit},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    results = []
+    for item in data.get("results", []):
+        name = item.get("displayName") or item.get("slug", "")
+        slug = item.get("slug", "")
+        summary = item.get("summary", "")[:70]
+        results.append((slug, f"{name} — {summary}"))
+    return results
