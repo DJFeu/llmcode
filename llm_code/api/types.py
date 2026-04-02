@@ -108,3 +108,18 @@ class StreamToolProgress(StreamEvent):
     tool_name: str
     message: str
     percent: float | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class StreamToolExecStart(StreamEvent):
+    """Emitted when a tool starts executing."""
+    tool_name: str
+    args_summary: str
+
+
+@dataclasses.dataclass(frozen=True)
+class StreamToolExecResult(StreamEvent):
+    """Emitted when a tool finishes executing."""
+    tool_name: str
+    output: str
+    is_error: bool = False

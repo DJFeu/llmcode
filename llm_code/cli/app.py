@@ -47,6 +47,40 @@ Type [bold]/help[/bold] for commands, [bold]/exit[/bold] to quit.
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
 
 
+def _format_tool_call(tool_name: str, args_summary: str) -> str:
+    """Format tool call like Claude Code: Read(path) / Bash(cmd) / Edit(path)."""
+    import json
+    try:
+        args = json.loads(args_summary.replace("'", '"'))
+    except Exception:
+        args = {}
+
+    if not isinstance(args, dict):
+        return f"{tool_name}({args_summary[:60]})"
+
+    # Pick the most informative arg for display
+    if "path" in args:
+        display = str(args["path"])
+    elif "command" in args:
+        display = str(args["command"])[:80]
+    elif "pattern" in args:
+        display = str(args["pattern"])
+    elif "key" in args:
+        display = str(args["key"])
+    elif "task" in args:
+        display = str(args["task"])[:60]
+    elif "message" in args:
+        display = str(args["message"])[:60]
+    else:
+        vals = list(args.values())
+        display = str(vals[0])[:60] if vals else ""
+
+    # CamelCase the tool name for display
+    parts = tool_name.split("_")
+    pretty_name = "".join(p.capitalize() for p in parts)
+    return f"{pretty_name}({display})"
+
+
 def _extract_dropped_images(text: str) -> tuple[str, list]:
     r"""Detect drag-and-dropped image file paths in user input.
 
@@ -424,26 +458,136 @@ class CliApp:
         if self._runtime is None:
             self._init_session()
 
-        from llm_code.api.types import StreamMessageStop, StreamTextDelta, StreamToolProgress
+        import re
+        from llm_code.api.types import (
+            StreamMessageStop, StreamTextDelta, StreamToolProgress,
+            StreamToolExecStart, StreamToolExecResult,
+        )
         from llm_code.cli.streaming import IncrementalMarkdownRenderer
 
         streamer = IncrementalMarkdownRenderer(self._console)
+        _in_tool_call_tag = False
+        _tool_tag_buffer = ""
+
+        import time as _time
+        _turn_start = _time.monotonic()
+        _first_token = False
+        _output_tokens = 0
+        _thinking_status = self._console.status(
+            "[bold orange3]✱[/] [orange3]Thinking…[/]", spinner="dots", spinner_style="orange3",
+        )
+        _thinking_status.start()
 
         assert self._runtime is not None
+        self._console.print()  # blank line before response
         async for event in self._runtime.run_turn(user_input, images=images):
             if isinstance(event, StreamTextDelta):
-                streamer.feed(event.text)
+                _output_tokens += len(event.text) // 4  # rough estimate
+                if not _first_token:
+                    _first_token = True
+                    _thinking_status.stop()
+                    elapsed = _time.monotonic() - _turn_start
+                    self._console.print(f"[dim]({elapsed:.1f}s to first token)[/]")
+                # Filter out <tool_call>...</tool_call> tags from display
+                text = event.text
+                for char in text:
+                    if _in_tool_call_tag:
+                        _tool_tag_buffer += char
+                        if _tool_tag_buffer.endswith("</tool_call>"):
+                            _in_tool_call_tag = False
+                            _tool_tag_buffer = ""
+                    elif _tool_tag_buffer:
+                        _tool_tag_buffer += char
+                        if _tool_tag_buffer == "<tool_call>":
+                            _in_tool_call_tag = True
+                        elif not "<tool_call>".startswith(_tool_tag_buffer):
+                            # False alarm — flush accumulated chars
+                            streamer.feed(_tool_tag_buffer)
+                            _tool_tag_buffer = ""
+                    elif char == "<":
+                        _tool_tag_buffer = "<"
+                    else:
+                        streamer.feed(char)
+
+            elif isinstance(event, StreamToolExecStart):
+                # Stop thinking spinner if still running
+                if not _first_token:
+                    _thinking_status.stop()
+                    _first_token = True
+                # Flush any pending text before tool execution
+                streamer.finish()
+                # Claude Code style: ● ToolName(args)
+                self._console.print(
+                    f"[bold blue]●[/] [bold]{_format_tool_call(event.tool_name, event.args_summary)}[/]"
+                )
+                # Show spinner during tool execution
+                _thinking_status.update(
+                    f"[bold orange3]✱[/] [orange3]Running {event.tool_name}…[/]"
+                )
+                _thinking_status.start()
+
+            elif isinstance(event, StreamToolExecResult):
+                _thinking_status.stop()
+                if event.is_error:
+                    self._console.print(f"  [dim]└[/] [red]{event.output.strip()[:150]}[/]")
+                elif event.tool_name == "edit_file":
+                    for line in event.output.strip().splitlines()[:8]:
+                        if line.startswith("- "):
+                            self._console.print(f"  [dim]└[/] [red]{line}[/]")
+                        elif line.startswith("+ "):
+                            self._console.print(f"  [dim]└[/] [green]{line}[/]")
+                        else:
+                            self._console.print(f"  [dim]└[/] {line[:150]}")
+                elif event.tool_name in ("write_file", "git_commit"):
+                    self._console.print(f"  [dim]└[/] [green]{event.output.strip()[:150]}[/]")
+                elif event.tool_name == "read_file":
+                    # Show first few lines
+                    lines = event.output.strip().splitlines()
+                    preview = lines[0][:120] if lines else "(empty)"
+                    count = len(lines)
+                    self._console.print(f"  [dim]└ {preview}[/]")
+                    if count > 1:
+                        self._console.print(f"  [dim]  ... ({count} lines)[/]")
+                elif event.tool_name == "bash":
+                    lines = event.output.strip().splitlines()
+                    for line in lines[:8]:
+                        self._console.print(f"  [dim]└[/] {line[:150]}")
+                    if len(lines) > 8:
+                        self._console.print(f"  [dim]  ... ({len(lines)} lines)[/]")
+                else:
+                    lines = event.output.strip().splitlines() if event.output.strip() else ["(no output)"]
+                    for line in lines[:3]:
+                        self._console.print(f"  [dim]└[/] {line[:150]}")
+                    if len(lines) > 3:
+                        self._console.print(f"  [dim]  ... ({len(lines)} lines)[/]")
+                self._console.print()
+
             elif isinstance(event, StreamToolProgress):
                 self._renderer.render_tool_progress(
                     event.tool_name, event.message, event.percent,
                 )
-            elif isinstance(event, StreamMessageStop):
-                streamer.finish()
-                # Render usage
-                if event.usage:
-                    self._renderer.render_usage(event.usage)
 
+            elif isinstance(event, StreamMessageStop):
+                _thinking_status.stop()
+                streamer.finish()
+                if event.usage and (event.usage.input_tokens > 0 or event.usage.output_tokens > 0):
+                    _output_tokens = event.usage.output_tokens
+
+        # Ensure spinner stopped
+        _thinking_status.stop()
+
+        # Flush remaining text
+        if _tool_tag_buffer and not _in_tool_call_tag:
+            streamer.feed(_tool_tag_buffer)
         streamer.finish()
+
+        # Show turn summary (Claude Code style)
+        elapsed = _time.monotonic() - _turn_start
+        if elapsed > 0.5:
+            tokens_str = f"↓ {_output_tokens:,} tokens" if _output_tokens > 0 else ""
+            time_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{elapsed / 60:.1f}m"
+            parts = [p for p in [time_str, tokens_str] if p]
+            self._console.print(f"\n[dim]({' · '.join(parts)})[/]")
 
     def _handle_command(self, cmd: SlashCommand) -> bool:
         """Handle a slash command.

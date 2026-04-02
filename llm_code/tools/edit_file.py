@@ -75,4 +75,12 @@ class EditFileTool(Tool):
             replaced = 1
 
         path.write_text(new_content)
-        return ToolResult(output=f"Replaced {replaced} occurrence(s) of {old!r} in {path}")
+        # Build diff-style output for display
+        old_lines = old.splitlines()
+        new_lines = new.splitlines()
+        diff_parts = [f"Replaced {replaced} occurrence(s) in {path}"]
+        for line in old_lines[:5]:
+            diff_parts.append(f"- {line}")
+        for line in new_lines[:5]:
+            diff_parts.append(f"+ {line}")
+        return ToolResult(output="\n".join(diff_parts))

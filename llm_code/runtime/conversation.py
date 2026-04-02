@@ -16,6 +16,8 @@ from llm_code.api.types import (
     StreamEvent,
     StreamMessageStop,
     StreamTextDelta,
+    StreamToolExecResult,
+    StreamToolExecStart,
     StreamToolProgress,
     StreamToolUseInputDelta,
     StreamToolUseStart,
@@ -376,7 +378,11 @@ class ConversationRuntime:
             if isinstance(hook_result, dict):
                 args = hook_result
 
-        # 6. Execute in thread pool with asyncio.Queue progress bridge
+        # 6. Emit tool execution start event
+        args_preview = str(args)[:80]
+        yield StreamToolExecStart(tool_name=call.name, args_summary=args_preview)
+
+        # 7. Execute in thread pool with asyncio.Queue progress bridge
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
 
@@ -408,6 +414,13 @@ class ConversationRuntime:
             post_result = hook_runner.post_tool_use(call.name, args, tool_result)
             if hasattr(post_result, "__await__"):
                 await post_result
+
+        # 8. Emit tool execution result event
+        yield StreamToolExecResult(
+            tool_name=call.name,
+            output=tool_result.output[:200],
+            is_error=tool_result.is_error,
+        )
 
         yield ToolResultBlock(
             tool_use_id=call.id,
