@@ -214,7 +214,7 @@ class CliApp:
 
         import re
 
-        from llm_code.api.types import StreamTextDelta, StreamMessageStop
+        from llm_code.api.types import StreamTextDelta, StreamMessageStop, StreamToolProgress
 
         text_buffer: list[str] = []
 
@@ -222,6 +222,10 @@ class CliApp:
         async for event in self._runtime.run_turn(user_input):
             if isinstance(event, StreamTextDelta):
                 text_buffer.append(event.text)
+            elif isinstance(event, StreamToolProgress):
+                self._renderer.render_tool_progress(
+                    event.tool_name, event.message, event.percent,
+                )
             elif isinstance(event, StreamMessageStop):
                 # Render accumulated text
                 full_text = "".join(text_buffer)

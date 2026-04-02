@@ -136,6 +136,14 @@ class TerminalRenderer:
             f"total: {total:,}[/dim]"
         )
 
+    def render_tool_progress(self, tool_name: str, message: str, percent: float | None = None) -> None:
+        """Render an in-progress update for a running tool (overwrites current line)."""
+        if percent is not None:
+            pct = f"{percent:.0%}"
+            self._console.print(f"  [dim]{tool_name}[/dim] {message} [{pct}]", end="\r")
+        else:
+            self._console.print(f"  [dim]{tool_name}[/dim] {message}", end="\r")
+
     def render_help(self) -> None:
         """Render a table of available slash commands."""
         table = Table(title="Available Commands", show_header=True, header_style="bold cyan")
