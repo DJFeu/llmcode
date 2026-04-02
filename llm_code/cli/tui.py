@@ -155,6 +155,121 @@ class PermissionScreen(ModalScreen[str]):
         self.dismiss("always")
 
 
+class MarketplaceBrowser(ModalScreen[str]):
+    """Interactive browsable list for skills/mcp/plugins — Claude Code style."""
+
+    BINDINGS = [
+        Binding("escape", "dismiss_screen", "Close"),
+        Binding("q", "dismiss_screen", "Close"),
+    ]
+
+    DEFAULT_CSS = """
+    MarketplaceBrowser {
+        align: center middle;
+    }
+    #browser-container {
+        width: 80%;
+        height: 80%;
+        border: heavy $accent;
+        background: $surface;
+    }
+    #browser-title {
+        height: 3;
+        padding: 1 2;
+        background: $accent-darken-2;
+    }
+    #browser-list {
+        height: 1fr;
+    }
+    #browser-footer {
+        height: 3;
+        padding: 0 2;
+        background: $surface-darken-1;
+    }
+    """
+
+    def __init__(self, title: str, items: list[tuple[str, str, bool]], actions: str = "") -> None:
+        """items: list of (name, description, is_installed)"""
+        super().__init__()
+        self._title = title
+        self._items = items
+        self._actions = actions
+
+    def compose(self) -> ComposeResult:
+        from textual.containers import Vertical
+        from textual.widgets import OptionList
+        from textual.widgets.option_list import Option
+
+        with Vertical(id="browser-container"):
+            yield Static(
+                f"[bold]{self._title}[/]  [dim]({len(self._items)} items · ↑↓ navigate · Enter select · Esc close)[/]",
+                id="browser-title",
+            )
+
+            options = []
+            for name, desc, installed in self._items:
+                icon = "[green]●[/]" if installed else "[dim]○[/]"
+                label = f"{icon} [bold]{name}[/]  [dim]· {desc}[/]"
+                if installed:
+                    label += " [green](installed)[/]"
+                options.append(Option(label, id=name))
+
+            yield OptionList(*options, id="browser-list")
+            yield Static(
+                f"[dim]{self._actions}[/]",
+                id="browser-footer",
+            )
+
+    def on_option_list_option_selected(self, event) -> None:
+        self.dismiss(event.option.id)
+
+    def action_dismiss_screen(self) -> None:
+        self.dismiss("")
+
+
+class ActionPicker(ModalScreen[str]):
+    """Small action menu after selecting an item."""
+
+    BINDINGS = [
+        Binding("escape", "dismiss_screen", "Close"),
+    ]
+
+    DEFAULT_CSS = """
+    ActionPicker {
+        align: center middle;
+    }
+    #action-container {
+        width: 50;
+        height: auto;
+        max-height: 12;
+        border: heavy $accent;
+        background: $surface;
+        padding: 1;
+    }
+    """
+
+    def __init__(self, title: str, actions: list[tuple[str, str]]) -> None:
+        super().__init__()
+        self._title = title
+        self._actions = actions
+
+    def compose(self) -> ComposeResult:
+        from textual.containers import Vertical
+        from textual.widgets import OptionList
+        from textual.widgets.option_list import Option
+
+        with Vertical(id="action-container"):
+            yield Static(f"[bold]{self._title}[/]")
+            options = [Option(label, id=action_id) for action_id, label in self._actions]
+            yield OptionList(*options)
+
+    def on_option_list_option_selected(self, event) -> None:
+        self.dismiss(event.option.id)
+
+    def action_dismiss_screen(self) -> None:
+        self.dismiss("")
+
+
 class LLMCodeApp(App):
     """Textual TUI for llm-code — Claude Code style interface."""
 
@@ -220,35 +335,29 @@ class LLMCodeApp(App):
 
     def on_mount(self) -> None:
         self.title = f"llm-code . {self._config.model or 'no model'}"
-        self.sub_title = "Ready"
+        self.sub_title = "Initializing..."
         self._render_welcome()
-        self._init_session()
         self.query_one("#prompt-input", Input).focus()
+        self._init_session_async()
+
+    @work(thread=True)
+    def _init_session_async(self) -> None:
+        self._init_session()
+        self.call_from_thread(self._update_status, "Ready")
 
     # ── Welcome Banner ──────────────────────────────────────────────
 
     def _render_welcome(self) -> None:
         log = self.query_one("#chat-log", RichLog)
 
-        # Compact banner box
-        inner = "llm-code"
-        box_width = len(inner) + 4  # "  " on each side
+        # Banner — Claude Code style
         log.write(Text.assemble(
-            ("  \u256d", "cyan"),
-            ("\u2500" * box_width, "cyan"),
-            ("\u256e", "cyan"),
+            ("  \u256d\u2500 ", "cyan"),
+            ("llm-code", "bold cyan"),
+            (" \u2500\u256e", "cyan"),
         ))
-        log.write(Text.assemble(
-            ("  \u2502  ", "cyan"),
-            (inner, "bold cyan"),
-            ("  " * 2, "bold cyan"),  # padding to fill box
-            ("\u2502", "cyan"),
-        ))
-        log.write(Text.assemble(
-            ("  \u2570", "cyan"),
-            ("\u2500" * box_width, "cyan"),
-            ("\u256f", "cyan"),
-        ))
+        log.write(Text.assemble(("  \u2502             \u2502", "cyan")))
+        log.write(Text.assemble(("  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f", "cyan")))
 
         model = self._config.model or "(not set)"
         branch = _detect_git_branch(self._cwd)
@@ -270,7 +379,7 @@ class LLMCodeApp(App):
             ("Images", f"{paste_key} pastes from clipboard"),
         ]:
             log.write(Text.assemble(
-                (f"  {label:<14} ", "dim"),
+                (f"  {label:<17}", "grey50"),
                 (value, ""),
             ))
         log.write(Text(""))
@@ -371,10 +480,24 @@ class LLMCodeApp(App):
 
         # Skills
         from llm_code.runtime.skills import SkillLoader
-        skill_dirs = [
+        from llm_code.marketplace.installer import PluginInstaller
+        skill_dirs: list[Path] = [
             Path.home() / ".llm-code" / "skills",
             self._cwd / ".llm-code" / "skills",
         ]
+        # Scan installed plugins for skills directories
+        plugin_dir = Path.home() / ".llm-code" / "plugins"
+        if plugin_dir.is_dir():
+            pi = PluginInstaller(plugin_dir)
+            for p in pi.list_installed():
+                if p.enabled and p.manifest.skills:
+                    sp = p.path / p.manifest.skills
+                    if sp.is_dir():
+                        skill_dirs.append(sp)
+                # Also check direct skills/ subdirectory
+                direct = p.path / "skills"
+                if p.enabled and direct.is_dir() and direct not in skill_dirs:
+                    skill_dirs.append(direct)
         self._skills = SkillLoader().load_from_dirs(skill_dirs)
 
         # Memory
@@ -413,7 +536,8 @@ class LLMCodeApp(App):
 
     def _show_user_message(self, text: str) -> None:
         log = self.query_one("#chat-log", RichLog)
-        log.write(Text(f"\u276f {text}", style="bold"))
+        log.write(Text(""))
+        log.write(Text.assemble(("\u276f ", "bold white"), (text, "bold white")))
         log.write(Text(""))
 
     def _show_assistant_text(self, text: str) -> None:
@@ -424,6 +548,7 @@ class LLMCodeApp(App):
     def _show_tool_start(self, tool_name: str, args_summary: str) -> None:
         import json
         log = self.query_one("#chat-log", RichLog)
+        log.write(Text(""))
 
         try:
             args = json.loads(args_summary.replace("'", '"'))
@@ -472,48 +597,48 @@ class LLMCodeApp(App):
             wrote_any = False
             for line in raw_lines:
                 if line.startswith("- "):
-                    log.write(Text.assemble(("- ", "indian_red"), (line[2:], "indian_red")))
+                    log.write(Text.assemble(("- ", "color(203)"), (line[2:], "color(203)")))
                     wrote_any = True
                 elif line.startswith("+ "):
-                    log.write(Text.assemble(("+ ", "green"), (line[2:], "green")))
+                    log.write(Text.assemble(("+ ", "color(70)"), (line[2:], "color(70)")))
                     wrote_any = True
                 else:
-                    log.write(Text(line[:150], style="dim"))
+                    log.write(Text(line[:150], style="grey50"))
             if not wrote_any:
-                log.write(Text.assemble(("\u2713 ", "bold green"), (output.strip()[:150], "dim")))
+                log.write(Text.assemble(("\u2713 ", "bold green"), (output.strip()[:150], "grey50")))
         elif tool_name in ("write_file", "git_commit"):
-            log.write(Text.assemble(("\u2713 ", "bold green"), (output.strip()[:150], "dim")))
+            log.write(Text.assemble(("\u2713 ", "bold green"), (output.strip()[:150], "grey50")))
         elif tool_name == "read_file":
             lines = output.strip().splitlines()
             preview = lines[0][:120] if lines else "(empty)"
             count = len(lines)
             summary = f"{preview}  \u2026 ({count} lines)" if count > 1 else preview
-            log.write(Text.assemble(("\u2713 ", "bold green"), (summary, "dim")))
+            log.write(Text.assemble(("\u2713 ", "bold green"), (summary, "grey50")))
             if count > _TRUNCATION_THRESHOLD:
                 log.write(Text(
                     "\u2026 output truncated for display; full result preserved in session.",
-                    style="dim",
+                    style="grey50",
                 ))
         elif tool_name == "bash":
             raw_lines = output.strip().splitlines()
             for line in raw_lines[:10]:
-                log.write(Text(line[:150], style="dim"))
+                log.write(Text(line[:150], style="grey50"))
             if len(raw_lines) > 10:
                 log.write(Text(
                     "\u2026 output truncated for display; full result preserved in session.",
-                    style="dim",
+                    style="grey50",
                 ))
-            log.write(Text.assemble(("\u2713 ", "bold green"), ("done", "dim")))
+            log.write(Text.assemble(("\u2713 ", "bold green"), ("done", "grey50")))
         else:
             raw_lines = output.strip().splitlines() if output.strip() else ["(no output)"]
             for line in raw_lines[:5]:
-                log.write(Text(line[:150], style="dim"))
+                log.write(Text(line[:150], style="grey50"))
             if len(raw_lines) > 5:
                 log.write(Text(
                     "\u2026 output truncated for display; full result preserved in session.",
-                    style="dim",
+                    style="grey50",
                 ))
-            log.write(Text.assemble(("\u2713 ", "bold green"), ("done", "dim")))
+            log.write(Text.assemble(("\u2713 ", "bold green"), ("done", "grey50")))
 
         log.write(Text(""))
 
@@ -572,7 +697,7 @@ class LLMCodeApp(App):
         self._pending_images.clear()
 
         # Detect drag-and-dropped image paths
-        from llm_code.cli.app import _extract_dropped_images
+        from llm_code.cli.image import extract_dropped_images as _extract_dropped_images
         clean_text, dropped = _extract_dropped_images(text)
         images.extend(dropped)
 
@@ -760,6 +885,44 @@ class LLMCodeApp(App):
         else:
             log.write(Text(f"Unknown command: /{name} -- type /help for help", style="red"))
 
+    # ── NPM Fetchers ───────────────────────────────────────────────
+
+    async def _fetch_npm_skills(self) -> list[tuple[str, str]]:
+        import httpx
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://registry.npmjs.org/-/v1/search",
+                params={"text": "claude-code skill", "size": 50},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        results = []
+        for obj in data.get("objects", []):
+            pkg = obj.get("package", {})
+            name = pkg.get("name", "")
+            desc = pkg.get("description", "")[:70]
+            if "skill" in name.lower() or ("claude" in name.lower() and "skill" in desc.lower()):
+                results.append((name, desc))
+        return results
+
+    async def _fetch_npm_mcp(self) -> list[tuple[str, str]]:
+        import httpx
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://registry.npmjs.org/-/v1/search",
+                params={"text": "mcp server modelcontextprotocol", "size": 50},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        results = []
+        for obj in data.get("objects", []):
+            pkg = obj.get("package", {})
+            name = pkg.get("name", "")
+            desc = pkg.get("description", "")[:70]
+            if "mcp" in name.lower() or "modelcontextprotocol" in name.lower():
+                results.append((name, desc))
+        return results
+
     # ── Marketplace Handlers ─────────────────────────────────────────
 
     def _tui_skill_command(self, args: str, log: RichLog) -> None:
@@ -767,10 +930,59 @@ class LLMCodeApp(App):
         subcmd = parts[0] if parts else ""
         subargs = parts[1] if len(parts) > 1 else ""
 
+        if subcmd == "install" and subargs:
+            source = subargs.strip()
+            import subprocess as _sp
+            if "/" in source and not source.startswith("@"):
+                # GitHub repo — clone skills/ subdirectory
+                repo = source.replace("https://github.com/", "").rstrip("/")
+                name = repo.split("/")[-1]
+                dest = Path.home() / ".llm-code" / "skills" / name
+                if dest.exists():
+                    import shutil
+                    shutil.rmtree(dest)
+                # Clone full repo to temp, then copy skills/
+                import tempfile
+                with tempfile.TemporaryDirectory() as tmp:
+                    log.write(Text(f"⠋ Cloning {repo}...", style="blue"))
+                    result = _sp.run(
+                        ["git", "clone", "--depth", "1", f"https://github.com/{repo}.git", tmp],
+                        capture_output=True, text=True, timeout=30,
+                    )
+                    if result.returncode == 0:
+                        skills_src = Path(tmp) / "skills"
+                        if skills_src.is_dir():
+                            import shutil
+                            shutil.copytree(skills_src, dest)
+                            log.write(Text(f"✓ Installed skills from {repo}", style="green"))
+                        else:
+                            # No skills/ dir — copy entire repo as a skill
+                            import shutil
+                            shutil.copytree(tmp, dest)
+                            log.write(Text(f"✓ Installed {name}", style="green"))
+                        log.write(Text("  Restart llm-code to activate.", style="dim"))
+                    else:
+                        log.write(Text(f"✗ Failed: {result.stderr[:200]}", style="red"))
+            else:
+                # npm package
+                skill_dir = Path.home() / ".llm-code" / "skills" / source.split("/")[-1].replace("@", "")
+                skill_dir.mkdir(parents=True, exist_ok=True)
+                result = _sp.run(["npm", "pack", source, "--pack-destination", str(skill_dir)], capture_output=True, text=True, timeout=30)
+                if result.returncode == 0:
+                    import glob as _glob
+                    tarballs = _glob.glob(str(skill_dir / "*.tgz"))
+                    if tarballs:
+                        _sp.run(["tar", "xzf", tarballs[0], "-C", str(skill_dir), "--strip-components=1"], capture_output=True, timeout=10)
+                        Path(tarballs[0]).unlink(missing_ok=True)
+                    log.write(Text(f"✓ Installed to {skill_dir}", style="green"))
+                else:
+                    log.write(Text(f"✗ Failed: {result.stderr[:200]}", style="red"))
+            return
+
         if subcmd == "enable" and subargs:
             marker = Path.home() / ".llm-code" / "skills" / subargs / ".disabled"
             marker.unlink(missing_ok=True)
-            log.write(Text(f"Enabled {subargs}", style="green"))
+            log.write(Text(f"✓ Enabled {subargs}", style="green"))
         elif subcmd == "disable" and subargs:
             marker = Path.home() / ".llm-code" / "skills" / subargs / ".disabled"
             marker.touch()
@@ -780,25 +992,132 @@ class LLMCodeApp(App):
             d = Path.home() / ".llm-code" / "skills" / subargs
             if d.is_dir():
                 shutil.rmtree(d)
-                log.write(Text(f"Removed {subargs}", style="green"))
+                log.write(Text(f"✓ Removed {subargs}", style="green"))
             else:
                 log.write(Text(f"Not found: {subargs}", style="red"))
         else:
-            # List skills
+            # Interactive skill browser
             all_skills = []
             if self._skills:
                 all_skills = list(self._skills.auto_skills) + list(self._skills.command_skills)
-            log.write(Text(f"Skills ({len(all_skills)})", style="bold"))
+
+            items: list[tuple[str, str, bool]] = []
             for s in all_skills:
                 tokens = len(s.content) // 4
-                log.write(Text(f"  ● {s.name} · ~{tokens} tokens", style="green" if s.auto else "cyan"))
-            if not all_skills:
-                log.write(Text("  No skills loaded. Place SKILL.md in ~/.llm-code/skills/<name>/", style="dim"))
+                mode = "auto" if s.auto else f"/{s.trigger}"
+                items.append((s.name, f"{mode} · ~{tokens} tokens", True))
+
+            # Fetch marketplace skills from npm
+            import asyncio as _aio
+            try:
+                try:
+                    _aio.get_running_loop()
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        market = pool.submit(_aio.run, self._fetch_npm_skills()).result()
+                except RuntimeError:
+                    market = _aio.run(self._fetch_npm_skills())
+            except Exception:
+                market = []
+
+            installed_names = {s.name for s in all_skills}
+            for name, desc in market:
+                if name not in installed_names:
+                    items.append((name, desc, False))
+
+            def on_selected(selected: str) -> None:
+                if not selected:
+                    return
+                # Show action picker
+                is_installed = any(s.name == selected for s in all_skills)
+                actions = []
+                if is_installed:
+                    actions.append(("enable", f"Enable {selected}"))
+                    actions.append(("disable", f"Disable {selected}"))
+                    actions.append(("remove", f"Remove {selected}"))
+                else:
+                    actions.append(("install", f"Install {selected}"))
+
+                def on_action(action: str) -> None:
+                    if not action:
+                        return
+                    if action == "enable":
+                        self._tui_skill_command(f"enable {selected}", log)
+                    elif action == "disable":
+                        self._tui_skill_command(f"disable {selected}", log)
+                    elif action == "remove":
+                        self._tui_skill_command(f"remove {selected}", log)
+                    elif action == "install":
+                        self._tui_skill_command(f"install {selected}", log)
+
+                self.push_screen(
+                    ActionPicker(f"Action for {selected}", actions),
+                    on_action,
+                )
+
+            self.push_screen(
+                MarketplaceBrowser(
+                    title="Skills",
+                    items=items,
+                    actions="Enter: select · Esc: close",
+                ),
+                on_selected,
+            )
 
     def _tui_mcp_command(self, args: str, log: RichLog) -> None:
         parts = args.strip().split(None, 1)
         subcmd = parts[0] if parts else ""
         subargs = parts[1] if len(parts) > 1 else ""
+
+        if not subcmd:
+            # Interactive MCP browser with marketplace
+            servers = self._config.mcp_servers
+            items = []
+            for name, cfg in servers.items():
+                cmd = cfg.get("command", "")
+                srv_args = " ".join(cfg.get("args", []))
+                items.append((name, f"{cmd} {srv_args}", True))
+
+            # Fetch marketplace
+            import asyncio as _aio
+            try:
+                try:
+                    _aio.get_running_loop()
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        market = pool.submit(_aio.run, self._fetch_npm_mcp()).result()
+                except RuntimeError:
+                    market = _aio.run(self._fetch_npm_mcp())
+            except Exception:
+                market = []
+
+            for name, desc in market:
+                if name not in servers:
+                    items.append((name, desc, False))
+
+            def on_selected(selected: str) -> None:
+                if not selected:
+                    return
+                is_configured = selected in servers
+                actions = []
+                if is_configured:
+                    actions.append(("remove", f"Remove {selected}"))
+                else:
+                    actions.append(("install", f"Install {selected}"))
+
+                def on_action(action: str) -> None:
+                    if action == "install":
+                        self._tui_mcp_command(f"install {selected}", log)
+                    elif action == "remove":
+                        self._tui_mcp_command(f"remove {selected}", log)
+
+                self.push_screen(ActionPicker(f"Action for {selected}", actions), on_action)
+
+            self.push_screen(
+                MarketplaceBrowser(title="MCP Servers", items=items, actions="Enter: select · Esc: close"),
+                on_selected,
+            )
+            return
 
         if subcmd == "install" and subargs:
             import json
@@ -843,15 +1162,102 @@ class LLMCodeApp(App):
         subcmd = parts[0] if parts else ""
         subargs = parts[1] if len(parts) > 1 else ""
 
+        if not subcmd:
+            # Interactive plugin browser — installed + built-in registry
+            installed = installer.list_installed()
+            installed_names = {p.manifest.name for p in installed}
+            items = []
+            for p in installed:
+                status = "enabled" if p.enabled else "disabled"
+                items.append((p.manifest.name, f"v{p.manifest.version} · {status}", True))
+
+            # Add all known plugins from built-in registry
+            from llm_code.marketplace.builtin_registry import get_all_known_plugins
+            for p in get_all_known_plugins():
+                if p["name"] not in installed_names:
+                    skill_info = f"{p['skills']} skills · " if p["skills"] > 0 else ""
+                    source_tag = "official" if p["source"] == "official" else "community"
+                    items.append((p["name"], f"{skill_info}{p['desc']} [{source_tag}]", False))
+
+            def on_selected(selected: str) -> None:
+                if not selected:
+                    return
+                is_installed = selected in installed_names
+                actions = []
+                if is_installed:
+                    actions.append(("enable", f"Enable {selected}"))
+                    actions.append(("disable", f"Disable {selected}"))
+                    actions.append(("remove", f"Remove {selected}"))
+                else:
+                    # Find repo from registry
+                    from llm_code.marketplace.builtin_registry import get_all_known_plugins
+                    registry = {p["name"]: p for p in get_all_known_plugins()}
+                    repo = registry.get(selected, {}).get("repo", "")
+                    if repo:
+                        actions.append(("install", f"Install {selected} (from {repo})"))
+                    else:
+                        actions.append(("install", f"Install {selected}"))
+
+                def on_action(action: str) -> None:
+                    if not action:
+                        return
+                    if action == "install":
+                        from llm_code.marketplace.builtin_registry import get_all_known_plugins
+                        registry = {p["name"]: p for p in get_all_known_plugins()}
+                        repo = registry.get(selected, {}).get("repo", "")
+                        if repo:
+                            self._tui_plugin_command(f"install {repo}", log)
+                        else:
+                            log.write(Text(f"No install source for {selected}. Try: /plugin install owner/repo", style="dim"))
+
+                    elif action in ("enable", "disable", "remove"):
+                        self._tui_plugin_command(f"{action} {selected}", log)
+
+                self.push_screen(ActionPicker(f"Action for {selected}", actions), on_action)
+
+            self.push_screen(
+                MarketplaceBrowser(title="Plugins", items=items, actions="Enter: select · Esc: close"),
+                on_selected,
+            )
+            return
+
+        if subcmd == "install" and subargs:
+            source = subargs.strip()
+            # Detect GitHub repo (owner/repo or https://github.com/...)
+            import subprocess as _sp
+            if "/" in source and not source.startswith("@"):
+                # GitHub repo
+                repo = source.replace("https://github.com/", "").rstrip("/")
+                name = repo.split("/")[-1]
+                dest = Path.home() / ".llm-code" / "plugins" / name
+                if dest.exists():
+                    import shutil
+                    shutil.rmtree(dest)
+                log.write(Text(f"⠋ Cloning {repo}...", style="blue"))
+                result = _sp.run(
+                    ["git", "clone", "--depth", "1", f"https://github.com/{repo}.git", str(dest)],
+                    capture_output=True, text=True, timeout=30,
+                )
+                if result.returncode == 0:
+                    installer.enable(name)
+                    log.write(Text(f"✓ Installed {name} from GitHub", style="green"))
+                    log.write(Text(f"  {dest}", style="dim"))
+                    log.write(Text("  Restart llm-code to activate skills & hooks.", style="dim"))
+                else:
+                    log.write(Text(f"✗ Failed: {result.stderr[:200]}", style="red"))
+            else:
+                log.write(Text(f"Usage: /plugin install owner/repo", style="red"))
+            return
+
         if subcmd == "enable" and subargs:
             installer.enable(subargs)
-            log.write(Text(f"Enabled {subargs}", style="green"))
+            log.write(Text(f"✓ Enabled {subargs}", style="green"))
         elif subcmd == "disable" and subargs:
             installer.disable(subargs)
             log.write(Text(f"Disabled {subargs}", style="dim"))
         elif subcmd in ("remove", "uninstall") and subargs:
             installer.uninstall(subargs)
-            log.write(Text(f"Removed {subargs}", style="green"))
+            log.write(Text(f"✓ Removed {subargs}", style="green"))
         else:
             installed = installer.list_installed()
             log.write(Text(f"Plugins ({len(installed)} installed)", style="bold"))
@@ -897,7 +1303,7 @@ class LLMCodeApp(App):
         self._update_status("Thinking...")
         log = self.query_one("#chat-log", RichLog)
         log.write(Text.assemble(
-            (_SPINNER_FRAMES[0] + " ", "bold blue"),
+            (_SPINNER_FRAMES[0] + " ", "blue"),
             ("Thinking\u2026", "blue"),
         ))
 
@@ -954,6 +1360,13 @@ class LLMCodeApp(App):
                             tool_tag_buffer = "<"
                         else:
                             self._text_buffer += char
+                            # Flush on sentence boundaries for smoother streaming
+                            if (
+                                self._text_buffer.endswith(". ")
+                                or self._text_buffer.endswith("\u3002")
+                                or self._text_buffer.endswith("\n")
+                            ):
+                                self._flush_text()
 
                 elif isinstance(event, StreamToolExecStart):
                     if not first_token:

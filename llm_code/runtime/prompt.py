@@ -20,6 +20,19 @@ search code, and run shell commands. \
 Think step-by-step before taking any action.\
 """
 
+_BEHAVIOR_RULES = """\
+Rules:
+- Read code before modifying it
+- Do not add features the user did not ask for
+- Do not add error handling or comments unless asked
+- Do not over-engineer or create unnecessary abstractions
+- Three similar lines of code is better than a premature abstraction
+- If something fails, diagnose why before switching approach
+- Report results honestly — do not claim something works without verifying
+- Keep responses concise — lead with the answer, not the reasoning
+- For code changes, show the minimal diff needed
+"""
+
 _XML_TOOL_INSTRUCTIONS = """\
 When you need to use a tool, emit exactly one JSON block wrapped in \
 <tool_call>...</tool_call> XML tags — nothing else on those lines. \
@@ -48,7 +61,7 @@ class SystemPromptBuilder:
         # ------------------------------------------------------------------ #
         # STATIC / CACHE-SAFE section (above the cache boundary)
         # ------------------------------------------------------------------ #
-        static_parts: list[str] = [_INTRO]
+        static_parts: list[str] = [_INTRO, _BEHAVIOR_RULES]
 
         # XML tool-calling instructions (only when provider does not support native tools)
         if not native_tools and tools:

@@ -162,6 +162,9 @@ class OpenAICompatProvider(LLMProvider):
         if stream:
             payload["stream_options"] = {"include_usage": True}
 
+        if request.extra_body:
+            payload.update(request.extra_body)
+
         return payload
 
     def _convert_tool(self, tool: ToolDefinition) -> dict:

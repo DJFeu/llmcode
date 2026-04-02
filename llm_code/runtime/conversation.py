@@ -119,6 +119,7 @@ class ConversationRuntime:
                 tools=tool_defs if use_native else (),
                 max_tokens=self._config.max_tokens,
                 temperature=self._config.temperature,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}} if not use_native else None,
             )
 
             # Error recovery: tool choice fallback + reactive compact
@@ -141,6 +142,7 @@ class ConversationRuntime:
                         tools=(),
                         max_tokens=self._config.max_tokens,
                         temperature=self._config.temperature,
+                        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
                     )
                     stream = await self._provider.stream_message(request)
                 elif (

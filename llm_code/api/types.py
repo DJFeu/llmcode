@@ -55,6 +55,7 @@ class MessageRequest:
     max_tokens: int = 4096
     temperature: float = 0.7
     stream: bool = True
+    extra_body: dict | None = None
 
 
 @dataclasses.dataclass(frozen=True)
