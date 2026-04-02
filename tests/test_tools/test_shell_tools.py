@@ -1,11 +1,8 @@
 """Tests for llm_code.tools.bash, glob_search, grep_search — TDD."""
 from __future__ import annotations
 
-import os
-import pathlib
 import time
 
-import pytest
 
 from llm_code.tools.base import PermissionLevel
 from llm_code.tools.bash import BashTool
@@ -114,7 +111,7 @@ class TestGlobSearchTool:
         time.sleep(0.01)
         newer.write_text("")
         result = GlobSearchTool().execute({"pattern": "*.py", "path": str(tmp_path)})
-        lines = [l for l in result.output.splitlines() if l.strip()]
+        lines = [ln for ln in result.output.splitlines() if ln.strip()]
         # newer should appear before older (sorted by mtime descending)
         assert lines.index(str(newer)) < lines.index(str(older))
 
@@ -122,7 +119,7 @@ class TestGlobSearchTool:
         for i in range(120):
             (tmp_path / f"f{i}.py").write_text("")
         result = GlobSearchTool().execute({"pattern": "*.py", "path": str(tmp_path)})
-        lines = [l for l in result.output.splitlines() if l.strip()]
+        lines = [ln for ln in result.output.splitlines() if ln.strip()]
         assert len(lines) <= 100
 
     def test_to_definition_has_schema(self):

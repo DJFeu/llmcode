@@ -1,10 +1,8 @@
 """Tests for the hook runner system."""
 from __future__ import annotations
 
-import os
 import stat
 
-import pytest
 
 from llm_code.tools.base import ToolResult
 from llm_code.runtime.config import HookConfig

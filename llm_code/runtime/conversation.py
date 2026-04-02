@@ -233,7 +233,7 @@ class ConversationRuntime:
 
         # Post-tool hook
         if hasattr(hook_runner, "post_tool_use"):
-            post_result = hook_runner.post_tool_use(call.name, tool_result)
+            post_result = hook_runner.post_tool_use(call.name, args, tool_result)
             if hasattr(post_result, "__await__"):
                 await post_result
 

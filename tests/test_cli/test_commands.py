@@ -1,7 +1,6 @@
 """Tests for CLI slash command parsing."""
 from __future__ import annotations
 
-import pytest
 
 from llm_code.cli.commands import SlashCommand, parse_slash_command
 

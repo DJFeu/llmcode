@@ -5,7 +5,6 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from llm_code.api.types import ToolDefinition
 from llm_code.runtime.context import ProjectContext

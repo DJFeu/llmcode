@@ -1,8 +1,6 @@
 """Tests for llm_code.runtime.vision (Task 21)."""
 from __future__ import annotations
 
-import dataclasses
-import pytest
 
 from llm_code.api.types import ImageBlock, Message, TextBlock
 from llm_code.runtime.config import VisionConfig

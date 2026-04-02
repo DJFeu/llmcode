@@ -1,7 +1,6 @@
 """Tests for the permission policy system."""
 from __future__ import annotations
 
-import pytest
 
 from llm_code.tools.base import PermissionLevel
 from llm_code.runtime.permissions import (

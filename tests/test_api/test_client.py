@@ -108,11 +108,9 @@ class TestFromModelDefaults:
         assert isinstance(provider, OpenAICompatProvider)
 
     def test_default_api_key_empty(self):
-        from llm_code.api.openai_compat import OpenAICompatProvider
         provider = _from_model("qwen3")
         assert provider._api_key == ""
 
     def test_default_native_tools_true(self):
-        from llm_code.api.openai_compat import OpenAICompatProvider
         provider = _from_model("qwen3")
         assert provider._native_tools is True

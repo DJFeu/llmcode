@@ -3,9 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
-from llm_code.api.types import Message, TextBlock, TokenUsage
+from llm_code.api.types import Message, TextBlock
 from llm_code.runtime.session import Session
 
 

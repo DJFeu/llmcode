@@ -3,26 +3,22 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import AsyncIterator
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from llm_code.api.types import (
-    Message,
     MessageRequest,
     StreamEvent,
     StreamMessageStop,
     StreamTextDelta,
     StreamToolUseInputDelta,
     StreamToolUseStart,
-    TextBlock,
     TokenUsage,
     ToolResultBlock,
-    ToolUseBlock,
 )
 from llm_code.runtime.context import ProjectContext
-from llm_code.runtime.conversation import ConversationRuntime, TurnSummary
-from llm_code.runtime.permissions import PermissionMode, PermissionOutcome, PermissionPolicy
+from llm_code.runtime.conversation import ConversationRuntime
+from llm_code.runtime.permissions import PermissionMode, PermissionPolicy
 from llm_code.runtime.prompt import SystemPromptBuilder
 from llm_code.runtime.session import Session
 from llm_code.tools.base import PermissionLevel, ToolResult
@@ -94,7 +90,7 @@ def _make_runtime(
         async def pre_tool_use(self, tool_name: str, args: dict) -> dict:
             return args
 
-        async def post_tool_use(self, tool_name: str, result) -> None:
+        async def post_tool_use(self, tool_name: str, args: dict, result) -> None:
             pass
 
     # Minimal config stub

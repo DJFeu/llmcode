@@ -1,5 +1,4 @@
 """Tests for llm_code.api.sse — TDD: written before implementation."""
-import pytest
 
 from llm_code.api.sse import parse_sse_events
 
