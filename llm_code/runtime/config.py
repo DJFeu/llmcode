@@ -23,6 +23,12 @@ class VisionConfig:
 
 
 @dataclass(frozen=True)
+class ModelRoutingConfig:
+    sub_agent: str = ""
+    compaction: str = ""
+
+
+@dataclass(frozen=True)
 class RuntimeConfig:
     model: str = ""
     provider_base_url: str | None = None
@@ -39,9 +45,12 @@ class RuntimeConfig:
     max_retries: int = 2
     native_tools: bool = True
     vision: VisionConfig = field(default_factory=VisionConfig)
+    model_routing: ModelRoutingConfig = field(default_factory=ModelRoutingConfig)
     mcp_servers: dict = field(default_factory=dict)
     registries: dict = field(default_factory=dict)
     skills_dirs: tuple[str, ...] = ()
+    lsp_servers: dict = field(default_factory=dict)
+    lsp_auto_detect: bool = True
 
 
 def merge_configs(base: dict, override: dict) -> dict:
@@ -87,6 +96,12 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         vision_api_key_env=vision_raw.get("vision_api_key_env", ""),
     )
 
+    routing_raw = data.get("model_routing", {})
+    model_routing = ModelRoutingConfig(
+        sub_agent=routing_raw.get("sub_agent", ""),
+        compaction=routing_raw.get("compaction", ""),
+    )
+
     allow_tools = permissions.get("allow_tools", data.get("allowed_tools", []))
     deny_tools = permissions.get("deny_tools", data.get("denied_tools", []))
 
@@ -106,9 +121,12 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         max_retries=data.get("max_retries", 2),
         native_tools=data.get("native_tools", True),
         vision=vision,
+        model_routing=model_routing,
         mcp_servers=data.get("mcpServers", {}),
         registries=data.get("registries", {}),
         skills_dirs=tuple(data.get("skills_dirs", [])),
+        lsp_servers=data.get("lspServers", {}),
+        lsp_auto_detect=data.get("lsp_auto_detect", True),
     )
 
 

@@ -59,6 +59,13 @@ SLASH_COMMANDS_HELP = [
     ("/cost", "Show token usage and estimated cost"),
     ("/plugin list|enable|disable|uninstall", "Manage plugins"),
     ("/skill", "List available skills"),
+    ("/undo", "Undo last file change (git checkpoint)"),
+    ("/undo list", "List all checkpoints"),
+    ("/memory", "List project memory entries"),
+    ("/memory get|set|delete <key>", "Manage memory"),
+    ("/index", "Show project index summary"),
+    ("/index rebuild", "Rebuild project index"),
+    ("/lsp", "Show LSP server status"),
     ("/exit", "Exit the application"),
 ]
 

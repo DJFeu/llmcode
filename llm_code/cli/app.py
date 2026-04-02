@@ -23,6 +23,15 @@ from llm_code.runtime.prompt import SystemPromptBuilder
 from llm_code.runtime.session import Session, SessionManager
 from llm_code.tools.bash import BashTool
 from llm_code.tools.edit_file import EditFileTool
+from llm_code.tools.git_tools import (
+    GitBranchTool,
+    GitCommitTool,
+    GitDiffTool,
+    GitLogTool,
+    GitPushTool,
+    GitStashTool,
+    GitStatusTool,
+)
 from llm_code.tools.glob_search import GlobSearchTool
 from llm_code.tools.grep_search import GrepSearchTool
 from llm_code.tools.read_file import ReadFileTool
@@ -113,7 +122,7 @@ class CliApp:
             history_path=Path.home() / ".config" / "llm-code" / "history"
         )
 
-        # Build tool registry with all 6 tools
+        # Build tool registry with all tools
         self._registry = ToolRegistry()
         self._registry.register(ReadFileTool())
         self._registry.register(WriteFileTool())
@@ -121,6 +130,22 @@ class CliApp:
         self._registry.register(BashTool())
         self._registry.register(GlobSearchTool())
         self._registry.register(GrepSearchTool())
+        for cls in (
+            GitStatusTool, GitDiffTool, GitLogTool, GitCommitTool,
+            GitPushTool, GitStashTool, GitBranchTool,
+        ):
+            self._registry.register(cls())
+
+        # Try to register AgentTool if available
+        try:
+            from llm_code.tools.agent import AgentTool  # noqa: F401
+        except ImportError:
+            pass
+
+        self._checkpoint_mgr = None
+        self._memory = None
+        self._project_index = None
+        self._lsp_manager = None
 
         # Session manager
         session_dir = Path.home() / ".config" / "llm-code" / "sessions"
@@ -166,6 +191,14 @@ class CliApp:
         hooks = HookRunner(self._config.hooks)
         prompt_builder = SystemPromptBuilder()
 
+        # Init checkpoint manager (only in git repos)
+        from llm_code.runtime.checkpoint import CheckpointManager
+
+        checkpoint_mgr = None
+        if (self._cwd / ".git").is_dir():
+            checkpoint_mgr = CheckpointManager(self._cwd)
+        self._checkpoint_mgr = checkpoint_mgr
+
         self._runtime = ConversationRuntime(
             provider=provider,
             tool_registry=self._registry,
@@ -175,7 +208,22 @@ class CliApp:
             config=self._config,
             session=session,
             context=context,
+            checkpoint_manager=checkpoint_mgr,
         )
+
+        # Register AgentTool if available (needs runtime, built after runtime init)
+        try:
+            from llm_code.tools.agent import AgentTool
+
+            if self._registry.get("agent") is None:
+                agent_tool = AgentTool(
+                    runtime_factory=None,
+                    max_depth=3,
+                    current_depth=0,
+                )
+                self._registry.register(agent_tool)
+        except (ImportError, ValueError):
+            pass  # AgentTool not yet available or already registered
 
         from llm_code.runtime.skills import SkillLoader
         skill_dirs = [
@@ -183,6 +231,36 @@ class CliApp:
             self._cwd / ".llm-code" / "skills",
         ]
         self._skills = SkillLoader().load_from_dirs(skill_dirs)
+
+        # Build project index
+        from llm_code.runtime.indexer import ProjectIndexer
+        indexer = ProjectIndexer(self._cwd)
+        self._project_index = indexer.build_index()
+
+        # Init memory
+        from llm_code.runtime.memory import MemoryStore
+        memory_dir = Path.home() / ".llm-code" / "memory"
+        self._memory = MemoryStore(memory_dir, self._cwd)
+
+        # Register memory tools
+        from llm_code.tools.memory_tools import MemoryStoreTool, MemoryRecallTool, MemoryListTool
+        for tool_cls in (MemoryStoreTool, MemoryRecallTool, MemoryListTool):
+            try:
+                self._registry.register(tool_cls(self._memory))
+            except ValueError:
+                pass  # Already registered
+
+        # Register LSP tools (try/except since LSP servers may not start)
+        try:
+            from llm_code.lsp.tools import LspGotoDefinitionTool, LspFindReferencesTool, LspDiagnosticsTool
+            from llm_code.lsp.manager import LspServerManager  # noqa: F401
+            for tool_cls in (LspGotoDefinitionTool, LspFindReferencesTool, LspDiagnosticsTool):
+                try:
+                    self._registry.register(tool_cls(manager=None))
+                except (ValueError, TypeError):
+                    pass
+        except ImportError:
+            pass
 
     async def run_repl(self) -> None:
         """Run the interactive REPL loop."""
@@ -326,10 +404,102 @@ class CliApp:
             else:
                 self._console.print("[dim]No session active.[/dim]")
 
+        elif name == "undo":
+            self._handle_undo_command(args)
+
+        elif name == "memory":
+            self._handle_memory_command(args)
+
+        elif name == "index":
+            self._handle_index_command(args)
+
+        elif name == "lsp":
+            self._console.print("[dim]LSP: not yet started in this session[/dim]")
+
         else:
             self._console.print(f"[red]Unknown command: /{name}[/red] — type /help for help")
 
         return False
+
+    def _handle_undo_command(self, args: str) -> None:
+        if not self._checkpoint_mgr:
+            self._console.print("[red]Not in a git repository — undo not available.[/red]")
+            return
+
+        if args.strip() == "list":
+            checkpoints = self._checkpoint_mgr.list_checkpoints()
+            if not checkpoints:
+                self._console.print("[dim]No checkpoints.[/dim]")
+            else:
+                from rich.table import Table
+                table = Table(title="Checkpoints")
+                table.add_column("ID", style="cyan")
+                table.add_column("Tool")
+                table.add_column("Time")
+                table.add_column("SHA", style="dim")
+                for cp in checkpoints:
+                    table.add_row(cp.id, cp.tool_name, cp.timestamp[:19], cp.git_sha[:8])
+                self._console.print(table)
+            return
+
+        if not self._checkpoint_mgr.can_undo():
+            self._console.print("[dim]Nothing to undo.[/dim]")
+            return
+
+        cp = self._checkpoint_mgr.undo()
+        if cp:
+            self._console.print(f"[green]Undone:[/green] {cp.tool_name} ({cp.tool_args_summary[:50]})")
+            self._console.print(f"[dim]Restored to {cp.git_sha[:8]}[/dim]")
+
+    def _handle_memory_command(self, args: str) -> None:
+        if not self._memory:
+            self._console.print("[red]Memory not initialized.[/red]")
+            return
+        parts = args.strip().split(None, 2)
+        subcmd = parts[0] if parts else ""
+
+        if not subcmd or subcmd == "list":
+            entries = self._memory.get_all()
+            if not entries:
+                self._console.print("[dim]No memories stored.[/dim]")
+            else:
+                for k, v in entries.items():
+                    preview = v.value[:60] + "..." if len(v.value) > 60 else v.value
+                    self._console.print(f"  [cyan]{k}[/cyan]: {preview}")
+        elif subcmd == "get" and len(parts) > 1:
+            val = self._memory.recall(parts[1])
+            if val:
+                self._console.print(val)
+            else:
+                self._console.print(f"[red]Key not found: {parts[1]}[/red]")
+        elif subcmd == "set" and len(parts) > 2:
+            self._memory.store(parts[1], parts[2])
+            self._console.print(f"[dim]Stored: {parts[1]}[/dim]")
+        elif subcmd == "delete" and len(parts) > 1:
+            self._memory.delete(parts[1])
+            self._console.print(f"[dim]Deleted: {parts[1]}[/dim]")
+        else:
+            self._console.print("[red]Usage: /memory [list|get|set|delete] ...[/red]")
+
+    def _handle_index_command(self, args: str) -> None:
+        if args.strip() == "rebuild":
+            from llm_code.runtime.indexer import ProjectIndexer
+            self._project_index = ProjectIndexer(self._cwd).build_index()
+            self._console.print(
+                f"[dim]Index rebuilt: {len(self._project_index.files)} files, "
+                f"{len(self._project_index.symbols)} symbols[/dim]"
+            )
+        elif self._project_index:
+            self._console.print(
+                f"[dim]Files: {len(self._project_index.files)}, "
+                f"Symbols: {len(self._project_index.symbols)}[/dim]"
+            )
+            for s in self._project_index.symbols[:20]:
+                self._console.print(f"  {s.kind} [cyan]{s.name}[/cyan] — {s.file}:{s.line}")
+            if len(self._project_index.symbols) > 20:
+                self._console.print(f"  [dim]... and {len(self._project_index.symbols) - 20} more[/dim]")
+        else:
+            self._console.print("[dim]No index available.[/dim]")
 
     def _handle_session_command(self, args: str) -> None:
         """Handle /session subcommands: list, save, switch."""

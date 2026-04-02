@@ -10,6 +10,7 @@ from llm_code.api.types import ToolDefinition
 from llm_code.runtime.context import ProjectContext
 
 if TYPE_CHECKING:
+    from llm_code.runtime.indexer import ProjectIndex
     from llm_code.runtime.skills import SkillSet
 
 _INTRO = """\
@@ -39,6 +40,9 @@ class SystemPromptBuilder:
         native_tools: bool = True,
         skills: "SkillSet | None" = None,
         active_skill_content: str | None = None,
+        project_index: "ProjectIndex | None" = None,
+        memory_entries: dict | None = None,
+        memory_summaries: list[str] | None = None,
     ) -> str:
         # ------------------------------------------------------------------ #
         # STATIC / CACHE-SAFE section (above the cache boundary)
@@ -60,6 +64,13 @@ class SystemPromptBuilder:
             for skill in skills.auto_skills:
                 auto_parts.append(f"### {skill.name}\n{skill.content}")
             static_parts.append("\n\n".join(auto_parts))
+
+        # Project index (cache-safe — changes infrequently)
+        if project_index:
+            _KIND_PRIORITY = {"class": 0, "function": 1, "export": 2, "method": 3, "variable": 4}
+            sorted_symbols = sorted(project_index.symbols, key=lambda s: _KIND_PRIORITY.get(s.kind, 99))[:100]
+            lines = [f"  {s.kind} {s.name} — {s.file}:{s.line}" for s in sorted_symbols]
+            static_parts.append(f"## Project Index ({len(project_index.files)} files)\n\n" + "\n".join(lines))
 
         # ------------------------------------------------------------------ #
         # DYNAMIC section (below the cache boundary)
@@ -87,6 +98,15 @@ class SystemPromptBuilder:
             env_lines.append("- Git status: clean")
 
         dynamic_parts.append("\n".join(env_lines))
+
+        # Memory summaries (dynamic — recent session history)
+        if memory_summaries:
+            dynamic_parts.append("## Recent Sessions\n\n" + "\n".join(f"- {s[:200]}" for s in memory_summaries))
+
+        # Memory entries (dynamic — project-scoped key-value memory)
+        if memory_entries:
+            lines = [f"- **{k}**: {v[:200]}" for k, v in memory_entries.items()]
+            dynamic_parts.append("## Project Memory\n\n" + "\n".join(lines))
 
         # Combine: static parts joined by \n\n, then dynamic parts joined by \n\n
         all_parts = static_parts + dynamic_parts

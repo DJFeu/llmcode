@@ -16,6 +16,10 @@ KNOWN_COMMANDS = frozenset({
     "quit",
     "plugin",
     "skill",
+    "undo",
+    "memory",
+    "index",
+    "lsp",
 })
 
 
