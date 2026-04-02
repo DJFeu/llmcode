@@ -58,7 +58,8 @@ def main(
         cli_overrides=cli_overrides,
     )
 
-    from llm_code.cli.tui import LLMCodeApp
+    import asyncio
+    from llm_code.cli.tui import LLMCodeCLI
 
-    app = LLMCodeApp(config=config, cwd=cwd, budget=budget)
-    app.run()
+    cli = LLMCodeCLI(config=config, cwd=cwd, budget=budget)
+    asyncio.run(cli.run())
