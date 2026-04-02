@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from llm_code.api.provider import LLMProvider
+from llm_code.runtime.model_aliases import resolve_model
 
 
 class ProviderClient:
@@ -15,6 +16,7 @@ class ProviderClient:
         timeout: float = 120.0,
         max_retries: int = 2,
         native_tools: bool = True,
+        custom_aliases: dict[str, str] | None = None,
     ) -> LLMProvider:
         """Return the appropriate LLMProvider for the given model name.
 
@@ -23,6 +25,7 @@ class ProviderClient:
           the ``anthropic`` SDK to be installed).
         - Everything else → OpenAICompatProvider.
         """
+        model = resolve_model(model, custom_aliases)
         if model.startswith("claude-"):
             return ProviderClient._make_anthropic(
                 model=model,

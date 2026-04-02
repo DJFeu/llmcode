@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 
 from llm_code.runtime.config import RuntimeConfig
+from llm_code.runtime.cost_tracker import CostTracker
+from llm_code.runtime.model_aliases import resolve_model
 
 
 class InkBridge:
@@ -26,6 +28,7 @@ class InkBridge:
         self._checkpoint_mgr = None
         self._current_marketplace: dict | None = None
         self._selected_item: dict | None = None
+        self._cost_tracker = CostTracker(model=self._config.model)
 
     async def start(self) -> None:
         """Start the Ink frontend process and begin communication."""
@@ -199,6 +202,9 @@ class InkBridge:
                 elif isinstance(event, StreamMessageStop):
                     if event.usage and event.usage.output_tokens > 0:
                         output_tokens = event.usage.output_tokens
+                        self._cost_tracker.add_usage(
+                            event.usage.input_tokens, event.usage.output_tokens
+                        )
 
         except Exception as exc:
             await self._send({"type": "error", "message": str(exc)})
@@ -251,9 +257,7 @@ class InkBridge:
             await self._send({"type": "message", "text": "Conversation cleared."})
 
         elif name == "cost":
-            if self._runtime:
-                u = self._runtime.session.total_usage
-                await self._send({"type": "message", "text": f"Tokens — in: {u.input_tokens:,}  out: {u.output_tokens:,}"})
+            await self._send({"type": "message", "text": self._cost_tracker.format_cost()})
 
         elif name == "skill":
             await self._show_skill_marketplace()
@@ -532,8 +536,12 @@ class InkBridge:
 
         # Build provider
         api_key = os.environ.get(self._config.provider_api_key_env, "")
+        resolved_model = resolve_model(
+            self._config.model, custom_aliases=self._config.model_aliases
+        )
+        self._cost_tracker = CostTracker(model=resolved_model)
         provider = ProviderClient.from_model(
-            model=self._config.model,
+            model=resolved_model,
             base_url=self._config.provider_base_url or "",
             api_key=api_key,
             timeout=self._config.timeout,

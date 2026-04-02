@@ -23,6 +23,8 @@ from llm_code.api.types import (
 )
 from llm_code.cli.commands import SlashCommand, parse_slash_command
 from llm_code.runtime.config import RuntimeConfig, load_config
+from llm_code.runtime.cost_tracker import CostTracker
+from llm_code.runtime.model_aliases import resolve_model
 from llm_code.runtime.context import ProjectContext
 from llm_code.runtime.conversation import ConversationRuntime
 from llm_code.runtime.hooks import HookRunner
@@ -171,6 +173,7 @@ class LLMCodeCLI:
         self._pending_images: list = []
         self._skills = None
         self._memory = None
+        self._cost_tracker = CostTracker(model=self._config.model)
 
     # ── Welcome Banner ──────────────────────────────────────────────
 
@@ -248,8 +251,13 @@ class LLMCodeCLI:
         api_key = os.environ.get(self._config.provider_api_key_env, "")
         base_url = self._config.provider_base_url or ""
 
+        resolved_model = resolve_model(
+            self._config.model, custom_aliases=self._config.model_aliases
+        )
+        self._cost_tracker = CostTracker(model=resolved_model)
+
         provider = ProviderClient.from_model(
-            model=self._config.model,
+            model=resolved_model,
             base_url=base_url,
             api_key=api_key,
             timeout=self._config.timeout,
@@ -561,13 +569,7 @@ class LLMCodeCLI:
                 console.print(f"[dim]Current model: {self._config.model or '(not set)'}[/]")
 
         elif name == "cost":
-            if self._runtime is not None and self._runtime.session:
-                usage = self._runtime.session.total_usage
-                console.print(
-                    f"[dim]Tokens  in: {usage.input_tokens:,}  out: {usage.output_tokens:,}[/]"
-                )
-            else:
-                console.print("[dim]No session active.[/]")
+            console.print(f"[dim]{self._cost_tracker.format_cost()}[/]")
 
         elif name == "cd":
             if args:
@@ -1072,6 +1074,9 @@ class LLMCodeCLI:
                         event.usage.input_tokens > 0 or event.usage.output_tokens > 0
                     ):
                         self._output_tokens = event.usage.output_tokens
+                        self._cost_tracker.add_usage(
+                            event.usage.input_tokens, event.usage.output_tokens
+                        )
 
         except KeyboardInterrupt:
             status.stop()

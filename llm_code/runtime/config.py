@@ -54,6 +54,7 @@ class RuntimeConfig:
     skills_dirs: tuple[str, ...] = ()
     lsp_servers: dict = field(default_factory=dict)
     lsp_auto_detect: bool = True
+    model_aliases: dict = field(default_factory=dict)
 
 
 class ConfigSchema(BaseModel):
@@ -173,6 +174,7 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         skills_dirs=tuple(data.get("skills_dirs", [])),
         lsp_servers=data.get("lspServers", {}),
         lsp_auto_detect=data.get("lsp_auto_detect", True),
+        model_aliases=data.get("model_aliases", {}),
     )
 
 
