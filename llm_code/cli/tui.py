@@ -784,11 +784,12 @@ class LLMCodeCLI:
                     _aio.get_running_loop()
                     import concurrent.futures
                     with concurrent.futures.ThreadPoolExecutor() as pool:
-                        market = pool.submit(_aio.run, self._fetch_marketplace_skills()).result()
+                        market = pool.submit(_aio.run, self._fetch_marketplace_skills()).result(timeout=5)
                 except RuntimeError:
                     market = _aio.run(self._fetch_marketplace_skills())
             except Exception:
                 market = []
+                console.print("[dim]  (marketplace fetch timed out — showing local skills only)[/]")
 
             installed_names = {s.name for s in all_skills}
             for name, desc in market:

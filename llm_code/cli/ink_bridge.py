@@ -293,9 +293,9 @@ class InkBridge:
                 "index": len(items),
             })
 
-        # Fetch npm marketplace skills
+        # Fetch marketplace skills (with 5s timeout)
         try:
-            market = await self._fetch_marketplace_skills()
+            market = await asyncio.wait_for(self._fetch_marketplace_skills(), timeout=5.0)
             installed_names = {s.name for s in all_skills}
             for pkg_name, desc in market:
                 if pkg_name not in installed_names:
