@@ -16,6 +16,7 @@ class McpServerManager:
     def __init__(self) -> None:
         self._transports: dict[str, McpTransport] = {}
         self._clients: dict[str, McpClient] = {}
+        self._instructions: dict[str, str] = {}
 
     # ------------------------------------------------------------------
     # Connection management
@@ -26,9 +27,16 @@ class McpServerManager:
         transport = self._build_transport(config)
         await transport.start()
         client = McpClient(transport)
-        await client.initialize()
+        info = await client.initialize()
         self._transports[name] = transport
         self._clients[name] = client
+
+        # Extract server instructions from capabilities if present
+        capabilities = info.capabilities or {}
+        instructions = capabilities.get("instructions", "")
+        if instructions:
+            self._instructions[name] = instructions
+
         return client
 
     async def start_all(self, configs: dict[str, McpServerConfig]) -> None:
@@ -55,6 +63,10 @@ class McpServerManager:
     def get_client(self, name: str) -> McpClient | None:
         """Return the client for *name*, or None if not registered."""
         return self._clients.get(name)
+
+    def get_all_instructions(self) -> dict[str, str]:
+        """Return a mapping of server name → instructions for all servers that provided them."""
+        return {k: v for k, v in self._instructions.items() if v}
 
     # ------------------------------------------------------------------
     # Tool registration

@@ -43,6 +43,7 @@ class SystemPromptBuilder:
         project_index: "ProjectIndex | None" = None,
         memory_entries: dict | None = None,
         memory_summaries: list[str] | None = None,
+        mcp_instructions: dict[str, str] | None = None,
     ) -> str:
         # ------------------------------------------------------------------ #
         # STATIC / CACHE-SAFE section (above the cache boundary)
@@ -76,6 +77,11 @@ class SystemPromptBuilder:
         # DYNAMIC section (below the cache boundary)
         # ------------------------------------------------------------------ #
         dynamic_parts: list[str] = [_CACHE_BOUNDARY]
+
+        # MCP server instructions (injected per-server)
+        if mcp_instructions:
+            for server_name, instr in mcp_instructions.items():
+                dynamic_parts.append(f"## MCP Server: {server_name}\n\n{instr}")
 
         # Project instructions (semi-dynamic — changes per project)
         if context.instructions:
