@@ -101,3 +101,10 @@ class StreamToolUseInputDelta(StreamEvent):
 class StreamMessageStop(StreamEvent):
     usage: TokenUsage
     stop_reason: str
+
+
+@dataclasses.dataclass(frozen=True)
+class StreamToolProgress(StreamEvent):
+    tool_name: str
+    message: str
+    percent: float | None = None
