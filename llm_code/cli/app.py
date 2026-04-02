@@ -630,14 +630,7 @@ class CliApp:
             self._handle_plugin_command(args)
 
         elif name == "skill":
-            # Show available skills
-            if self._skills:
-                for s in self._skills.auto_skills:
-                    self._console.print(f"  [green]auto[/green] {s.name} — {s.description}")
-                for s in self._skills.command_skills:
-                    self._console.print(f"  [cyan]/{s.trigger}[/cyan] {s.name} — {s.description}")
-            else:
-                self._console.print("[dim]No skills loaded.[/dim]")
+            self._handle_skill_command(args)
 
         elif name == "cd":
             if args:
@@ -681,6 +674,9 @@ class CliApp:
 
         elif name == "index":
             self._handle_index_command(args)
+
+        elif name == "mcp":
+            self._handle_mcp_command(args)
 
         elif name == "lsp":
             self._console.print("[dim]LSP: not yet started in this session[/dim]")
@@ -835,31 +831,425 @@ class CliApp:
                 "[red]Unknown session subcommand.[/red] Use: list, save, switch <id>"
             )
 
+    def _handle_skill_command(self, args: str) -> None:
+        """Handle /skill subcommands: list, search, install."""
+        parts = args.strip().split(None, 1)
+        subcmd = parts[0] if parts else ""
+        subargs = parts[1] if len(parts) > 1 else ""
+
+        if subcmd == "search" and subargs:
+            # Search npm for Claude Code skills
+            self._console.print(f"[dim]Searching npm for skills: {subargs}...[/]")
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    results = pool.submit(asyncio.run, self._search_skills_npm(subargs)).result()
+            except RuntimeError:
+                results = asyncio.run(self._search_skills_npm(subargs))
+
+            if not results:
+                self._console.print("[dim]No skills found.[/]")
+            else:
+                from rich.table import Table
+                table = Table(title=f"Skills: {subargs}", show_header=True)
+                table.add_column("Package", style="cyan")
+                table.add_column("Description")
+                for name, desc in results:
+                    table.add_row(name, desc)
+                self._console.print(table)
+                self._console.print()
+                self._console.print("[dim]Install with: /skill install <package-name>[/]")
+            return
+
+        if subcmd == "enable" and subargs:
+            marker = Path.home() / ".llm-code" / "skills" / subargs / ".disabled"
+            marker.unlink(missing_ok=True)
+            self._console.print(f"[green]✓[/] Enabled {subargs}")
+            return
+
+        if subcmd == "disable" and subargs:
+            marker = Path.home() / ".llm-code" / "skills" / subargs / ".disabled"
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.touch()
+            self._console.print(f"[dim]Disabled {subargs}[/]")
+            return
+
+        if subcmd == "remove" and subargs:
+            import shutil
+            skill_dir_rm = Path.home() / ".llm-code" / "skills" / subargs
+            if skill_dir_rm.is_dir():
+                shutil.rmtree(skill_dir_rm)
+                self._console.print(f"[green]✓[/] Removed {subargs}")
+            else:
+                self._console.print(f"[red]Not found: {subargs}[/]")
+            return
+
+        if subcmd == "install" and subargs:
+            # Install a skill from npm
+            self._console.print(f"[dim]Installing skill: {subargs}...[/]")
+            import subprocess
+            skill_dir = Path.home() / ".llm-code" / "skills" / subargs.split("/")[-1].replace("@", "")
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            result = subprocess.run(
+                ["npm", "pack", subargs, "--pack-destination", str(skill_dir)],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0:
+                # Extract the tarball
+                import glob as _glob
+                tarballs = _glob.glob(str(skill_dir / "*.tgz"))
+                if tarballs:
+                    subprocess.run(
+                        ["tar", "xzf", tarballs[0], "-C", str(skill_dir), "--strip-components=1"],
+                        capture_output=True, timeout=10,
+                    )
+                    # Clean up tarball
+                    Path(tarballs[0]).unlink(missing_ok=True)
+                self._console.print(f"[green]✓[/] Installed to {skill_dir}")
+                self._console.print("[dim]Restart llm-code to activate.[/]")
+            else:
+                self._console.print(f"[red]Failed: {result.stderr[:200]}[/]")
+            return
+
+        # Default: list loaded skills (Claude Code style)
+        all_skills = []
+        if self._skills:
+            all_skills = list(self._skills.auto_skills) + list(self._skills.command_skills)
+
+        self._console.print()
+        self._console.print(f"[bold]Skills[/]")
+        self._console.print(f"{len(all_skills)} skills")
+        self._console.print()
+
+        # Group by source directory
+        user_dir = str(Path.home() / ".llm-code" / "skills")
+        project_dir = str(self._cwd / ".llm-code" / "skills")
+
+        if all_skills:
+            self._console.print(f"[bold]Installed[/] [dim](~/.llm-code/skills)[/]")
+            for s in all_skills:
+                tokens = len(s.content) // 4  # rough token estimate
+                self._console.print(f"[green]●[/] [bold]{s.name}[/] [dim]· ~{tokens} description tokens[/]")
+            self._console.print()
+
+        # Auto-fetch marketplace skills
+        self._console.print(f"[bold]Marketplace[/] [dim](npm · claude-code skills)[/]")
+        import asyncio
+        try:
+            try:
+                loop = asyncio.get_running_loop()
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    market = pool.submit(asyncio.run, self._search_skills_npm("")).result()
+            except RuntimeError:
+                market = asyncio.run(self._search_skills_npm(""))
+        except Exception:
+            market = []
+
+        if market:
+            for name, desc in market[:20]:
+                installed = any(s.name in name for s in all_skills)
+                if installed:
+                    self._console.print(f"[green]●[/] [bold]{name}[/] [dim]· {desc}[/] [green](installed)[/]")
+                else:
+                    self._console.print(f"[dim]○[/] [bold]{name}[/] [dim]· {desc}[/]")
+            self._console.print()
+            self._console.print("[dim]Install:  /skill install <package-name>[/]")
+            self._console.print("[dim]Enable:   /skill enable <name>[/]")
+            self._console.print("[dim]Disable:  /skill disable <name>[/]")
+            self._console.print("[dim]Remove:   /skill remove <name>[/]")
+            self._console.print("[dim]Search:   /skill search <keyword>[/]")
+        else:
+            self._console.print("[dim]Could not fetch marketplace. Try /skill search <keyword>[/]")
+
+    async def _search_skills_npm(self, query: str) -> list[tuple[str, str]]:
+        """Search npm for Claude Code skill packages."""
+        import httpx
+        search_term = f"claude-code skill {query}".strip()
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://registry.npmjs.org/-/v1/search",
+                params={"text": search_term, "size": 30},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        results = []
+        for obj in data.get("objects", []):
+            pkg = obj.get("package", {})
+            name = pkg.get("name", "")
+            desc = pkg.get("description", "")[:70]
+            name_lower = name.lower()
+            desc_lower = desc.lower()
+            if "skill" in name_lower or ("claude" in name_lower and ("skill" in desc_lower or "agent" in desc_lower)):
+                results.append((name, desc))
+        return results
+
+    def _handle_mcp_command(self, args: str) -> None:
+        """Handle /mcp subcommands: list, search, install, remove."""
+        parts = args.strip().split(None, 1)
+        subcmd = parts[0] if parts else ""
+        subargs = parts[1] if len(parts) > 1 else ""
+
+        if subcmd == "search" and subargs:
+            self._console.print(f"[dim]Searching for MCP servers: {subargs}...[/]")
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    results = pool.submit(asyncio.run, self._search_mcp_npm(subargs)).result()
+            except RuntimeError:
+                results = asyncio.run(self._search_mcp_npm(subargs))
+
+            if not results:
+                self._console.print("[dim]No MCP servers found.[/]")
+            else:
+                from rich.table import Table
+                table = Table(title=f"MCP Servers: {subargs}", show_header=True)
+                table.add_column("Package", style="cyan")
+                table.add_column("Description")
+                for name, desc in results:
+                    table.add_row(name, desc)
+                self._console.print(table)
+                self._console.print()
+                self._console.print("[dim]Install with: /mcp install <package-name>[/]")
+            return
+
+        if subcmd == "install" and subargs:
+            # Add to config.json mcpServers
+            package = subargs.strip()
+            server_name = package.split("/")[-1].replace("@", "").replace("server-", "")
+            import json
+            config_path = Path.home() / ".llm-code" / "config.json"
+            config = {}
+            if config_path.exists():
+                try:
+                    config = json.loads(config_path.read_text())
+                except Exception:
+                    pass
+            config.setdefault("mcpServers", {})[server_name] = {
+                "command": "npx",
+                "args": ["-y", package],
+            }
+            config_path.write_text(json.dumps(config, indent=2))
+            self._console.print(f"[green]✓[/] Added [bold]{server_name}[/] to config")
+            self._console.print(f"[dim]Config: {config_path}[/]")
+            self._console.print(f"[dim]Command: npx -y {package}[/]")
+            self._console.print()
+            self._console.print("[dim]Restart llm-code to activate. Set env vars if needed:[/]")
+            self._console.print(f'  [cyan]export GITHUB_TOKEN=ghp_xxx[/]  [dim](example)[/]')
+            return
+
+        if subcmd == "remove" and subargs:
+            import json
+            config_path = Path.home() / ".llm-code" / "config.json"
+            if config_path.exists():
+                config = json.loads(config_path.read_text())
+                servers = config.get("mcpServers", {})
+                if subargs in servers:
+                    del servers[subargs]
+                    config_path.write_text(json.dumps(config, indent=2))
+                    self._console.print(f"[green]✓[/] Removed [bold]{subargs}[/] from config")
+                else:
+                    self._console.print(f"[red]Server not found: {subargs}[/]")
+            return
+
+        # Default: list configured MCP servers + marketplace
+        servers = self._config.mcp_servers
+
+        self._console.print()
+        self._console.print("[bold]MCP Servers[/]")
+        self._console.print(f"{len(servers)} configured")
+        self._console.print()
+
+        if servers:
+            self._console.print("[bold]Configured[/] [dim](~/.llm-code/config.json)[/]")
+            for name, cfg in servers.items():
+                cmd = cfg.get("command", "")
+                srv_args = " ".join(cfg.get("args", []))
+                self._console.print(f"[green]●[/] [bold]{name}[/] [dim]· {cmd} {srv_args}[/]")
+            self._console.print()
+
+        # Auto-fetch marketplace
+        self._console.print("[bold]Marketplace[/] [dim](npm · MCP servers)[/]")
+        import asyncio as _asyncio
+        try:
+            try:
+                _asyncio.get_running_loop()
+                import concurrent.futures as _cf
+                with _cf.ThreadPoolExecutor() as _pool:
+                    mcp_market = _pool.submit(_asyncio.run, self._search_mcp_npm("")).result()
+            except RuntimeError:
+                mcp_market = _asyncio.run(self._search_mcp_npm(""))
+        except Exception:
+            mcp_market = []
+
+        if mcp_market:
+            for name, desc in mcp_market[:15]:
+                installed = name in servers
+                if installed:
+                    self._console.print(f"[green]●[/] [bold]{name}[/] [dim]· {desc}[/] [green](configured)[/]")
+                else:
+                    self._console.print(f"[dim]○[/] [bold]{name}[/] [dim]· {desc}[/]")
+        else:
+            self._console.print("[dim]Could not fetch marketplace.[/]")
+
+        self._console.print()
+        self._console.print("[dim]Install: /mcp install <package>[/]")
+        self._console.print("[dim]Remove:  /mcp remove <name>[/]")
+        self._console.print("[dim]Search:  /mcp search <keyword>[/]")
+
+    async def _search_mcp_npm(self, query: str) -> list[tuple[str, str]]:
+        """Search npm for MCP server packages."""
+        import httpx
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://registry.npmjs.org/-/v1/search",
+                params={"text": f"mcp server {query}", "size": 20},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        results = []
+        for obj in data.get("objects", []):
+            pkg = obj.get("package", {})
+            name = pkg.get("name", "")
+            desc = pkg.get("description", "")[:80]
+            name_lower = name.lower()
+            if "mcp" in name_lower or "modelcontextprotocol" in name_lower:
+                results.append((name, desc))
+        return results
+
+    async def _search_plugins_npm(self, query: str) -> list[tuple[str, str]]:
+        """Search npm for Claude Code plugin packages."""
+        import httpx
+        search_term = f"claude-code plugin {query}".strip()
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://registry.npmjs.org/-/v1/search",
+                params={"text": search_term, "size": 30},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        results = []
+        for obj in data.get("objects", []):
+            pkg = obj.get("package", {})
+            name = pkg.get("name", "")
+            desc = pkg.get("description", "")[:70]
+            name_lower = name.lower()
+            if "claude" in name_lower or "plugin" in name_lower:
+                results.append((name, desc))
+        return results
+
     def _handle_plugin_command(self, args: str) -> None:
-        """Handle /plugin subcommands: list, enable, disable, uninstall."""
+        """Handle /plugin subcommands: list, search, install, enable, disable, remove/uninstall."""
         parts = args.split(None, 1)
-        subcmd = parts[0] if parts else "list"
+        subcmd = parts[0] if parts else ""
         subargs = parts[1] if len(parts) > 1 else ""
 
         from llm_code.marketplace.installer import PluginInstaller
         installer = PluginInstaller(Path.home() / ".llm-code" / "plugins")
 
-        if subcmd == "list":
-            plugins = installer.list_installed()
-            if not plugins:
-                self._console.print("[dim]No plugins installed.[/dim]")
-            for p in plugins:
-                status = "[green]on[/green]" if p.enabled else "[red]off[/red]"
-                self._console.print(f"  {status} {p.manifest.name} v{p.manifest.version}")
-        elif subcmd == "enable" and subargs:
+        if subcmd == "search" and subargs:
+            self._console.print(f"[dim]Searching npm for plugins: {subargs}...[/]")
+            import asyncio as _asyncio
+            try:
+                try:
+                    _asyncio.get_running_loop()
+                    import concurrent.futures as _cf
+                    with _cf.ThreadPoolExecutor() as _pool:
+                        results = _pool.submit(_asyncio.run, self._search_plugins_npm(subargs)).result()
+                except RuntimeError:
+                    results = _asyncio.run(self._search_plugins_npm(subargs))
+            except Exception:
+                results = []
+
+            if not results:
+                self._console.print("[dim]No plugins found.[/]")
+            else:
+                from rich.table import Table as _Table
+                table = _Table(title=f"Plugins: {subargs}", show_header=True)
+                table.add_column("Package", style="cyan")
+                table.add_column("Description")
+                for name, desc in results:
+                    table.add_row(name, desc)
+                self._console.print(table)
+                self._console.print()
+                self._console.print("[dim]Install with: /plugin install <package-name>[/]")
+            return
+
+        if subcmd == "install" and subargs:
+            self._console.print(f"[dim]Installing plugin: {subargs}...[/]")
+            try:
+                installer.install(subargs)
+                self._console.print(f"[green]✓[/] Installed {subargs}")
+                self._console.print("[dim]Restart llm-code to activate.[/]")
+            except Exception as e:
+                self._console.print(f"[red]Failed: {e}[/]")
+            return
+
+        if subcmd == "enable" and subargs:
             installer.enable(subargs)
-            self._console.print(f"[dim]Enabled: {subargs}[/dim]")
-        elif subcmd == "disable" and subargs:
+            self._console.print(f"[green]✓[/] Enabled {subargs}")
+            return
+
+        if subcmd == "disable" and subargs:
             installer.disable(subargs)
-            self._console.print(f"[dim]Disabled: {subargs}[/dim]")
-        elif subcmd == "uninstall" and subargs:
+            self._console.print(f"[dim]Disabled {subargs}[/]")
+            return
+
+        if subcmd in ("remove", "uninstall") and subargs:
             installer.uninstall(subargs)
-            self._console.print(f"[dim]Uninstalled: {subargs}[/dim]")
+            self._console.print(f"[green]✓[/] Removed {subargs}")
+            return
+
+        # Default: list installed + auto-fetch marketplace
+        installed = installer.list_installed()
+
+        self._console.print()
+        self._console.print("[bold]Plugins[/]")
+        self._console.print(f"{len(installed)} installed")
+        self._console.print()
+
+        if installed:
+            self._console.print("[bold]Installed[/] [dim](~/.llm-code/plugins)[/]")
+            for p in installed:
+                status = "[green]●[/]" if p.enabled else "[red]●[/]"
+                en_label = "" if p.enabled else " [red](disabled)[/]"
+                self._console.print(f"{status} [bold]{p.manifest.name}[/] [dim]· v{p.manifest.version}[/]{en_label}")
+            self._console.print()
+
+        # Auto-fetch marketplace
+        self._console.print("[bold]Marketplace[/] [dim](npm · claude-code plugins)[/]")
+        import asyncio as _asyncio
+        try:
+            try:
+                _asyncio.get_running_loop()
+                import concurrent.futures as _cf
+                with _cf.ThreadPoolExecutor() as _pool:
+                    plugin_market = _pool.submit(_asyncio.run, self._search_plugins_npm("")).result()
+            except RuntimeError:
+                plugin_market = _asyncio.run(self._search_plugins_npm(""))
+        except Exception:
+            plugin_market = []
+
+        if plugin_market:
+            installed_names = {p.manifest.name for p in installed}
+            for name, desc in plugin_market[:15]:
+                if name in installed_names:
+                    self._console.print(f"[green]●[/] [bold]{name}[/] [dim]· {desc}[/] [green](installed)[/]")
+                else:
+                    self._console.print(f"[dim]○[/] [bold]{name}[/] [dim]· {desc}[/]")
+        else:
+            self._console.print("[dim]Could not fetch marketplace.[/]")
+
+        self._console.print()
+        self._console.print("[dim]Install:  /plugin install <package>[/]")
+        self._console.print("[dim]Enable:   /plugin enable <name>[/]")
+        self._console.print("[dim]Disable:  /plugin disable <name>[/]")
+        self._console.print("[dim]Remove:   /plugin remove <name>[/]")
+        self._console.print("[dim]Search:   /plugin search <keyword>[/]")
 
     def _handle_config_command(self, args: str) -> None:
         """Handle /config set <key> <value>."""

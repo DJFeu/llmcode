@@ -83,6 +83,8 @@ class SkillLoader:
                 skill_md = subdir / "SKILL.md"
                 if not skill_md.is_file():
                     continue
+                if (subdir / ".disabled").exists():
+                    continue
                 skill = SkillLoader.load_skill(skill_md)
                 if skill.auto:
                     auto.append(skill)
