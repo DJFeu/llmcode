@@ -4,7 +4,15 @@ from __future__ import annotations
 import base64
 import pathlib
 
+from pydantic import BaseModel
+
 from llm_code.tools.base import PermissionLevel, Tool, ToolResult
+
+
+class ReadFileInput(BaseModel):
+    path: str
+    offset: int = 1
+    limit: int = 2000
 
 _IMAGE_EXTENSIONS = {
     ".png": "image/png",
@@ -53,6 +61,16 @@ class ReadFileTool(Tool):
     @property
     def required_permission(self) -> PermissionLevel:
         return PermissionLevel.READ_ONLY
+
+    @property
+    def input_model(self) -> type[ReadFileInput]:
+        return ReadFileInput
+
+    def is_read_only(self, args: dict) -> bool:
+        return True
+
+    def is_concurrency_safe(self, args: dict) -> bool:
+        return True
 
     def execute(self, args: dict) -> ToolResult:
         path = pathlib.Path(args["path"])
