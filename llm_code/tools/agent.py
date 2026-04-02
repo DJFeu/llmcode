@@ -1,0 +1,96 @@
+"""AgentTool — spawns a sub-agent runtime to handle a delegated sub-task."""
+from __future__ import annotations
+
+import asyncio
+import concurrent.futures
+from typing import Callable
+
+from llm_code.api.types import StreamTextDelta
+from llm_code.tools.base import PermissionLevel, Tool, ToolResult
+
+
+class AgentTool(Tool):
+    """Spawn a sub-agent to handle a sub-task, up to max_depth levels deep."""
+
+    def __init__(
+        self,
+        runtime_factory: Callable,
+        max_depth: int = 3,
+        current_depth: int = 0,
+    ) -> None:
+        self._runtime_factory = runtime_factory
+        self._max_depth = max_depth
+        self._current_depth = current_depth
+
+    # ------------------------------------------------------------------
+    # Tool interface
+    # ------------------------------------------------------------------
+
+    @property
+    def name(self) -> str:
+        return "agent"
+
+    @property
+    def description(self) -> str:
+        return "Spawn a sub-agent to handle a sub-task"
+
+    @property
+    def input_schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "Task for the sub-agent",
+                },
+                "model": {
+                    "type": "string",
+                    "description": "Optional model override",
+                },
+            },
+            "required": ["task"],
+        }
+
+    @property
+    def required_permission(self) -> PermissionLevel:
+        return PermissionLevel.FULL_ACCESS
+
+    def is_concurrency_safe(self, args: dict) -> bool:
+        # Each sub-agent has its own session
+        return True
+
+    # ------------------------------------------------------------------
+    # Execution
+    # ------------------------------------------------------------------
+
+    def execute(self, args: dict) -> ToolResult:
+        if self._current_depth >= self._max_depth:
+            return ToolResult(
+                output=f"Max agent depth reached ({self._max_depth})",
+                is_error=True,
+            )
+
+        task: str = args.get("task", "")
+        model: str | None = args.get("model", None)
+
+        # Sync wrapper: works whether or not an event loop is running
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                result = pool.submit(asyncio.run, self._execute_async(task, model)).result()
+        else:
+            result = asyncio.run(self._execute_async(task, model))
+
+        return result
+
+    async def _execute_async(self, task: str, model: str | None) -> ToolResult:
+        runtime = self._runtime_factory(model)
+        collected: list[str] = []
+        async for event in runtime.run_turn(task):
+            if isinstance(event, StreamTextDelta):
+                collected.append(event.text)
+        return ToolResult(output="".join(collected) or "(no output)")

@@ -62,6 +62,7 @@ class ConversationRuntime:
         config: Any,
         session: "Session",
         context: "ProjectContext",
+        checkpoint_manager: Any = None,
     ) -> None:
         self._provider = provider
         self._tool_registry = tool_registry
@@ -71,6 +72,7 @@ class ConversationRuntime:
         self._config = config
         self.session = session
         self._context = context
+        self._checkpoint_mgr = checkpoint_manager
 
     async def run_turn(self, user_input: str) -> AsyncIterator[StreamEvent]:
         """Run one user turn (may involve multiple LLM calls for tool use)."""
@@ -175,13 +177,45 @@ class ConversationRuntime:
                 break
 
             # 9. Execute tools via the validate→safety→permission→progress pipeline
+            # Split agent calls from non-agent calls so agents can run in parallel
+            agent_calls = [c for c in parsed_calls if c.name == "agent"]
+            non_agent_calls = [c for c in parsed_calls if c.name != "agent"]
+
             tool_result_blocks: list[ToolResultBlock] = []
-            for call in parsed_calls:
+
+            # Non-agent calls: execute sequentially (existing behaviour)
+            for call in non_agent_calls:
                 async for event in self._execute_tool_with_streaming(call):
                     if isinstance(event, ToolResultBlock):
                         tool_result_blocks.append(event)
                     else:
                         yield event  # StreamToolProgress
+
+            # Agent calls: run in parallel when there are multiple
+            if len(agent_calls) > 1:
+                async def _run_agent(c):
+                    results: list[StreamEvent | ToolResultBlock] = []
+                    async for ev in self._execute_tool_with_streaming(c):
+                        results.append(ev)
+                    return results
+
+                all_agent_results = await asyncio.gather(
+                    *[_run_agent(c) for c in agent_calls]
+                )
+                for result_events in all_agent_results:
+                    for event in result_events:
+                        if isinstance(event, ToolResultBlock):
+                            tool_result_blocks.append(event)
+                        else:
+                            yield event
+            elif agent_calls:
+                # Single agent call — sequential
+                for call in agent_calls:
+                    async for event in self._execute_tool_with_streaming(call):
+                        if isinstance(event, ToolResultBlock):
+                            tool_result_blocks.append(event)
+                        else:
+                            yield event
 
             # Add tool results as user message
             if tool_result_blocks:
@@ -258,6 +292,13 @@ class ConversationRuntime:
                 is_error=True,
             )
             return
+
+        # 4b. Create checkpoint before mutating tools
+        if self._checkpoint_mgr is not None and not tool.is_read_only(validated_args):
+            try:
+                self._checkpoint_mgr.create(call.name, validated_args)
+            except Exception:
+                pass  # Don't block tool execution if checkpoint fails
 
         # 5. Pre-tool hook
         args = validated_args
