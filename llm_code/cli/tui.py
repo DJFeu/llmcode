@@ -286,6 +286,8 @@ class LLMCodeApp(App):
         margin: 0 1;
     }
     """
+    ALLOW_SELECT = True
+    ENABLE_SELECT_AUTO_SCROLL = True
 
     BINDINGS = [
         Binding("ctrl+d", "quit", "Quit", priority=True),
@@ -539,7 +541,7 @@ class LLMCodeApp(App):
     def _show_assistant_text(self, text: str) -> None:
         log = self.query_one("#chat-log", RichLog)
         from rich.markdown import Markdown
-        log.write(Markdown(text))
+        log.write(Markdown(text, code_theme="monokai"))
 
     def _show_tool_start(self, tool_name: str, args_summary: str) -> None:
         import json
@@ -1356,11 +1358,11 @@ class LLMCodeApp(App):
                             tool_tag_buffer = "<"
                         else:
                             self._text_buffer += char
-                            # Flush on sentence boundaries for smoother streaming
-                            if (
-                                self._text_buffer.endswith(". ")
+                            # Flush on paragraph boundaries, but NOT inside code blocks
+                            in_code = self._text_buffer.count("```") % 2 == 1
+                            if not in_code and (
+                                self._text_buffer.endswith("\n\n")
                                 or self._text_buffer.endswith("\u3002")
-                                or self._text_buffer.endswith("\n")
                             ):
                                 self._flush_text()
 
