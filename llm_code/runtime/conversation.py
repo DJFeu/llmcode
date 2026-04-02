@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from pydantic import ValidationError
 
+from llm_code.logging import get_logger
 from llm_code.api.types import (
     Message,
     MessageRequest,
@@ -38,6 +39,8 @@ if TYPE_CHECKING:
 
 # Thread pool for running blocking tool execution off the event loop
 _TOOL_EXECUTOR = ThreadPoolExecutor(max_workers=4)
+
+logger = get_logger(__name__)
 
 # Maximum number of characters to inline in tool results
 _MAX_INLINE_RESULT = 4000
@@ -83,6 +86,7 @@ class ConversationRuntime:
 
     async def run_turn(self, user_input: str) -> AsyncIterator[StreamEvent]:
         """Run one user turn (may involve multiple LLM calls for tool use)."""
+        logger.debug("Starting turn: %s", user_input[:80])
         # 1. Add user message to session
         user_msg = Message(role="user", content=(TextBlock(text=user_input),))
         self.session = self.session.add_message(user_msg)
@@ -119,6 +123,7 @@ class ConversationRuntime:
                     ("413" in _exc_str or "prompt too long" in _exc_str.lower())
                     and not self._has_attempted_reactive_compact
                 ):
+                    logger.warning("Prompt too long; compacting context and retrying")
                     self._has_attempted_reactive_compact = True
                     _compressor = ContextCompressor()
                     self.session = _compressor.compress(
@@ -126,6 +131,7 @@ class ConversationRuntime:
                         self._config.compact_after_tokens // 2,
                     )
                     continue  # retry this iteration of the turn loop
+                logger.error("Provider stream error: %s", exc)
                 raise
 
             # 4. Collect events and buffers
@@ -253,14 +259,21 @@ class ConversationRuntime:
 
         # Update session usage
         self.session = self.session.update_usage(accumulated_usage)
+        logger.debug(
+            "Turn complete: %d input tokens, %d output tokens",
+            accumulated_usage.input_tokens,
+            accumulated_usage.output_tokens,
+        )
 
     async def _execute_tool_with_streaming(
         self, call: ParsedToolCall
     ) -> AsyncIterator[StreamEvent | ToolResultBlock]:
         """Validate → safety → permission → run in thread → yield progress + result."""
+        logger.debug("Executing tool: %s", call.name)
         # 1. Look up tool
         tool = self._tool_registry.get(call.name)
         if tool is None:
+            logger.warning("Unknown tool requested: %s", call.name)
             yield ToolResultBlock(
                 tool_use_id=call.id,
                 content=f"Unknown tool '{call.name}'",

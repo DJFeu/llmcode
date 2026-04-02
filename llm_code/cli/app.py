@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import os
 import sys
 from pathlib import Path
@@ -14,6 +15,7 @@ from llm_code.cli.commands import SlashCommand, parse_slash_command
 from llm_code.cli.image import load_image_from_path
 from llm_code.cli.input import InputHandler
 from llm_code.cli.render import TerminalRenderer
+from llm_code.logging import get_logger, setup_logging
 from llm_code.runtime.config import RuntimeConfig, load_config
 from llm_code.runtime.context import ProjectContext
 from llm_code.runtime.conversation import ConversationRuntime
@@ -44,6 +46,8 @@ Type [bold]/help[/bold] for commands, [bold]/exit[/bold] to quit.
 
 _PERMISSION_CHOICES = ["prompt", "auto_accept", "read_only", "workspace_write", "full_access"]
 
+logger = get_logger(__name__)
+
 
 @click.command()
 @click.argument("prompt", required=False)
@@ -57,6 +61,7 @@ _PERMISSION_CHOICES = ["prompt", "auto_accept", "read_only", "workspace_write", 
     help="Permission mode",
 )
 @click.option("--budget", type=int, default=None, help="Token budget target")
+@click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
 def main(
     prompt: str | None,
     model: str | None,
@@ -64,8 +69,10 @@ def main(
     api_key: str | None,
     permission: str | None,
     budget: int | None,
+    verbose: bool = False,
 ) -> None:
     """llm-code: AI coding assistant CLI."""
+    setup_logging(verbose=verbose)
     cwd = Path.cwd()
 
     # Build CLI overrides dict
@@ -124,6 +131,7 @@ class CliApp:
         self._input = InputHandler(
             history_path=Path.home() / ".config" / "llm-code" / "history"
         )
+        self._cleanup_registered = False
 
         # Build tool registry with all tools
         self._registry = ToolRegistry()
@@ -159,8 +167,49 @@ class CliApp:
         self._mcp_manager = None
         self._skills = None
 
+    def _register_cleanup(self) -> None:
+        """Register an atexit handler to gracefully shut down MCP/LSP servers."""
+        if self._cleanup_registered:
+            return
+        self._cleanup_registered = True
+
+        app_ref = self
+
+        async def _async_cleanup() -> None:
+            logger.info("Cleaning up resources on exit...")
+            if app_ref._mcp_manager is not None:
+                try:
+                    await app_ref._mcp_manager.stop_all()
+                except Exception:
+                    pass
+            if app_ref._lsp_manager is not None:
+                try:
+                    await app_ref._lsp_manager.stop_all()
+                except Exception:
+                    pass
+            if app_ref._runtime is not None and app_ref._runtime.session:
+                try:
+                    app_ref._session_manager.save(app_ref._runtime.session)
+                except Exception:
+                    pass
+
+        def _sync_cleanup() -> None:
+            try:
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(_async_cleanup())
+                loop.close()
+            except Exception:
+                pass
+
+        atexit.register(_sync_cleanup)
+
     def _init_session(self) -> None:
         """Initialize the runtime with a fresh session."""
+        logger.debug(
+            "Initialising session: model=%s, provider=%s",
+            self._config.model,
+            self._config.provider_base_url or "(default)",
+        )
         api_key = os.environ.get(self._config.provider_api_key_env, "")
         base_url = self._config.provider_base_url or ""
 
@@ -275,7 +324,9 @@ class CliApp:
     async def run_repl(self) -> None:
         """Run the interactive REPL loop."""
         self._console.print(_BANNER)
+        self._register_cleanup()
         self._init_session()
+        logger.debug("REPL started")
 
         while True:
             user_input = self._input.read("> ")
@@ -301,6 +352,7 @@ class CliApp:
 
     async def run_prompt(self, prompt: str) -> None:
         """Run a single prompt in one-shot mode."""
+        self._register_cleanup()
         self._init_session()
         await self._run_turn(prompt)
 

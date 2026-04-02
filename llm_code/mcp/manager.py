@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import warnings
 
+from llm_code.logging import get_logger
 from llm_code.mcp.bridge import McpToolBridge
 from llm_code.mcp.client import McpClient
 from llm_code.mcp.transport import HttpTransport, McpTransport, StdioTransport
 from llm_code.mcp.types import McpServerConfig
 from llm_code.tools.registry import ToolRegistry
+
+logger = get_logger(__name__)
 
 
 class McpServerManager:
@@ -24,6 +27,7 @@ class McpServerManager:
 
     async def start_server(self, name: str, config: McpServerConfig) -> McpClient:
         """Start a single MCP server, returning an initialised McpClient."""
+        logger.debug("Starting MCP server: %s", name)
         transport = self._build_transport(config)
         await transport.start()
         client = McpClient(transport)
@@ -37,6 +41,7 @@ class McpServerManager:
         if instructions:
             self._instructions[name] = instructions
 
+        logger.debug("MCP server started: %s", name)
         return client
 
     async def start_all(self, configs: dict[str, McpServerConfig]) -> None:
@@ -45,6 +50,7 @@ class McpServerManager:
             try:
                 await self.start_server(name, config)
             except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to start MCP server '%s': %s", name, exc)
                 warnings.warn(
                     f"Failed to start MCP server '{name}': {exc}",
                     stacklevel=2,
@@ -52,11 +58,13 @@ class McpServerManager:
 
     async def stop_all(self) -> None:
         """Close all active clients and clear internal state."""
-        for client in list(self._clients.values()):
+        logger.debug("Stopping all MCP servers (%d active)", len(self._clients))
+        for name, client in list(self._clients.items()):
             try:
                 await client.close()
-            except Exception:  # noqa: BLE001
-                pass
+                logger.debug("MCP server stopped: %s", name)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Error stopping MCP server '%s': %s", name, exc)
         self._clients.clear()
         self._transports.clear()
 
