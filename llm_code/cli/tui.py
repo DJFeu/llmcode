@@ -102,6 +102,55 @@ def _detect_git_branch(cwd: Path) -> str:
     return ""
 
 
+def _interactive_pick(title: str, items: list[tuple[str, str, bool]], prompt_text: str = "Pick #") -> str | None:
+    """Numbered interactive picker. Returns selected item name or None."""
+    console.print(f"\n[bold]{title} ({len(items)} items)[/]\n")
+    for i, (name, desc, installed) in enumerate(items, 1):
+        icon = "[green]●[/]" if installed else "[dim]○[/]"
+        num = f"[cyan]{i:>3d}[/]"
+        console.print(f"  {num} {icon} [bold]{name}[/]  [dim]· {desc}[/]")
+
+    console.print(f"\n[dim]Enter number to select, or press Enter to cancel.[/]")
+    try:
+        choice = input(f"{prompt_text}: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if not choice:
+        return None
+    try:
+        idx = int(choice) - 1
+        if 0 <= idx < len(items):
+            return items[idx][0]
+    except ValueError:
+        # User typed a name directly
+        for name, _, _ in items:
+            if name == choice:
+                return choice
+    console.print("[dim]Cancelled.[/]")
+    return None
+
+
+def _interactive_action(name: str, actions: list[tuple[str, str]]) -> str | None:
+    """Pick an action for a selected item."""
+    console.print(f"\n[bold]Action for {name}:[/]")
+    for i, (action_id, label) in enumerate(actions, 1):
+        console.print(f"  [cyan]{i}[/] {label}")
+    console.print()
+    try:
+        choice = input("Pick #: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if not choice:
+        return None
+    try:
+        idx = int(choice) - 1
+        if 0 <= idx < len(actions):
+            return actions[idx][0]
+    except ValueError:
+        pass
+    return None
+
+
 class LLMCodeCLI:
     """Print-based CLI that renders in the normal terminal scroll buffer."""
 
@@ -662,21 +711,18 @@ class LLMCodeCLI:
             else:
                 console.print(f"[red]Not found: {subargs}[/]")
         else:
-            # List skills with numbered menu for browsing
+            # Interactive picker: installed + npm marketplace
             all_skills = []
             if self._skills:
                 all_skills = list(self._skills.auto_skills) + list(self._skills.command_skills)
 
-            console.print(f"\n[bold]Skills ({len(all_skills)} installed)[/]")
-            for i, s in enumerate(all_skills, 1):
+            items: list[tuple[str, str, bool]] = []
+            for s in all_skills:
                 tokens = len(s.content) // 4
                 mode = "auto" if s.auto else f"/{s.trigger}"
-                console.print(f"  [green]●[/] {s.name}  [dim]· {mode} · ~{tokens} tokens[/]")
+                items.append((s.name, f"{mode} · ~{tokens} tokens", True))
 
-            if not all_skills:
-                console.print("  [dim]No skills installed.[/]")
-
-            # Fetch marketplace
+            # Fetch npm marketplace
             import asyncio as _aio
             try:
                 try:
@@ -690,16 +736,28 @@ class LLMCodeCLI:
                 market = []
 
             installed_names = {s.name for s in all_skills}
-            available = [(n, d) for n, d in market if n not in installed_names]
-            if available:
-                console.print(f"\n[bold]Marketplace ({len(available)} available)[/]")
-                for i, (name, desc) in enumerate(available[:20], 1):
-                    console.print(f"  [dim]○[/] {name}  [dim]· {desc}[/]")
+            for name, desc in market:
+                if name not in installed_names:
+                    items.append((name, desc, False))
 
-            console.print(
-                "\n[dim]Install: /skill install owner/repo  |  "
-                "Enable/Disable/Remove: /skill enable|disable|remove <name>[/]"
-            )
+            selected = _interactive_pick("Skills", items)
+            if not selected:
+                return
+
+            is_installed = selected in installed_names
+            actions = []
+            if is_installed:
+                actions.append(("enable", f"Enable {selected}"))
+                actions.append(("disable", f"Disable {selected}"))
+                actions.append(("remove", f"Remove {selected}"))
+            else:
+                actions.append(("install", f"Install {selected}"))
+
+            action = _interactive_action(selected, actions)
+            if action == "install":
+                self._handle_skill_command(f"install {selected}")
+            elif action in ("enable", "disable", "remove"):
+                self._handle_skill_command(f"{action} {selected}")
 
     def _handle_mcp_command(self, args: str) -> None:
         parts = args.strip().split(None, 1)
@@ -811,34 +869,48 @@ class LLMCodeCLI:
             installer.uninstall(subargs)
             console.print(f"[green]✓ Removed {subargs}[/]")
         else:
-            # List installed + built-in registry
+            # Interactive picker: installed + registry
             installed = installer.list_installed()
             installed_names = {p.manifest.name for p in installed}
 
-            console.print(f"\n[bold]Plugins ({len(installed)} installed)[/]")
+            items: list[tuple[str, str, bool]] = []
             for p in installed:
-                status_icon = "[green]●[/]" if p.enabled else "[red]○[/]"
-                console.print(f"  {status_icon} {p.manifest.name} [dim]v{p.manifest.version}[/]")
-            if not installed:
-                console.print("  [dim]No plugins installed.[/]")
+                items.append((p.manifest.name, f"v{p.manifest.version}", True))
 
-            # Show built-in registry
             from llm_code.marketplace.builtin_registry import get_all_known_plugins
-            available = [p for p in get_all_known_plugins() if p["name"] not in installed_names]
-            if available:
-                console.print(f"\n[bold]Available ({len(available)} plugins)[/]")
-                for p in available[:20]:
+            for p in get_all_known_plugins():
+                if p["name"] not in installed_names:
                     skill_info = f"{p['skills']} skills · " if p["skills"] > 0 else ""
-                    source_tag = "official" if p["source"] == "official" else "community"
-                    console.print(
-                        f"  [dim]○[/] {p['name']}  "
-                        f"[dim]· {skill_info}{p['desc']} [{source_tag}][/]"
-                    )
+                    items.append((p["name"], f"{skill_info}{p['desc']}", False))
 
-            console.print(
-                "\n[dim]Install: /plugin install owner/repo  |  "
-                "Enable/Disable/Remove: /plugin enable|disable|remove <name>[/]"
-            )
+            selected = _interactive_pick("Plugins", items)
+            if not selected:
+                return
+
+            is_installed = selected in installed_names
+            actions = []
+            if is_installed:
+                actions.append(("enable", f"Enable {selected}"))
+                actions.append(("disable", f"Disable {selected}"))
+                actions.append(("remove", f"Remove {selected}"))
+            else:
+                registry = {p["name"]: p for p in get_all_known_plugins()}
+                repo = registry.get(selected, {}).get("repo", "")
+                if repo:
+                    actions.append(("install", f"Install {selected} (from {repo})"))
+                else:
+                    actions.append(("install_manual", f"Install {selected} (need repo URL)"))
+
+            action = _interactive_action(selected, actions)
+            if action == "install":
+                registry = {p["name"]: p for p in get_all_known_plugins()}
+                repo = registry.get(selected, {}).get("repo", "")
+                if repo:
+                    self._handle_plugin_command(f"install {repo}")
+            elif action == "install_manual":
+                console.print(f"[dim]Run: /plugin install owner/{selected}[/]")
+            elif action in ("enable", "disable", "remove"):
+                self._handle_plugin_command(f"{action} {selected}")
 
     def _handle_memory_command(self, args: str) -> None:
         if not self._memory:
