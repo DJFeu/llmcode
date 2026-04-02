@@ -35,7 +35,7 @@ class InkBridge:
             "npx", "tsx", str(ink_dir / "src" / "index.tsx"),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
+            stderr=None,  # Pass through to terminal — Ink renders here
             cwd=str(ink_dir),
         )
 
