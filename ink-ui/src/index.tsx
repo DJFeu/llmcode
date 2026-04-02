@@ -4,20 +4,33 @@ import { App } from './App.js';
 import tty from 'tty';
 import fs from 'fs';
 
-// Ink renders to stderr (which goes directly to terminal).
-// stdout is reserved for JSON-lines IPC back to Python.
-// stdin comes from /dev/tty (keyboard) since process.stdin is piped from Python.
+// Architecture:
+// - process.stdin: PIPE from Python (JSON-lines IPC messages)
+// - process.stdout: PIPE to Python (JSON-lines IPC responses)
+// - Ink rendering: stderr (fd 2) which goes to terminal
+// - Keyboard input: /dev/tty (separate from piped stdin)
 
+// Keyboard input from /dev/tty
 let inputStream: NodeJS.ReadStream;
 try {
-  const fd = fs.openSync('/dev/tty', 'r+');
-  inputStream = new tty.ReadStream(fd);
+  const readFd = fs.openSync('/dev/tty', 'r');
+  inputStream = new tty.ReadStream(readFd);
 } catch {
-  inputStream = process.stdin as NodeJS.ReadStream;
+  // Fallback: create a stub so Ink doesn't crash
+  const { PassThrough } = require('stream');
+  const stub = new PassThrough();
+  stub.isTTY = true;
+  stub.setRawMode = () => stub;
+  stub.ref = () => {};
+  stub.unref = () => {};
+  inputStream = stub as unknown as NodeJS.ReadStream;
 }
 
-// Create a write stream to stderr for Ink rendering
-const outputStream = new tty.WriteStream(2); // fd 2 = stderr
+// Ink renders to stderr — goes directly to terminal
+// Force color support via environment variable
+process.env.FORCE_COLOR = '3'; // 256 color support
+
+const outputStream = process.stderr as unknown as NodeJS.WriteStream;
 
 render(<App />, {
   stdin: inputStream,

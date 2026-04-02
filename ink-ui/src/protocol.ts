@@ -13,6 +13,7 @@ export type BackendMessage =
   | { type: 'turn_done'; elapsed: number; tokens: number }
   | { type: 'permission_request'; toolName: string; args: string }
   | { type: 'marketplace_show'; title: string; items: MarketplaceItem[] }
+  | { type: 'action_show'; name: string; actions: Array<{id: string; label: string}> }
   | { type: 'message'; text: string; style?: string }
   | { type: 'help'; commands: Array<{cmd: string; desc: string}> }
   | { type: 'error'; message: string }
@@ -30,4 +31,5 @@ export type FrontendMessage =
   | { type: 'permission_response'; action: 'allow' | 'deny' | 'always' }
   | { type: 'marketplace_select'; index: number }
   | { type: 'marketplace_close' }
+  | { type: 'action_select'; actionId: string }
   | { type: 'image_paste'; mediaType: string; data: string }
