@@ -30,20 +30,18 @@ Most AI coding tools lock you into a single provider. **llm-code doesn't.**
 Run the same agent experience with a free local model on your own GPU, or with any cloud API. Switch between them with one config change. No API key required for local models.
 
 ```
-  +------------------+  +--------------------------------------+
-  |                  |  | Local LLM Agent                      |
-  |    LLM  CODE     |  | ------------------------------------ |
-  |                  |  | Model        qwen3.5-122b            |
-  +------------------+  | Workspace    my-project, main        |
-                        | Directory    ~/my-project            |
-                        | Permissions  prompt                  |
-                        |                                      |
-                        | Quick start  /help, /skill, /mcp     |
-                        | Multiline    Shift+Enter             |
-                        | Images       Cmd+V pastes            |
-                        | ------------------------------------ |
-                        | Ready                                |
-                        +--------------------------------------+
+ ██╗      ██╗      ███╗   ███╗
+ ██║      ██║      ████╗ ████║
+ ██║      ██║      ██╔████╔██║
+ ██║      ██║      ██║╚██╔╝██║
+ ███████╗ ███████╗ ██║ ╚═╝ ██║
+ ╚══════╝ ╚══════╝ ╚═╝     ╚═╝
+  ██████╗  ██████╗  ██████╗  ███████╗
+ ██╔════╝ ██╔═══██╗ ██╔══██╗ ██╔════╝
+ ██║      ██║   ██║ ██║  ██║ █████╗
+ ██║      ██║   ██║ ██║  ██║ ██╔══╝
+ ╚██████╗ ╚██████╔╝ ██████╔╝ ███████╗
+  ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝
 ```
 
 **Not just a CLI tool** — a complete AI Agent Runtime with:
