@@ -44,6 +44,7 @@ export function MarketplaceSelect({ title, items, onSelect }: MarketplaceSelectP
       <Box flexDirection="column" marginTop={1}>
         <SelectInput
           items={selectItems}
+          limit={15}
           onSelect={(item) => onSelect(item.value as unknown as MarketplaceItem)}
           indicatorComponent={IndicatorComponent}
           itemComponent={ItemComponent}
