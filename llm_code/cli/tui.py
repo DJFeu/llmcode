@@ -506,7 +506,7 @@ class LLMCodeCLI:
         # 2. ClawHub — 44k+ community skills
         try:
             from llm_code.marketplace.builtin_registry import search_clawhub_skills
-            clawhub = await search_clawhub_skills("", limit=40)
+            clawhub = await search_clawhub_skills("", limit=80)
             for slug, desc in clawhub:
                 results.append((f"clawhub:{slug}", f"[ClawHub] {desc}"))
         except Exception:

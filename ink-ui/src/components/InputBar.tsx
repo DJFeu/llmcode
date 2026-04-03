@@ -49,9 +49,9 @@ export function InputBar({ onSubmit, disabled }: InputBarProps) {
         setSelectedHint(s => Math.min(s + 1, suggestions.length - 1));
       } else if (key.upArrow) {
         setSelectedHint(s => Math.max(s - 1, 0));
-      } else if (key.tab) {
-        // Tab: fill the suggestion into input
-        setValue(suggestions[selectedHint].cmd + ' ');
+      } else if (input === '\t' || key.tab || key.rightArrow) {
+        // Tab or Right Arrow: fill the suggestion into input
+        setValue(suggestions[selectedHint].cmd);
         setSelectedHint(0);
       } else if (key.return && selectedHint >= 0) {
         // Enter on suggestion: submit the selected command directly

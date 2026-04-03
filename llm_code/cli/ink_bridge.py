@@ -336,7 +336,7 @@ class InkBridge:
 
             # Send via marketplace_show — limit to 50 items to avoid pipe overflow
             self._current_marketplace = {"type": "skill", "items": items}
-            display_items = items[:50]  # Cap to prevent large JSON
+            display_items = items[:100]  # Cap to prevent oversized JSON
             installed_count = sum(1 for i in display_items if i.get("installed"))
             market_count = len(display_items) - installed_count
             import time as _t
@@ -624,7 +624,7 @@ class InkBridge:
         # 2. ClawHub — 44k+ community
         try:
             from llm_code.marketplace.builtin_registry import search_clawhub_skills
-            clawhub = await search_clawhub_skills("", limit=40)
+            clawhub = await search_clawhub_skills("", limit=80)
             for slug, desc in clawhub:
                 results.append((f"clawhub:{slug}", f"[ClawHub] {desc}"))
         except Exception:
