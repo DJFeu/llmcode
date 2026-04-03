@@ -65,6 +65,9 @@ class InkBridge:
         # Start reading from Ink frontend
         await self._read_loop()
 
+        # On exit: auto-save session + generate summary
+        await self._auto_save_on_exit()
+
     async def _send(self, msg: dict) -> None:
         """Send a JSON message to Ink frontend."""
         if self._ink_process and self._ink_process.stdin:
@@ -942,6 +945,42 @@ class InkBridge:
             return r.stdout.strip() if r.returncode == 0 else ""
         except Exception:
             return ""
+
+    async def _auto_save_on_exit(self) -> None:
+        """Auto-save session + generate summary on exit."""
+        if not self._runtime or not self._runtime.session:
+            return
+
+        import sys
+        print("\n[dim]Saving session...[/]", file=sys.stderr)
+
+        # 1. Save session to disk
+        try:
+            from llm_code.runtime.session import SessionManager
+            sm = SessionManager(Path.home() / ".llm-code" / "sessions")
+            sm.save(self._runtime.session)
+        except Exception:
+            pass
+
+        # 2. Generate summary and save to memory
+        if self._memory and len(self._runtime.session.messages) > 2:
+            try:
+                # Build a simple summary from the conversation
+                messages = self._runtime.session.messages
+                topics = []
+                for msg in messages:
+                    for block in msg.content:
+                        if hasattr(block, 'text') and msg.role == 'user':
+                            text = block.text[:100]
+                            if text and not text.startswith('/'):
+                                topics.append(text)
+
+                if topics:
+                    summary = "Session topics: " + "; ".join(topics[:5])
+                    self._memory.save_session_summary(summary)
+                    print(f"Session saved with {len(topics)} topics.", file=sys.stderr)
+            except Exception:
+                pass
 
     def _find_ink_dir(self) -> Path:
         """Find the ink-ui directory."""
