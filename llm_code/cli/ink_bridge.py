@@ -297,10 +297,14 @@ class InkBridge:
                 "index": len(items),
             })
 
-        # Send local skills only (fast, reliable) — use /skill search for marketplace
-        self._current_marketplace = {"type": "skill", "items": items}
-        title = f"Skills ({len(items)} installed · /skill search <keyword> for marketplace)"
-        await self._send({"type": "marketplace_show", "title": title, "items": items})
+        # Display as text messages (always works, no React state issues)
+        lines = [f"Skills ({len(items)} installed)"]
+        for it in items:
+            lines.append(f"  ● {it['name']}  · {it['description']}")
+        lines.append("")
+        lines.append("  /skill enable|disable|remove <name>")
+        lines.append("  /skill search <keyword> — search marketplace")
+        await self._send({"type": "message", "text": "\n".join(lines)})
 
     async def _show_mcp_marketplace(self) -> None:
         """Build and send the MCP server list."""
@@ -321,9 +325,14 @@ class InkBridge:
         except Exception:
             pass
 
-        self._current_marketplace = {"type": "mcp", "items": items}
-        title = f"MCP Servers ({len(items)})" if items else "MCP Servers (none configured)"
-        await self._send({"type": "marketplace_show", "title": title, "items": items})
+        lines = [f"MCP Servers ({len(items)} configured)"]
+        for it in items:
+            lines.append(f"  ● {it['name']}  · {it['description']}")
+        if not items:
+            lines.append("  (none)")
+        lines.append("")
+        lines.append("  /mcp install <package>  /mcp remove <name>")
+        await self._send({"type": "message", "text": "\n".join(lines)})
 
     async def _show_plugin_marketplace(self) -> None:
         """Build and send the plugin list."""
@@ -393,15 +402,21 @@ class InkBridge:
         except Exception:
             pass
 
-        # Send full list
-        self._current_marketplace = {"type": "plugin", "items": items}
-        installed_count = sum(1 for i in items if i.get("installed"))
-        market_count = len(items) - installed_count
-        title = f"Plugins ({installed_count} installed"
-        if market_count > 0:
-            title += f" + {market_count} available"
-        title += ")"
-        await self._send({"type": "marketplace_show", "title": title, "items": items})
+        # Display as text (reliable)
+        installed = [it for it in items if it.get("installed")]
+        available = [it for it in items if not it.get("installed")]
+        lines = [f"Plugins ({len(installed)} installed + {len(available)} available)"]
+        for it in installed:
+            lines.append(f"  ● {it['name']}  · {it['description']}")
+        if available:
+            lines.append("")
+            for it in available[:15]:
+                lines.append(f"  ○ {it['name']}  · {it['description']}")
+            if len(available) > 15:
+                lines.append(f"  ... and {len(available) - 15} more")
+        lines.append("")
+        lines.append("  /plugin install owner/repo  /plugin enable|disable|remove <name>")
+        await self._send({"type": "message", "text": "\n".join(lines)})
 
     async def _handle_marketplace_selection(self, index: int) -> None:
         """Handle an item selection from the marketplace list."""
@@ -518,7 +533,7 @@ class InkBridge:
                     await self._send({"type": "message", "text": f"✓ Removed skill '{name}'"})
                     self._reload_skills()  # Reload skills
                 else:
-                    await self._send({"type": "message", "text": f"Skill '{name}' not found on disk."})
+                    await self._send({"type": "message", "text": f"Skill '{name}' is from a plugin — use /plugin to manage it."})
             elif market_type == "plugin":
                 try:
                     from llm_code.marketplace.installer import PluginInstaller
