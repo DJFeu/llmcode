@@ -29,7 +29,11 @@ class InkBridge:
         self._current_marketplace: dict | None = None
         self._selected_item: dict | None = None
         self._skill_items: list[dict] = []
-        self._cost_tracker = CostTracker(model=self._config.model, custom_pricing=self._config.pricing or None)
+        self._cost_tracker = CostTracker(
+            model=self._config.model,
+            custom_pricing=self._config.pricing or None,
+            max_budget_usd=self._config.max_budget_usd,
+        )
 
     async def start(self) -> None:
         """Start the Ink frontend process and begin communication."""
@@ -1234,7 +1238,11 @@ class InkBridge:
         resolved_model = resolve_model(
             self._config.model, custom_aliases=self._config.model_aliases
         )
-        self._cost_tracker = CostTracker(model=resolved_model, custom_pricing=self._config.pricing or None)
+        self._cost_tracker = CostTracker(
+            model=resolved_model,
+            custom_pricing=self._config.pricing or None,
+            max_budget_usd=self._config.max_budget_usd,
+        )
         provider = ProviderClient.from_model(
             model=resolved_model,
             base_url=self._config.provider_base_url or "",

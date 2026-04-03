@@ -131,6 +131,7 @@ class RuntimeConfig:
     vcr: VCRConfig = field(default_factory=VCRConfig)
     hida: HidaConfig = field(default_factory=HidaConfig)
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
+    max_budget_usd: float | None = None
 
 
 class ConfigSchema(BaseModel):
@@ -328,6 +329,7 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         vcr=vcr,
         hida=hida,
         telemetry=telemetry,
+        max_budget_usd=data.get("max_budget_usd", None),
     )
 
 

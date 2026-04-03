@@ -28,7 +28,9 @@ from llm_code.api.types import (
     ToolUseBlock,
 )
 from llm_code.runtime.compressor import ContextCompressor
+from llm_code.runtime.cost_tracker import BudgetExceededError
 from llm_code.runtime.permissions import PermissionOutcome
+from llm_code.runtime.streaming_executor import StreamingToolExecutor
 from llm_code.runtime.telemetry import Telemetry, get_noop_telemetry
 from llm_code.tools.base import PermissionLevel, ToolResult
 from llm_code.tools.parsing import ParsedToolCall, parse_tool_calls
@@ -99,6 +101,7 @@ class ConversationRuntime:
         deferred_tool_manager: Any = None,
         telemetry: Telemetry | None = None,
         recovery_checkpoint: Any = None,
+        cost_tracker: Any = None,
     ) -> None:
         self._provider = provider
         self._tool_registry = tool_registry
@@ -114,6 +117,7 @@ class ConversationRuntime:
         self._deferred_tool_manager = deferred_tool_manager
         self._telemetry: Telemetry = telemetry if telemetry is not None else get_noop_telemetry()
         self._recovery_checkpoint = recovery_checkpoint
+        self._cost_tracker = cost_tracker
         self._has_attempted_reactive_compact = False
         self._consecutive_failures: int = 0
         self._active_model: str = getattr(config, "model", "")
@@ -156,6 +160,16 @@ class ConversationRuntime:
         _TOKEN_UPGRADE_CAP = 0 if _is_local else 65536  # 0 means unlimited
 
         for _iteration in range(self._config.max_turn_iterations):
+            # Budget enforcement: check before each LLM call
+            if self._cost_tracker is not None:
+                try:
+                    self._cost_tracker.check_budget()
+                except BudgetExceededError as exc:
+                    yield StreamTextDelta(
+                        text=f"Budget limit (${exc.budget:.2f}) reached. Use /budget to increase."
+                    )
+                    return
+
             # HIDA dynamic context filtering
             allowed_tool_names: set[str] | None = None
 
@@ -293,6 +307,10 @@ class ConversationRuntime:
             native_tool_list: list[dict] = []
             stop_event: StreamMessageStop | None = None
 
+            # StreamingToolExecutor: starts read-only tools in background while streaming
+            _streaming_executor = StreamingToolExecutor(self._tool_registry, self._permissions)
+            _current_streaming_tool_id: str | None = None
+
             async for event in stream:
                 # Yield streaming events to caller
                 yield event
@@ -300,15 +318,25 @@ class ConversationRuntime:
                 if isinstance(event, StreamTextDelta):
                     text_parts.append(event.text)
                 elif isinstance(event, StreamToolUseStart):
+                    # Finalize the previously streaming tool (if any) before starting new one
+                    if _current_streaming_tool_id is not None:
+                        _streaming_executor.finalize(_current_streaming_tool_id)
+                    _current_streaming_tool_id = event.id
                     native_tool_calls[event.id] = {
                         "id": event.id,
                         "name": event.name,
                         "json_parts": [],
                     }
+                    _streaming_executor.start_tool(event.id, event.name)
                 elif isinstance(event, StreamToolUseInputDelta):
                     if event.id in native_tool_calls:
                         native_tool_calls[event.id]["json_parts"].append(event.partial_json)
+                    _streaming_executor.submit(event.id, event.partial_json)
                 elif isinstance(event, StreamMessageStop):
+                    # Finalize the last streaming tool
+                    if _current_streaming_tool_id is not None:
+                        _streaming_executor.finalize(_current_streaming_tool_id)
+                        _current_streaming_tool_id = None
                     stop_event = event
 
             # Reset consecutive failure counter on successful stream
@@ -381,19 +409,36 @@ class ConversationRuntime:
                 break
 
             # 9. Execute tools via the validate→safety→permission→progress pipeline
+            # Collect read-only results that were pre-computed during streaming,
+            # and get the list of write calls still needing execution.
+            _precomputed_results, _write_pending_calls = await _streaming_executor.collect_results()
+            _precomputed_by_id: dict[str, ToolResultBlock] = {r.tool_use_id: r for r in _precomputed_results}
+
             # Split agent calls from non-agent calls so agents can run in parallel
             agent_calls = [c for c in parsed_calls if c.name == "agent"]
             non_agent_calls = [c for c in parsed_calls if c.name != "agent"]
 
             tool_result_blocks: list[ToolResultBlock] = []
 
-            # Non-agent calls: execute sequentially (existing behaviour)
+            # Non-agent calls: use pre-computed result if available, else execute normally
             for call in non_agent_calls:
-                async for event in self._execute_tool_with_streaming(call):
-                    if isinstance(event, ToolResultBlock):
-                        tool_result_blocks.append(event)
-                    else:
-                        yield event  # StreamToolProgress
+                if call.id in _precomputed_by_id:
+                    # Read-only tool already executed concurrently — emit events and reuse result
+                    precomputed = _precomputed_by_id[call.id]
+                    yield StreamToolExecStart(tool_name=call.name, args_summary=str(call.args)[:80])
+                    yield StreamToolExecResult(
+                        tool_name=call.name,
+                        output=precomputed.content[:200],
+                        is_error=precomputed.is_error,
+                        metadata=None,
+                    )
+                    tool_result_blocks.append(precomputed)
+                else:
+                    async for event in self._execute_tool_with_streaming(call):
+                        if isinstance(event, ToolResultBlock):
+                            tool_result_blocks.append(event)
+                        else:
+                            yield event  # StreamToolProgress
 
             # Agent calls: run in parallel when there are multiple
             if len(agent_calls) > 1:

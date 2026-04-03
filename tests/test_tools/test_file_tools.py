@@ -182,3 +182,127 @@ class TestEditFileTool:
         assert "path" in props
         assert "old" in props
         assert "new" in props
+
+    # ------------------------------------------------------------------
+    # Fuzzy match — curly quotes
+    # ------------------------------------------------------------------
+
+    def test_fuzzy_match_left_single_quote(self, tmp_path):
+        f = tmp_path / "code.py"
+        f.write_text("it\u2019s a test")
+        result = EditFileTool().execute({"path": str(f), "old": "it's a test", "new": "OK"})
+        assert result.is_error is False
+        assert f.read_text() == "OK"
+        assert "fuzzy match" in result.output
+
+    def test_fuzzy_match_double_quotes(self, tmp_path):
+        f = tmp_path / "code.py"
+        f.write_text('say \u201chello\u201d')
+        result = EditFileTool().execute({"path": str(f), "old": 'say "hello"', "new": "greet"})
+        assert result.is_error is False
+        assert f.read_text() == "greet"
+        assert "fuzzy match" in result.output
+
+    def test_fuzzy_match_trailing_whitespace(self, tmp_path):
+        f = tmp_path / "code.py"
+        f.write_text("hello   \nworld")
+        result = EditFileTool().execute({"path": str(f), "old": "hello\nworld", "new": "done"})
+        assert result.is_error is False
+        assert f.read_text() == "done"
+        assert "fuzzy match" in result.output
+
+    def test_fuzzy_match_replace_all(self, tmp_path):
+        f = tmp_path / "code.py"
+        f.write_text("it\u2019s fine and it\u2019s great")
+        result = EditFileTool().execute(
+            {"path": str(f), "old": "it's", "new": "X", "replace_all": True}
+        )
+        assert result.is_error is False
+        assert f.read_text() == "X fine and X great"
+
+    def test_exact_match_preferred_over_fuzzy(self, tmp_path):
+        """When exact match succeeds, fuzzy note must NOT appear."""
+        f = tmp_path / "code.py"
+        f.write_text("hello world")
+        result = EditFileTool().execute({"path": str(f), "old": "hello", "new": "hi"})
+        assert result.is_error is False
+        assert "fuzzy" not in result.output
+
+    def test_fuzzy_not_found_returns_error(self, tmp_path):
+        f = tmp_path / "code.py"
+        f.write_text("some content")
+        result = EditFileTool().execute({"path": str(f), "old": "MISSING", "new": "x"})
+        assert result.is_error is True
+
+    # ------------------------------------------------------------------
+    # mtime conflict detection
+    # ------------------------------------------------------------------
+
+    def test_mtime_conflict_returns_error(self, tmp_path):
+        f = tmp_path / "code.py"
+        f.write_text("original content here")
+
+        import unittest.mock as _mock
+
+        original_mtime = f.stat().st_mtime
+        future_mtime = original_mtime + 2.0
+
+        # Patch stat on the concrete Path subclass (PosixPath / WindowsPath).
+        # The execute() method calls path.stat() twice for the target file:
+        #   call 1 — from path.exists() (internal pathlib)
+        #   call 2 — explicit st = path.stat() to get size+mtime_before
+        #   call 3 — current_mtime = path.stat().st_mtime  (conflict check)
+        # We return original_mtime on call 2 and future_mtime on call 3.
+        real_stat = type(f).stat
+        call_counts: dict[str, int] = {}
+
+        def patched_stat(self_path, *, follow_symlinks=True):
+            key = str(self_path)
+            count = call_counts.get(key, 0) + 1
+            call_counts[key] = count
+            real_result = real_stat(self_path, follow_symlinks=follow_symlinks)
+            if key == str(f):
+                if count == 2:
+                    # "before read" stat — report original mtime
+                    return type("_FakeStat", (), {
+                        "st_mtime": original_mtime,
+                        "st_size": real_result.st_size,
+                    })()
+                if count == 3:
+                    # "before write" stat — report bumped mtime (conflict!)
+                    return type("_FakeStat", (), {
+                        "st_mtime": future_mtime,
+                        "st_size": real_result.st_size,
+                    })()
+            return real_result
+
+        with _mock.patch.object(type(f), "stat", patched_stat):
+            result = EditFileTool().execute(
+                {"path": str(f), "old": "original content here", "new": "new"}
+            )
+
+        assert result.is_error is True
+        assert "modified externally" in result.output
+
+    # ------------------------------------------------------------------
+    # File size guard
+    # ------------------------------------------------------------------
+
+    def test_file_size_guard(self, tmp_path, monkeypatch):
+        f = tmp_path / "big.txt"
+        f.write_text("small content")
+
+        import llm_code.tools.edit_file as _mod
+
+        # Monkeypatch _MAX_FILE_BYTES to a tiny limit
+        monkeypatch.setattr(_mod, "_MAX_FILE_BYTES", 5)
+
+        result = EditFileTool().execute({"path": str(f), "old": "small", "new": "x"})
+        assert result.is_error is True
+        assert "too large" in result.output
+
+    def test_file_size_guard_allows_normal_file(self, tmp_path):
+        f = tmp_path / "normal.txt"
+        f.write_text("hello world")
+        result = EditFileTool().execute({"path": str(f), "old": "hello", "new": "hi"})
+        assert result.is_error is False
