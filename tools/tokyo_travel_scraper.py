@@ -2,7 +2,6 @@
 """東京旅遊資訊抓取工具"""
 
 import json
-import requests
 from datetime import datetime
 from typing import Dict, List, Optional
 
