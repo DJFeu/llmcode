@@ -10,6 +10,7 @@ from typing import Callable
 from pydantic import BaseModel
 
 from llm_code.tools.base import PermissionLevel, Tool, ToolProgress, ToolResult
+from llm_code.utils.errors import friendly_error
 
 # ---------------------------------------------------------------------------
 # Input model
@@ -526,10 +527,10 @@ class BashTool(Tool):
             is_error = proc.returncode != 0
             return ToolResult(output=output, is_error=is_error)
 
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             return ToolResult(
-                output=f"Command timed out after {timeout}s: {command}",
+                output=friendly_error(exc, command),
                 is_error=True,
             )
         except Exception as exc:
-            return ToolResult(output=f"Error executing command: {exc}", is_error=True)
+            return ToolResult(output=friendly_error(exc, command), is_error=True)

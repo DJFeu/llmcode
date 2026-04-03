@@ -1756,6 +1756,21 @@ class LLMCodeCLI:
         self._render_welcome()
         self._init_session()
 
+        # Non-blocking version check — fire and forget
+        async def _version_check_bg() -> None:
+            try:
+                from llm_code.utils.version_check import check_latest_version
+                info = await check_latest_version("0.1.0")
+                if info and info.is_outdated:
+                    console.print(
+                        f"[yellow]Update available: v{info.current} → v{info.latest}. "
+                        "pip install --upgrade llm-code[/]"
+                    )
+            except Exception:
+                pass
+
+        asyncio.ensure_future(_version_check_bg())
+
         # Initialize vim mode from config
         self._vim_enabled = getattr(self, "_vim_enabled", self._config.vim_mode)
 

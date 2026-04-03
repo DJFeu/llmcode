@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from llm_code.runtime.file_protection import check_write
 from llm_code.tools.base import PermissionLevel, Tool, ToolResult
+from llm_code.utils.errors import friendly_error
 
 if TYPE_CHECKING:
     from llm_code.runtime.overlay import OverlayFS
@@ -92,8 +93,11 @@ class WriteFileTool(Tool):
         if path.exists():
             old_content = path.read_text()
 
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        except (PermissionError, OSError) as exc:
+            return ToolResult(output=friendly_error(exc, str(path)), is_error=True)
 
         line_count = len(content.splitlines())
         output = warning_prefix + f"Wrote {line_count} lines to {path}"

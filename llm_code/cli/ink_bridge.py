@@ -81,6 +81,24 @@ class InkBridge:
             "branch": branch,
         })
 
+        # Non-blocking version check — fire and forget
+        async def _version_check_bg() -> None:
+            try:
+                from llm_code.utils.version_check import check_latest_version
+                info = await check_latest_version("0.1.0")
+                if info and info.is_outdated:
+                    await self._send({
+                        "type": "system_message",
+                        "text": (
+                            f"Update available: v{info.current} → v{info.latest}. "
+                            "pip install --upgrade llm-code"
+                        ),
+                    })
+            except Exception:
+                pass
+
+        asyncio.ensure_future(_version_check_bg())
+
         # Start reading from Ink frontend
         await self._read_loop()
 

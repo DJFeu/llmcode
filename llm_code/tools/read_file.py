@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from llm_code.runtime.file_protection import check_read
 from llm_code.tools.base import PermissionLevel, Tool, ToolResult
+from llm_code.utils.errors import friendly_error
 
 
 class ReadFileInput(BaseModel):
@@ -136,7 +137,10 @@ class ReadFileTool(Tool):
         )
 
     def _read_text(self, path: pathlib.Path, offset: int, limit: int) -> ToolResult:
-        lines = path.read_text(errors="replace").splitlines()
+        try:
+            lines = path.read_text(errors="replace").splitlines()
+        except (PermissionError, OSError) as exc:
+            return ToolResult(output=friendly_error(exc, str(path)), is_error=True)
         # offset is 1-based
         start = max(offset - 1, 0)
         selected = lines[start : start + limit]

@@ -33,6 +33,42 @@ def _is_sensitive(filename: str) -> bool:
     return any(fnmatch.fnmatch(basename, pattern) for pattern in _SENSITIVE_PATTERNS)
 
 
+def _auto_stash(cwd: "str | None" = None) -> bool:
+    """Stash uncommitted changes if any exist.
+
+    Returns True if a stash was created, False if the working tree was clean.
+    """
+    if cwd is None:
+        cwd = os.getcwd()
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        cwd=cwd,
+    )
+    if status.returncode != 0 or not status.stdout.strip():
+        return False
+    stash = subprocess.run(
+        ["git", "stash", "push", "-m", "llm-code auto-stash"],
+        capture_output=True,
+        text=True,
+        cwd=cwd,
+    )
+    return stash.returncode == 0
+
+
+def _auto_unstash(cwd: "str | None" = None) -> None:
+    """Restore the most recent stash (used after auto-stash)."""
+    if cwd is None:
+        cwd = os.getcwd()
+    subprocess.run(
+        ["git", "stash", "pop"],
+        capture_output=True,
+        text=True,
+        cwd=cwd,
+    )
+
+
 def _run_git(args: list[str], cwd: str | None = None) -> ToolResult:
     """Run a git command and return a ToolResult."""
     if cwd is None:
@@ -477,7 +513,11 @@ class GitBranchTool(Tool):
         elif action == "switch":
             if not name:
                 return ToolResult(output="Branch name required for switch.", is_error=True)
-            cmd = ["checkout", name]
+            stashed = _auto_stash()
+            result = _run_git(["checkout", name])
+            if stashed:
+                _auto_unstash()
+            return result
         elif action == "delete":
             if not name:
                 return ToolResult(output="Branch name required for delete.", is_error=True)

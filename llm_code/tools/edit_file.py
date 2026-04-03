@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from llm_code.runtime.file_protection import check_write
 from llm_code.tools.base import PermissionLevel, Tool, ToolResult
+from llm_code.utils.errors import friendly_error
 from llm_code.utils.text_normalize import normalize_for_match
 
 if TYPE_CHECKING:
@@ -81,7 +82,10 @@ class EditFileTool(Tool):
                 )
             # Record mtime before read for conflict detection
             mtime_before = st.st_mtime
-            content = path.read_text()
+            try:
+                content = path.read_text()
+            except (PermissionError, OSError) as exc:
+                return ToolResult(output=friendly_error(exc, str(path)), is_error=True)
         else:
             try:
                 content = overlay.read(path)
