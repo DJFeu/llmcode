@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 import { Banner } from './components/Banner.js';
 import { ChatLog, ChatEntry } from './components/ChatLog.js';
@@ -21,17 +21,8 @@ export function App() {
   const [isThinking, setIsThinking] = useState(false);
   const [currentText, setCurrentText] = useState('');
   const [totalTokens, setTotalTokens] = useState(0);
-  const [welcomeData, setWelcomeData] = useState<{
-    model: string;
-    workspace: string;
-    cwd: string;
-    permissions: string;
-    branch: string;
-  } | null>(null);
-  const [permissionRequest, setPermissionRequest] = useState<{
-    toolName: string;
-    args: string;
-  } | null>(null);
+  const [welcomeData, setWelcomeData] = useState<any>(null);
+  const [permissionRequest, setPermissionRequest] = useState<any>(null);
   const [marketplace, setMarketplace] = useState<{title: string; items: MarketplaceItem[]} | null>(null);
   const [actionPicker, setActionPicker] = useState<{name: string; actions: Array<{id: string; label: string}>} | null>(null);
 
@@ -39,16 +30,13 @@ export function App() {
     setEntries(prev => [...prev, entry]);
   }, []);
 
-  const handleBackendMessage = useCallback((msg: BackendMessage) => {
+  // Use ref so readline always calls the latest handler without re-creating
+  const handlerRef = useRef<(msg: BackendMessage) => void>(() => {});
+
+  handlerRef.current = (msg: BackendMessage) => {
     switch (msg.type) {
       case 'welcome':
-        setWelcomeData({
-          model: msg.model,
-          workspace: msg.workspace,
-          cwd: msg.cwd,
-          permissions: msg.permissions,
-          branch: msg.branch,
-        });
+        setWelcomeData(msg);
         break;
       case 'user_echo':
         addEntry({ type: 'user', text: msg.text });
@@ -63,9 +51,7 @@ export function App() {
         setCurrentText(prev => prev + msg.text);
         break;
       case 'text_done':
-        if (msg.text) {
-          addEntry({ type: 'assistant', text: msg.text });
-        }
+        if (msg.text) addEntry({ type: 'assistant', text: msg.text });
         setCurrentText('');
         break;
       case 'tool_start':
@@ -79,7 +65,7 @@ export function App() {
         setTotalTokens(prev => prev + (msg.tokens || 0));
         break;
       case 'permission_request':
-        setPermissionRequest({ toolName: msg.toolName, args: msg.args });
+        setPermissionRequest(msg);
         break;
       case 'message':
         addEntry({ type: 'info', text: msg.text, style: msg.style });
@@ -97,33 +83,32 @@ export function App() {
         setActionPicker({ name: msg.name, actions: msg.actions });
         break;
     }
-  }, [addEntry]);
+  };
 
-  // Read JSON lines from stdin (Python backend)
+  // Readline: created ONCE, uses ref to always call latest handler
   useEffect(() => {
     const rl = readline.createInterface({ input: process.stdin });
     rl.on('line', (line: string) => {
       try {
         const msg: BackendMessage = JSON.parse(line);
-        handleBackendMessage(msg);
-      } catch {
-        // ignore malformed lines
-      }
+        handlerRef.current(msg);
+      } catch {}
     });
     rl.on('close', () => exit());
     return () => rl.close();
-  }, [handleBackendMessage, exit]);
+  }, [exit]);
 
-  const handleSubmit = useCallback((text: string) => {
-    sendToBackend({ type: 'user_input', text });
-  }, []);
-
-  useInput((_input, key) => {
+  // Escape to cancel
+  useInput((input, key) => {
     if (key.escape && isThinking) {
       sendToBackend({ type: 'user_input', text: '/cancel' });
       setIsThinking(false);
     }
   });
+
+  const handleSubmit = useCallback((text: string) => {
+    sendToBackend({ type: 'user_input', text });
+  }, []);
 
   const handlePermission = useCallback((action: 'allow' | 'deny' | 'always') => {
     sendToBackend({ type: 'permission_response', action });
@@ -137,7 +122,7 @@ export function App() {
       {isThinking && <ThinkingSpinner />}
       {marketplace && (
         <MarketplaceSelect
-          key={`mp-${Date.now()}`}
+          key={marketplace.title}
           title={marketplace.title}
           items={marketplace.items}
           onSelect={(item) => {

@@ -303,44 +303,42 @@ class InkBridge:
             await self._send({"type": "message", "text": f"Command /{name} not recognized. Type /help for available commands."})
 
     async def _show_skill_marketplace(self) -> None:
-        """Show skills + marketplace as numbered list. User picks by replying with number."""
+        """Show skills via MarketplaceSelect React component."""
         try:
             all_skills = []
             if self._skills:
                 all_skills = list(self._skills.auto_skills) + list(self._skills.command_skills)
 
-            # Build items: installed first, then marketplace
             items: list[dict] = []
             for s in all_skills:
                 tokens = len(s.content) // 4
-                items.append({"name": s.name, "desc": f"~{tokens} tokens", "installed": True})
+                items.append({
+                    "name": s.name,
+                    "description": f"~{tokens} tokens",
+                    "installed": True,
+                    "index": len(items),
+                })
 
-            # Fetch marketplace (npm + ClawHub)
+            # Fetch marketplace
             try:
                 market = await asyncio.wait_for(self._fetch_marketplace_skills(), timeout=8.0)
                 installed_names = {s.name for s in all_skills}
                 for pkg_name, desc in market:
                     if pkg_name not in installed_names:
-                        items.append({"name": pkg_name, "desc": desc, "installed": False})
+                        items.append({
+                            "name": pkg_name,
+                            "description": desc,
+                            "installed": False,
+                            "index": len(items),
+                        })
             except Exception:
                 pass
 
-            # Build numbered display
-            lines = [f"Skills ({len(items)} total)"]
-            lines.append("")
-            for i, it in enumerate(items, 1):
-                icon = "●" if it["installed"] else "○"
-                tag = " (installed)" if it["installed"] else ""
-                lines.append(f"  {i:>3d} {icon} {it['name']}  · {it['desc']}{tag}")
-            lines.append("")
-            lines.append("Reply with a number to select, or type a command:")
-            lines.append("  /skill install <package>  /skill remove <name>")
-            lines.append("  /skill search <keyword>")
-
-            # Store for number selection
-            self._skill_items = items
-
-            await self._send({"type": "message", "text": "\n".join(lines)})
+            self._current_marketplace = {"type": "skill", "items": items}
+            installed_count = sum(1 for i in items if i.get("installed"))
+            market_count = len(items) - installed_count
+            title = f"Skills ({installed_count} installed + {market_count} available)"
+            await self._send({"type": "marketplace_show", "title": title, "items": items})
         except Exception as exc:
             await self._send({"type": "error", "message": f"Error: {exc}"})
 
