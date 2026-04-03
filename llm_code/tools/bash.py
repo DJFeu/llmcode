@@ -157,6 +157,28 @@ _RECURSIVE_OPS_PATTERN = re.compile(
 # Rule 20: Multi-command chaining >3 commands (&&, ||, ;)
 _MULTI_CMD_SEPARATOR = re.compile(r"(&&|\|\||;)")
 
+# Rule 21: Zsh dangerous builtins — raw system call / socket / compile access
+_ZSH_DANGEROUS_BUILTINS = (
+    "zmodload",
+    "sysopen",
+    "sysread",
+    "syswrite",
+    "sysseek",
+    "zsocket",
+    "ztcp",
+    "zpty",
+    "zselect",
+    "zformat",
+    "zparseopts",
+    "zregexparse",
+    "zstat",
+    "zcompile",
+)
+_ZSH_DANGEROUS_PATTERN = re.compile(
+    r"(?<!\w)(" + "|".join(re.escape(b) for b in _ZSH_DANGEROUS_BUILTINS) + r")(?!\w)",
+    re.IGNORECASE,
+)
+
 
 def _count_pipe_segments(command: str) -> int:
     """Count number of pipe characters (not ||) in command."""
@@ -301,6 +323,16 @@ def classify_command(command: str) -> BashSafetyResult:
         rule_ids.append("R20")
         if classification != "blocked":
             classification = "needs_confirm"
+
+    # --- Rule 21: Zsh dangerous builtins ------------------------------------
+    if _ZSH_DANGEROUS_PATTERN.search(command):
+        matched = _ZSH_DANGEROUS_PATTERN.findall(command)
+        reasons.append(
+            f"Zsh dangerous builtin(s) detected ({', '.join(matched)}): "
+            "allow raw system calls bypassing shell safety"
+        )
+        rule_ids.append("R21")
+        classification = "blocked"
 
     return BashSafetyResult(
         classification=classification,

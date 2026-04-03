@@ -1,11 +1,12 @@
 """System prompt builder for the conversation runtime."""
 from __future__ import annotations
 
+import dataclasses
 import json
 import platform
 from datetime import date
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from llm_code.api.types import ToolDefinition
 from llm_code.runtime.context import ProjectContext
@@ -47,6 +48,29 @@ Wait for the tool result before continuing.\
 
 _CACHE_BOUNDARY = "# -- CACHE BOUNDARY --"
 
+# Cache control marker inserted between scope transitions (API-level caching)
+_CACHE_CONTROL_MARKER = json.dumps({"type": "cache_control", "cache_type": "ephemeral"})
+
+ScopeType = Literal["global", "project", "session"]
+
+
+@dataclasses.dataclass(frozen=True)
+class PromptSection:
+    """A single section of the system prompt with scope and priority metadata.
+
+    Scope semantics:
+    - "global":  Behavior rules and tool instructions shared across all projects.
+    - "project": Governance rules, project index, CLAUDE.md — shared across
+                 sessions within the same project.
+    - "session": Environment info, memory, active skills — per-session content.
+
+    Priority controls ordering within the same scope (lower value = earlier).
+    """
+
+    content: str
+    scope: ScopeType
+    priority: int = 0
+
 
 class SystemPromptBuilder:
     def build(
@@ -63,15 +87,17 @@ class SystemPromptBuilder:
         governance_rules: "tuple[GovernanceRule, ...] | None" = None,
         task_manager: "TaskLifecycleManager | None" = None,
     ) -> str:
-        # ------------------------------------------------------------------ #
-        # STATIC / CACHE-SAFE section (above the cache boundary)
-        # ------------------------------------------------------------------ #
-        static_parts: list[str] = [_INTRO]
+        sections: list[PromptSection] = []
 
-        # Governance rules (L0) — injected at the very start, before behavior rules
+        # ------------------------------------------------------------------ #
+        # GLOBAL scope — governance rules, behavior rules, tool instructions
+        # Shared across all projects; cached at global boundary.
+        # ------------------------------------------------------------------ #
+        sections.append(PromptSection(content=_INTRO, scope="global", priority=0))
+
+        # Governance rules (L0) — injected before behavior rules
         if governance_rules:
             gov_lines = ["## Governance Rules\n"]
-            # Group by category
             categories: dict[str, list] = {}
             for rule in governance_rules:
                 categories.setdefault(rule.category, []).append(rule)
@@ -81,50 +107,69 @@ class SystemPromptBuilder:
                     source_name = Path(r.source).name if r.source else "unknown"
                     gov_lines.append(f"- {r.content} _(from {source_name})_")
                 gov_lines.append("")
-            static_parts.append("\n".join(gov_lines))
+            sections.append(PromptSection(content="\n".join(gov_lines), scope="global", priority=5))
 
-        static_parts.append(_BEHAVIOR_RULES)
+        sections.append(PromptSection(content=_BEHAVIOR_RULES, scope="global", priority=10))
 
-        # XML tool-calling instructions (only when provider does not support native tools)
         if not native_tools and tools:
-            static_parts.append(_XML_TOOL_INSTRUCTIONS)
+            sections.append(PromptSection(content=_XML_TOOL_INSTRUCTIONS, scope="global", priority=20))
             tool_lines = ["Available tools:"]
             for t in tools:
                 schema_str = json.dumps(t.input_schema, separators=(",", ":"))
                 tool_lines.append(f"  - {t.name}: {t.description}  schema={schema_str}")
-            static_parts.append("\n".join(tool_lines))
+            sections.append(PromptSection(content="\n".join(tool_lines), scope="global", priority=21))
 
-        # Auto skills (cache-safe — they change rarely)
+        # Auto skills are relatively stable and treated as global
         if skills and skills.auto_skills:
             auto_parts = ["## Active Skills"]
             for skill in skills.auto_skills:
                 auto_parts.append(f"### {skill.name}\n{skill.content}")
-            static_parts.append("\n\n".join(auto_parts))
+            sections.append(PromptSection(content="\n\n".join(auto_parts), scope="global", priority=30))
+
+        # ------------------------------------------------------------------ #
+        # PROJECT scope — project index, CLAUDE.md
+        # Shared across sessions in the same project; cached at project boundary.
+        # ------------------------------------------------------------------ #
 
         # Project index (cache-safe — changes infrequently)
         if project_index:
             _KIND_PRIORITY = {"class": 0, "function": 1, "export": 2, "method": 3, "variable": 4}
             sorted_symbols = sorted(project_index.symbols, key=lambda s: _KIND_PRIORITY.get(s.kind, 99))[:100]
             lines = [f"  {s.kind} {s.name} — {s.file}:{s.line}" for s in sorted_symbols]
-            static_parts.append(f"## Project Index ({len(project_index.files)} files)\n\n" + "\n".join(lines))
+            sections.append(PromptSection(
+                content=f"## Project Index ({len(project_index.files)} files)\n\n" + "\n".join(lines),
+                scope="project",
+                priority=10,
+            ))
+
+        # Project instructions from CLAUDE.md / INSTRUCTIONS.md
+        if context.instructions:
+            sections.append(PromptSection(
+                content=f"## Project Instructions\n\n{context.instructions}",
+                scope="project",
+                priority=20,
+            ))
 
         # ------------------------------------------------------------------ #
-        # DYNAMIC section (below the cache boundary)
+        # SESSION scope — environment, memory, active skills (per-session)
         # ------------------------------------------------------------------ #
-        dynamic_parts: list[str] = [_CACHE_BOUNDARY]
 
-        # MCP server instructions (injected per-server)
+        # MCP server instructions (injected per-server, per-session)
         if mcp_instructions:
             for server_name, instr in mcp_instructions.items():
-                dynamic_parts.append(f"## MCP Server: {server_name}\n\n{instr}")
-
-        # Project instructions (semi-dynamic — changes per project)
-        if context.instructions:
-            dynamic_parts.append(f"## Project Instructions\n\n{context.instructions}")
+                sections.append(PromptSection(
+                    content=f"## MCP Server: {server_name}\n\n{instr}",
+                    scope="session",
+                    priority=0,
+                ))
 
         # Active command skill (one-shot, dynamic)
         if active_skill_content:
-            dynamic_parts.append(f"## Active Skill\n\n{active_skill_content}")
+            sections.append(PromptSection(
+                content=f"## Active Skill\n\n{active_skill_content}",
+                scope="session",
+                priority=5,
+            ))
 
         # Environment section (dynamic — cwd, date, git status)
         env_lines = [
@@ -137,25 +182,57 @@ class SystemPromptBuilder:
             env_lines.append(f"- Git status:\n```\n{context.git_status}\n```")
         elif context.is_git_repo:
             env_lines.append("- Git status: clean")
-
-        dynamic_parts.append("\n".join(env_lines))
+        sections.append(PromptSection(content="\n".join(env_lines), scope="session", priority=10))
 
         # Memory summaries (dynamic — recent session history)
         if memory_summaries:
-            dynamic_parts.append("## Recent Sessions\n\n" + "\n".join(f"- {s[:200]}" for s in memory_summaries))
+            sections.append(PromptSection(
+                content="## Recent Sessions\n\n" + "\n".join(f"- {s[:200]}" for s in memory_summaries),
+                scope="session",
+                priority=20,
+            ))
 
         # Memory entries (dynamic — project-scoped key-value memory)
         if memory_entries:
             lines = [f"- **{k}**: {v[:200]}" for k, v in memory_entries.items()]
-            dynamic_parts.append("## Project Memory\n\n" + "\n".join(lines))
+            sections.append(PromptSection(
+                content="## Project Memory\n\n" + "\n".join(lines),
+                scope="session",
+                priority=21,
+            ))
 
         # Incomplete tasks from prior sessions (cross-session persistence)
         if task_manager is not None:
             from llm_code.task.manager import build_incomplete_tasks_prompt
             task_section = build_incomplete_tasks_prompt(task_manager)
             if task_section:
-                dynamic_parts.append(task_section)
+                sections.append(PromptSection(content=task_section, scope="session", priority=30))
 
-        # Combine: static parts joined by \n\n, then dynamic parts joined by \n\n
-        all_parts = static_parts + dynamic_parts
-        return "\n\n".join(all_parts)
+        return self._serialize(sections)
+
+    def _serialize(self, sections: list[PromptSection]) -> str:
+        """Serialize PromptSection list into a single string with cache boundary markers.
+
+        Sections are grouped by scope and sorted by priority within each scope.
+        Cache boundary markers are inserted between scope transitions:
+        - Between global and project scopes
+        - Between project and session scopes
+
+        This allows API-level caching at two boundaries instead of one.
+        """
+        scope_order: dict[ScopeType, int] = {"global": 0, "project": 1, "session": 2}
+        sorted_sections = sorted(sections, key=lambda s: (scope_order[s.scope], s.priority))
+
+        parts: list[str] = []
+        prev_scope: ScopeType | None = None
+
+        for section in sorted_sections:
+            current_scope = section.scope
+            if prev_scope is not None and current_scope != prev_scope:
+                # Insert cache boundary marker between scope transitions
+                parts.append(_CACHE_BOUNDARY)
+                parts.append(_CACHE_CONTROL_MARKER)
+            parts.append(section.content)
+            prev_scope = current_scope
+
+        return "\n\n".join(parts)

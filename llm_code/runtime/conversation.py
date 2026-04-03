@@ -120,6 +120,7 @@ class ConversationRuntime:
         self._cost_tracker = cost_tracker
         self._has_attempted_reactive_compact = False
         self._consecutive_failures: int = 0
+        self._compressor = ContextCompressor()
         self._active_model: str = getattr(config, "model", "")
         self._hida_classifier: Any | None = None
         self._hida_engine: Any | None = None
@@ -341,6 +342,9 @@ class ConversationRuntime:
 
             # Reset consecutive failure counter on successful stream
             self._consecutive_failures = 0
+
+            # Mark all messages sent in this request as cached (API has seen them)
+            self._compressor.mark_as_cached(set(range(len(self.session.messages))))
 
             # Accumulate usage
             if stop_event:

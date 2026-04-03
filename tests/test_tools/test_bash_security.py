@@ -450,6 +450,72 @@ class TestRule20MultiCommand:
 
 
 # ---------------------------------------------------------------------------
+# Rule 21: Zsh dangerous builtins
+# ---------------------------------------------------------------------------
+
+
+class TestRule21ZshDangerousBuiltins:
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "zmodload zsh/net/tcp",
+            "sysopen -r -u 3 /etc/passwd",
+            "sysread -u 3 buf",
+            "syswrite -u 3 'data'",
+            "sysseek -u 3 0",
+            "zsocket -t tcp",
+            "ztcp localhost 8080",
+            "zpty myterm bash",
+            "zselect -t 100",
+            "zformat -f result '%s' 'key:value'",
+            "zparseopts -D -E -- f:=flag",
+            "zregexparse str pat",
+            "zstat -L /etc/passwd",
+            "zcompile myscript.zsh",
+        ],
+    )
+    def test_zsh_builtins_blocked(self, command: str) -> None:
+        result = classify_command(command)
+        assert "R21" in result.rule_ids, f"Expected R21 for: {command!r}"
+        assert result.is_blocked, f"Expected blocked for: {command!r}"
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "ls -la",
+            "echo hello",
+            "git status",
+            "cat /tmp/test.txt",
+            "grep pattern file.txt",
+        ],
+    )
+    def test_safe_commands_not_flagged_r21(self, command: str) -> None:
+        result = classify_command(command)
+        assert "R21" not in result.rule_ids, f"R21 should not trigger for: {command!r}"
+
+    def test_zsh_builtin_in_pipe_blocked(self) -> None:
+        result = classify_command("echo data | syswrite -u 3")
+        assert "R21" in result.rule_ids
+        assert result.is_blocked
+
+    def test_zsh_builtin_word_boundary(self) -> None:
+        # 'notzsocket' should NOT trigger R21 (no word boundary)
+        result = classify_command("echo notzsocket")
+        assert "R21" not in result.rule_ids
+
+    def test_zsh_builtin_case_insensitive(self) -> None:
+        result = classify_command("ZMODLOAD zsh/net/tcp")
+        assert "R21" in result.rule_ids
+        assert result.is_blocked
+
+    def test_r21_blocks_even_when_other_rules_say_needs_confirm(self) -> None:
+        # Command injection (R8, needs_confirm) combined with a zsh builtin (R21, blocked)
+        result = classify_command("zmodload $(echo zsh/net/tcp)")
+        assert "R21" in result.rule_ids
+        assert result.is_blocked
+
+
+# ---------------------------------------------------------------------------
 # Integration: classify_command returns correct classifications
 # ---------------------------------------------------------------------------
 

@@ -1332,7 +1332,9 @@ class LLMCodeCLI:
         subcmd = parts[0] if parts else ""
         subargs = parts[1] if len(parts) > 1 else ""
 
-        if subcmd == "install" and subargs:
+        if subcmd == "status":
+            self._handle_mcp_status_command()
+        elif subcmd == "install" and subargs:
             import json
             package = subargs.strip()
             server_name = package.split("/")[-1].replace("@", "").replace("server-", "")
@@ -1392,6 +1394,46 @@ class LLMCodeCLI:
             console.print(
                 "\n[dim]Install: /mcp install <npm-package>  |  Remove: /mcp remove <name>[/]"
             )
+
+    def _handle_mcp_status_command(self) -> None:
+        """Show health status for all connected MCP servers."""
+        import asyncio as _aio
+
+        manager = getattr(self, "_mcp_manager", None)
+        if manager is None:
+            console.print("\n[bold]MCP Server Health Status[/]")
+            console.print("  [dim]No active MCP manager — start servers via config.[/]")
+            return
+
+        # Run health check synchronously
+        try:
+            try:
+                _aio.get_running_loop()
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    statuses = pool.submit(_aio.run, manager.check_all_health()).result()
+            except RuntimeError:
+                statuses = _aio.run(manager.check_all_health())
+        except Exception as exc:
+            console.print(f"[red]Health check failed: {exc}[/]")
+            return
+
+        console.print(f"\n[bold]MCP Server Health Status ({len(statuses)} server(s))[/]")
+        if not statuses:
+            console.print("  [dim]No servers connected.[/]")
+            return
+
+        for status in statuses:
+            if status.alive:
+                indicator = "[green]●[/]"
+                detail = f"[green]alive[/]  [dim]{status.latency_ms:.0f}ms[/]"
+            else:
+                indicator = "[red]●[/]"
+                err = status.error or "unknown"
+                detail = f"[red]unhealthy[/]  [dim]{err}[/]"
+            console.print(f"  {indicator} {status.name}  {detail}")
+
+        console.print("\n[dim]/mcp status — refresh health · /mcp install · /mcp remove[/]")
 
     def _handle_plugin_command(self, args: str) -> None:
         from llm_code.marketplace.installer import PluginInstaller
@@ -1751,7 +1793,7 @@ class LLMCodeCLI:
         SLASH_COMMANDS = [
             "/help", "/clear", "/model", "/skill", "/skill search", "/skill install",
             "/skill enable", "/skill disable", "/skill remove",
-            "/mcp", "/mcp install", "/mcp remove", "/mcp search",
+            "/mcp", "/mcp status", "/mcp install", "/mcp remove", "/mcp search",
             "/plugin", "/plugin install", "/plugin enable", "/plugin disable", "/plugin remove",
             "/memory", "/memory get", "/memory set", "/memory delete",
             "/memory consolidate", "/memory history",

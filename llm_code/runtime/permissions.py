@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import fnmatch
+import logging
 from enum import Enum
 
 from llm_code.tools.base import PermissionLevel
+
+_log = logging.getLogger(__name__)
 
 
 class PermissionMode(Enum):
@@ -38,6 +41,70 @@ _MODE_MAX_LEVEL: dict[PermissionMode, int] = {
 }
 
 
+def detect_shadowed_rules(
+    allow_tools: frozenset[str],
+    deny_tools: frozenset[str],
+    mode: PermissionMode,
+) -> list[str]:
+    """Return warning messages for conflicting or redundant permission rules.
+
+    Detects three categories of problems:
+    - Allow rules shadowed by deny rules (same tool in both lists).
+    - Allow rules that are unnecessary because the mode already allows them.
+    - Deny rules that are unnecessary because the mode already blocks them.
+
+    Args:
+        allow_tools: Explicit allow list.
+        deny_tools: Explicit deny list.
+        mode: The active permission mode.
+
+    Returns:
+        A list of human-readable warning strings (empty when no issues found).
+    """
+    warnings: list[str] = []
+
+    # 1. Allow rules shadowed by deny rules
+    shadowed = allow_tools & deny_tools
+    for tool in sorted(shadowed):
+        warnings.append(
+            f"Rule conflict: '{tool}' appears in both allow_tools and deny_tools; "
+            "deny takes precedence — allow rule is ineffective."
+        )
+
+    # 2. Allow rules unnecessary because mode already allows them
+    # AUTO_ACCEPT and FULL_ACCESS allow everything; WORKSPACE_WRITE allows up to
+    # workspace_write level — but without per-tool level info we can only flag
+    # modes that unconditionally allow all non-denied tools.
+    unconditional_allow_modes = {PermissionMode.AUTO_ACCEPT, PermissionMode.FULL_ACCESS}
+    if mode in unconditional_allow_modes:
+        for tool in sorted(allow_tools - deny_tools):
+            warnings.append(
+                f"Redundant allow rule: '{tool}' is already allowed by mode '{mode.value}'; "
+                "explicit allow entry has no effect."
+            )
+
+    # 3. Deny rules unnecessary because mode already blocks them
+    # READ_ONLY blocks WORKSPACE_WRITE and FULL_ACCESS tools; without per-tool
+    # level info we flag the case where mode=READ_ONLY and a tool is in deny_tools
+    # while also not in allow_tools (i.e. it would be denied by the mode anyway).
+    # The most deterministic check: PROMPT mode never auto-allows elevated tools,
+    # but it does prompt — so denying explicitly is meaningful there.
+    # READ_ONLY mode blocks everything above READ_ONLY already.
+    if mode == PermissionMode.READ_ONLY:
+        # In READ_ONLY mode all non-read-only tools are blocked anyway.
+        # Explicit deny entries for tools that mode would block are redundant.
+        # We flag tools that are denied but not in allow_tools (since allow overrides
+        # mode, an allow+deny combo is already caught above).
+        redundant_denies = deny_tools - allow_tools
+        for tool in sorted(redundant_denies):
+            warnings.append(
+                f"Redundant deny rule: '{tool}' is already blocked by mode 'read_only'; "
+                "explicit deny entry has no effect."
+            )
+
+    return warnings
+
+
 class PermissionPolicy:
     def __init__(
         self,
@@ -50,6 +117,10 @@ class PermissionPolicy:
         self._allow_tools = allow_tools
         self._deny_tools = deny_tools
         self._deny_patterns = deny_patterns
+
+        # Warn about conflicting or redundant rules at construction time
+        for warning in detect_shadowed_rules(allow_tools, deny_tools, mode):
+            _log.warning("PermissionPolicy: %s", warning)
 
     def authorize(
         self,
