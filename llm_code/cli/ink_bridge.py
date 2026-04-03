@@ -303,7 +303,7 @@ class InkBridge:
             await self._send({"type": "message", "text": f"Command /{name} not recognized. Type /help for available commands."})
 
     async def _show_skill_marketplace(self) -> None:
-        """Show skills via MarketplaceSelect React component."""
+        """Show skills as text + numbered list for selection."""
         try:
             all_skills = []
             if self._skills:
@@ -334,11 +334,21 @@ class InkBridge:
             except Exception:
                 pass
 
-            self._current_marketplace = {"type": "skill", "items": items}
+            # Display as numbered text list (reliable, always renders)
+            self._skill_items = items
             installed_count = sum(1 for i in items if i.get("installed"))
             market_count = len(items) - installed_count
-            title = f"Skills ({installed_count} installed + {market_count} available)"
-            await self._send({"type": "marketplace_show", "title": title, "items": items})
+
+            lines = [f"Skills ({installed_count} installed + {market_count} available)"]
+            lines.append("")
+            for i, it in enumerate(items, 1):
+                icon = "●" if it.get("installed") else "○"
+                tag = " (installed)" if it.get("installed") else ""
+                lines.append(f"  {i:>3d} {icon} {it['name']}  · {it['description']}{tag}")
+            lines.append("")
+            lines.append("Type a number to select, or:")
+            lines.append("  /skill install <name>  /skill remove <name>  /skill search <keyword>")
+            await self._send({"type": "message", "text": "\n".join(lines)})
         except Exception as exc:
             await self._send({"type": "error", "message": f"Error: {exc}"})
 
