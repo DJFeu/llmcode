@@ -1,6 +1,44 @@
+# Python
 .venv/
 __pycache__/
 *.egg-info/
 .eggs/
 dist/
 build/
+*.pyc
+*.pyo
+
+# Testing
+.coverage
+htmlcov/
+coverage.xml
+.pytest_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment & Secrets
+.env
+.env.*
+*.key
+*.pem
+
+# llm-code runtime
+.llm-code/config.local.json
+.llm-code/result_cache/
+.llm-code/recordings/
+.llm-code/checkpoints/
+.llm-code/swarm/
+
+# Node
+node_modules/
+ink-ui/node_modules/
+ink-ui/dist/
