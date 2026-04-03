@@ -281,8 +281,79 @@ class InkBridge:
             self._init_session()
             await self._send({"type": "message", "text": "Conversation cleared."})
 
+        elif name == "model":
+            if args:
+                import dataclasses
+                self._config = dataclasses.replace(self._config, model=args)
+                self._init_session()
+                await self._send({"type": "message", "text": f"Model switched to: {args}"})
+            else:
+                await self._send({"type": "message", "text": f"Current model: {self._config.model or '(not set)'}"})
+
         elif name == "cost":
             await self._send({"type": "message", "text": self._cost_tracker.format_cost()})
+
+        elif name == "cd":
+            if args:
+                new_path = Path(args).expanduser()
+                if not new_path.is_absolute():
+                    new_path = self._cwd / new_path
+                if new_path.is_dir():
+                    self._cwd = new_path
+                    os.chdir(new_path)
+                    await self._send({"type": "message", "text": f"Directory: {new_path}"})
+                else:
+                    await self._send({"type": "error", "message": f"Not found: {new_path}"})
+            else:
+                await self._send({"type": "message", "text": f"Directory: {self._cwd}"})
+
+        elif name == "budget":
+            if args:
+                try:
+                    self._budget = int(args)
+                    await self._send({"type": "message", "text": f"Budget: {self._budget:,} tokens"})
+                except ValueError:
+                    await self._send({"type": "error", "message": "Usage: /budget <number>"})
+            else:
+                await self._send({"type": "message", "text": f"Budget: {self._budget or 'none'}"})
+
+        elif name == "memory":
+            if self._memory:
+                entries = self._memory.get_all()
+                if entries:
+                    lines = [f"Memory ({len(entries)} entries)"]
+                    for k, v in entries.items():
+                        lines.append(f"  {k}: {v.value[:60]}")
+                    await self._send({"type": "message", "text": "\n".join(lines)})
+                else:
+                    await self._send({"type": "message", "text": "No memories stored."})
+            else:
+                await self._send({"type": "message", "text": "Memory not initialized."})
+
+        elif name == "undo":
+            if hasattr(self, '_checkpoint_mgr') and self._checkpoint_mgr:
+                if self._checkpoint_mgr.can_undo():
+                    cp = self._checkpoint_mgr.undo()
+                    if cp:
+                        await self._send({"type": "message", "text": f"✓ Undone: {cp.tool_name}"})
+                else:
+                    await self._send({"type": "message", "text": "Nothing to undo."})
+            else:
+                await self._send({"type": "error", "message": "Not in a git repo."})
+
+        elif name == "index":
+            if args == "rebuild":
+                from llm_code.runtime.indexer import ProjectIndexer
+                idx = ProjectIndexer(self._cwd).build_index()
+                await self._send({"type": "message", "text": f"Index rebuilt: {len(idx.files)} files, {len(idx.symbols)} symbols"})
+            else:
+                await self._send({"type": "message", "text": "Use /index rebuild"})
+
+        elif name == "image":
+            await self._send({"type": "message", "text": "Use Cmd+V to paste image, or type the path after your message."})
+
+        elif name == "session":
+            await self._send({"type": "message", "text": "Sessions: /session list · /session save (use print-based CLI for full support)"})
 
         elif name == "skill":
             await self._show_skill_marketplace()
@@ -583,17 +654,40 @@ class InkBridge:
                 except Exception as exc:
                     await self._send({"type": "error", "message": f"Install failed: {exc}"})
             elif market_type == "plugin":
-                await self._send({"type": "message", "text": f"Installing plugin '{item['name']}' via npm…"})
+                name = item["name"]
+                # Find repo from builtin registry
+                repo = ""
                 try:
-                    from llm_code.marketplace.installer import PluginInstaller
-                    plugin_dir = Path.home() / ".llm-code" / "plugins"
-                    plugin_dir.mkdir(parents=True, exist_ok=True)
-                    pi = PluginInstaller(plugin_dir)
-                    await asyncio.get_event_loop().run_in_executor(None, pi.install, item["name"])
-                    await self._send({"type": "message", "text": f"Plugin '{item['name']}' installed."})
-                    self._reload_skills()
-                except Exception as exc:
-                    await self._send({"type": "error", "message": f"Plugin install failed: {exc}"})
+                    from llm_code.marketplace.builtin_registry import get_all_known_plugins
+                    registry = {p["name"]: p for p in get_all_known_plugins()}
+                    repo = registry.get(name, {}).get("repo", "")
+                except Exception:
+                    pass
+
+                if repo:
+                    await self._send({"type": "message", "text": f"Installing plugin '{name}' from {repo}…"})
+                    try:
+                        import subprocess as _sp
+                        dest = Path.home() / ".llm-code" / "plugins" / name
+                        if dest.exists():
+                            import shutil
+                            shutil.rmtree(dest)
+                        proc = await asyncio.create_subprocess_exec(
+                            "git", "clone", "--depth", "1", f"https://github.com/{repo}.git", str(dest),
+                            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                        )
+                        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+                        if proc.returncode == 0:
+                            from llm_code.marketplace.installer import PluginInstaller
+                            PluginInstaller(Path.home() / ".llm-code" / "plugins").enable(name)
+                            await self._send({"type": "message", "text": f"✓ Installed '{name}'. Restart to activate."})
+                            self._reload_skills()
+                        else:
+                            await self._send({"type": "error", "message": f"Clone failed: {stderr.decode()[:200]}"})
+                    except Exception as exc:
+                        await self._send({"type": "error", "message": f"Install failed: {exc}"})
+                else:
+                    await self._send({"type": "message", "text": f"No install source for '{name}'. Use: /plugin install owner/repo"})
 
         elif action_id == "view":
             if self._skills:
