@@ -893,6 +893,16 @@ class InkBridge:
         except Exception:
             self._skills = None
 
+        # Memory
+        try:
+            from llm_code.runtime.memory import MemoryStore
+            self._memory = MemoryStore(Path.home() / ".llm-code" / "memory", self._cwd)
+        except Exception:
+            self._memory = None
+
+        # Store checkpoint manager
+        self._checkpoint_mgr = checkpoint_mgr
+
         prompt_builder = SystemPromptBuilder()
 
         self._runtime = ConversationRuntime(
