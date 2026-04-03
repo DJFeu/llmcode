@@ -900,6 +900,18 @@ class InkBridge:
         except Exception:
             self._memory = None
 
+        # Register memory tools
+        if self._memory:
+            try:
+                from llm_code.tools.memory_tools import MemoryStoreTool, MemoryRecallTool, MemoryListTool
+                for tool_cls in (MemoryStoreTool, MemoryRecallTool, MemoryListTool):
+                    try:
+                        registry.register(tool_cls(self._memory))
+                    except ValueError:
+                        pass
+            except Exception:
+                pass
+
         # Store checkpoint manager
         self._checkpoint_mgr = checkpoint_mgr
 
