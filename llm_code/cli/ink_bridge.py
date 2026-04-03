@@ -293,25 +293,24 @@ class InkBridge:
                 "index": len(items),
             })
 
-        # Show loading message while fetching marketplace
-        await self._send({"type": "message", "text": "Loading skills marketplace..."})
-
-        # Fetch marketplace (npm + ClawHub) with timeout
+        # Fetch marketplace — but always show results even if fetch fails
+        market: list[tuple[str, str]] = []
         try:
             market = await asyncio.wait_for(self._fetch_marketplace_skills(), timeout=8.0)
-            installed_names = {s.name for s in all_skills}
-            for pkg_name, desc in market:
-                if pkg_name not in installed_names:
-                    items.append({
-                        "name": pkg_name,
-                        "description": desc,
-                        "installed": False,
-                        "index": len(items),
-                    })
         except Exception:
-            pass  # Show whatever we have
+            pass
 
-        # Send final list (with marketplace results if any)
+        installed_names = {s.name for s in all_skills}
+        for pkg_name, desc in market:
+            if pkg_name not in installed_names:
+                items.append({
+                    "name": pkg_name,
+                    "description": desc,
+                    "installed": False,
+                    "index": len(items),
+                })
+
+        # Always send — even if only local skills
         self._current_marketplace = {"type": "skill", "items": items}
         installed_count = sum(1 for i in items if i.get("installed"))
         market_count = len(items) - installed_count
