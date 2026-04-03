@@ -374,14 +374,38 @@ class InkBridge:
         except Exception:
             pass
 
-        lines = [f"MCP Servers ({len(items)} configured)"]
-        for it in items:
-            lines.append(f"  ● {it['name']}  · {it['description']}")
-        if not items:
-            lines.append("  (none)")
-        lines.append("")
-        lines.append("  /mcp install <package>  /mcp remove <name>")
-        await self._send({"type": "message", "text": "\n".join(lines)})
+        # Fetch npm MCP servers
+        try:
+            from llm_code.marketplace.builtin_registry import search_clawhub_skills
+            import httpx
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(
+                    "https://registry.npmjs.org/-/v1/search",
+                    params={"text": "mcp server modelcontextprotocol", "size": 30},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            installed_names = {it["name"] for it in items}
+            for obj in data.get("objects", []):
+                pkg = obj.get("package", {})
+                name = pkg.get("name", "")
+                desc = pkg.get("description", "")[:70]
+                if ("mcp" in name.lower() or "modelcontextprotocol" in name.lower()) and name not in installed_names:
+                    items.append({
+                        "name": name,
+                        "description": f"[npm] {desc}",
+                        "installed": False,
+                        "index": len(items),
+                    })
+        except Exception:
+            pass
+
+        # Send via React marketplace_show
+        self._current_marketplace = {"type": "mcp", "items": items}
+        configured = sum(1 for i in items if i.get("installed"))
+        available = len(items) - configured
+        title = f"MCP Servers ({configured} configured + {available} available)"
+        await self._send({"type": "marketplace_show", "title": title, "items": items})
 
     async def _show_plugin_marketplace(self) -> None:
         """Build and send the plugin list."""
@@ -451,7 +475,14 @@ class InkBridge:
         except Exception:
             pass
 
-        # Display as text (reliable)
+        # Send via marketplace_show (React interactive selector)
+        self._current_marketplace = {"type": "plugin", "items": items}
+        installed_count = sum(1 for i in items if i.get("installed"))
+        market_count = len(items) - installed_count
+        title = f"Plugins ({installed_count} installed + {market_count} available)"
+        await self._send({"type": "marketplace_show", "title": title, "items": items})
+        return
+        # Legacy text display (kept as fallback)
         installed = [it for it in items if it.get("installed")]
         available = [it for it in items if not it.get("installed")]
         lines = [f"Plugins ({len(installed)} installed + {len(available)} available)"]
