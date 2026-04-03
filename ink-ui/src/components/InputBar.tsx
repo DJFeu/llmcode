@@ -40,7 +40,7 @@ export function InputBar({ onSubmit, disabled }: InputBarProps) {
     if (!value.startsWith('/') || value.includes(' ') && !value.startsWith('/skill ') && !value.startsWith('/mcp ') && !value.startsWith('/plugin ') && !value.startsWith('/memory ') && !value.startsWith('/session ')) {
       return [];
     }
-    return SLASH_COMMANDS.filter(c => c.cmd.startsWith(value.toLowerCase())).slice(0, 8);
+    return SLASH_COMMANDS.filter(c => c.cmd.startsWith(value.toLowerCase()));
   }, [value]);
 
   useInput((input, key) => {
