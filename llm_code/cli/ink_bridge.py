@@ -356,31 +356,75 @@ class InkBridge:
                 pi = PluginInstaller(plugin_dir)
                 for p in pi.list_installed():
                     items.append({
-                        "name": p.name,
-                        "description": f"v{p.version}" if hasattr(p, "version") else "installed",
-                        "installed": p.enabled,
+                        "name": p.manifest.name,
+                        "description": f"v{p.manifest.version}",
+                        "installed": True,
                         "index": len(items),
                     })
         except Exception:
             pass
 
-        # Fetch npm marketplace plugins
+        # Send installed immediately
+        if items:
+            self._current_marketplace = {"type": "plugin", "items": list(items)}
+            await self._send({"type": "marketplace_show", "title": f"Plugins ({len(items)} installed, loading marketplace...)", "items": items})
+
+        installed_names = {it["name"] for it in items}
+
+        # Built-in Claude official plugin registry
         try:
-            market = await self._fetch_npm_plugins()
-            installed_names = {it["name"] for it in items}
-            for pkg_name, desc in market:
-                if pkg_name not in installed_names:
+            from llm_code.marketplace.builtin_registry import get_all_known_plugins
+            for p in get_all_known_plugins():
+                if p["name"] not in installed_names:
+                    skill_info = f"{p['skills']} skills · " if p["skills"] > 0 else ""
                     items.append({
-                        "name": pkg_name,
-                        "description": desc,
+                        "name": p["name"],
+                        "description": f"[Official] {skill_info}{p['desc']}",
+                        "installed": False,
+                        "index": len(items),
+                    })
+                    installed_names.add(p["name"])
+        except Exception:
+            pass
+
+        # ClawHub plugins (51+)
+        try:
+            from llm_code.marketplace.builtin_registry import search_clawhub_plugins
+            clawhub = await asyncio.wait_for(search_clawhub_plugins("", limit=30), timeout=5.0)
+            for slug, desc in clawhub:
+                if slug not in installed_names:
+                    items.append({
+                        "name": f"clawhub:{slug}",
+                        "description": f"[ClawHub] {desc}",
                         "installed": False,
                         "index": len(items),
                     })
         except Exception:
             pass
 
+        # npm plugins
+        try:
+            market = await asyncio.wait_for(self._fetch_npm_plugins(), timeout=5.0)
+            for pkg_name, desc in market:
+                if pkg_name not in installed_names:
+                    items.append({
+                        "name": pkg_name,
+                        "description": f"[npm] {desc}",
+                        "installed": False,
+                        "index": len(items),
+                    })
+        except Exception:
+            pass
+
+        # Send full list
         self._current_marketplace = {"type": "plugin", "items": items}
-        await self._send({"type": "marketplace_show", "title": f"Plugins ({len(items)})", "items": items})
+        installed_count = sum(1 for i in items if i.get("installed"))
+        market_count = len(items) - installed_count
+        title = f"Plugins ({installed_count} installed"
+        if market_count > 0:
+            title += f" + {market_count} available"
+        title += ")"
+        await self._send({"type": "marketplace_show", "title": title, "items": items})
 
     async def _handle_marketplace_selection(self, index: int) -> None:
         """Handle an item selection from the marketplace list."""
