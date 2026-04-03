@@ -26,6 +26,7 @@ const SLASH_COMMANDS = [
   { cmd: '/cost', desc: 'Token usage' },
   { cmd: '/budget', desc: 'Set token budget' },
   { cmd: '/cd', desc: 'Change directory' },
+  { cmd: '/search', desc: 'Search conversation history' },
   { cmd: '/vim', desc: 'Toggle vim mode' },
   { cmd: '/exit', desc: 'Quit' },
 ];

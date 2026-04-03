@@ -27,6 +27,8 @@ _PERMISSION_CHOICES = ["prompt", "auto_accept", "read_only", "workspace_write", 
 @click.option("--port", type=int, default=8765, help="Server port (for --serve)")
 @click.option("--connect", default=None, help="Connect to remote server (host:port)")
 @click.option("--ssh", default=None, help="SSH to remote host and connect (user@host)")
+@click.option("--replay", default=None, help="Replay a VCR recording file (.jsonl)")
+@click.option("--replay-speed", type=float, default=1.0, help="Playback speed for --replay (0 = instant)")
 def main(
     prompt: str | None,
     model: str | None,
@@ -40,6 +42,8 @@ def main(
     port: int = 8765,
     connect: str | None = None,
     ssh: str | None = None,
+    replay: str | None = None,
+    replay_speed: float = 1.0,
 ) -> None:
     """llm-code: AI coding assistant CLI."""
     from llm_code.logging import setup_logging
@@ -68,6 +72,17 @@ def main(
     )
 
     import asyncio
+
+    if replay:
+        from llm_code.runtime.vcr import VCRPlayer
+        player = VCRPlayer(Path(replay))
+        summary = player.summary()
+        print(f"Replaying: {replay}")
+        print(f"  events={summary['event_count']}  duration={summary['duration']:.1f}s")
+        print()
+        for event in player.replay(speed=replay_speed):
+            print(f"[{event.type:15s}] {event.data}")
+        return
 
     if serve:
         from llm_code.remote.server import RemoteServer

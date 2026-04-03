@@ -93,6 +93,7 @@ class ConversationRuntime:
         context: "ProjectContext",
         checkpoint_manager: Any = None,
         token_budget: Any = None,
+        vcr_recorder: Any = None,
     ) -> None:
         self._provider = provider
         self._tool_registry = tool_registry
@@ -104,11 +105,14 @@ class ConversationRuntime:
         self._context = context
         self._checkpoint_mgr = checkpoint_manager
         self._token_budget = token_budget
+        self._vcr_recorder = vcr_recorder
         self._has_attempted_reactive_compact = False
 
     async def run_turn(self, user_input: str, images: list | None = None) -> AsyncIterator[StreamEvent]:
         """Run one user turn (may involve multiple LLM calls for tool use)."""
         logger.debug("Starting turn: %s", user_input[:80])
+        if self._vcr_recorder is not None:
+            self._vcr_recorder.record("user_input", {"text": user_input})
         # 1. Add user message to session (with optional images)
         content_blocks: list = [TextBlock(text=user_input)]
         if images:
@@ -140,6 +144,12 @@ class ConversationRuntime:
                 temperature=self._config.temperature,
                 extra_body=build_thinking_extra_body(self._config.thinking) if not use_native else None,
             )
+
+            if self._vcr_recorder is not None:
+                self._vcr_recorder.record("llm_request", {
+                    "model": request.model,
+                    "max_tokens": request.max_tokens,
+                })
 
             # Error recovery: tool choice fallback + reactive compact
             try:
@@ -221,6 +231,11 @@ class ConversationRuntime:
                     "id": call_data["id"],
                     "name": call_data["name"],
                     "input": parsed_input,
+                })
+
+            if self._vcr_recorder is not None:
+                self._vcr_recorder.record("llm_response", {
+                    "text": "".join(text_parts)[:500],
                 })
 
             # 5. Parse tool calls (dual-track)
@@ -401,6 +416,8 @@ class ConversationRuntime:
 
         # 6. Emit tool execution start event
         args_preview = str(args)[:80]
+        if self._vcr_recorder is not None:
+            self._vcr_recorder.record("tool_call", {"name": call.name, "args": args_preview})
         yield StreamToolExecStart(tool_name=call.name, args_summary=args_preview)
 
         # 7. Execute in thread pool with asyncio.Queue progress bridge
@@ -437,6 +454,12 @@ class ConversationRuntime:
                 await post_result
 
         # 8. Emit tool execution result event
+        if self._vcr_recorder is not None:
+            self._vcr_recorder.record("tool_result", {
+                "name": call.name,
+                "output": tool_result.output[:200],
+                "is_error": tool_result.is_error,
+            })
         yield StreamToolExecResult(
             tool_name=call.name,
             output=tool_result.output[:200],

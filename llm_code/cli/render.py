@@ -12,6 +12,7 @@ from rich.text import Text
 
 from llm_code.api.types import TokenUsage
 from llm_code.tools.base import ToolResult
+from llm_code.utils.hyperlink import auto_link, supports_hyperlinks
 
 
 # File extensions to language mappings for syntax highlighting
@@ -83,6 +84,8 @@ class TerminalRenderer:
 
     def render_markdown(self, text: str) -> None:
         """Render text as Rich Markdown."""
+        if supports_hyperlinks():
+            text = auto_link(text)
         self._console.print(Markdown(text))
 
     def render_tool_panel(
@@ -113,6 +116,8 @@ class TerminalRenderer:
         elif tool_name == "bash":
             content = Syntax(output, "bash", theme="monokai") if output else Text(output)
         else:
+            if supports_hyperlinks() and output:
+                output = auto_link(output)
             content = Text(output)
 
         self._console.print(

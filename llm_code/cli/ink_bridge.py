@@ -344,6 +344,7 @@ class InkBridge:
                 {"cmd": "/memory", "desc": "Project memory"},
                 {"cmd": "/undo", "desc": "Undo last change"},
                 {"cmd": "/cost", "desc": "Token usage"},
+                {"cmd": "/search <query>", "desc": "Search conversation history"},
                 {"cmd": "/exit", "desc": "Quit"},
             ]
             await self._send({"type": "help", "commands": commands})
@@ -503,8 +504,115 @@ class InkBridge:
         elif name == "ide":
             await self._handle_ide_command(args)
 
+        elif name == "search":
+            await self._handle_search_command(args)
+
+        elif name == "vcr":
+            await self._handle_vcr_command(args)
+
         else:
             await self._send({"type": "message", "text": f"Command /{name} not recognized. Type /help for available commands."})
+
+    async def _handle_search_command(self, args: str) -> None:
+        """Handle /search <query> — search TextBlock content in conversation history."""
+        if not args:
+            await self._send({"type": "error", "message": "Usage: /search <query>"})
+            return
+        if not self._runtime:
+            await self._send({"type": "message", "text": "No conversation to search."})
+            return
+
+        from llm_code.utils.search import search_messages
+
+        query = args
+        results = search_messages(list(self._runtime.session.messages), query)
+
+        if not results:
+            await self._send({"type": "message", "text": f"No results for: {query}"})
+            return
+
+        lines: list[str] = [f"Search: '{query}' — {len(results)} match(es)\n"]
+        prev_idx = -1
+        for r in results:
+            if r.message_index != prev_idx:
+                msg = self._runtime.session.messages[r.message_index]
+                lines.append(f"── Message {r.message_index} ({msg.role}) ──")
+                prev_idx = r.message_index
+            # Surround match with ANSI-style markers the frontend can render
+            before = r.line_text[:r.match_start]
+            match_text = r.line_text[r.match_start:r.match_end]
+            after = r.line_text[r.match_end:]
+            lines.append(f"  L{r.line_number}  {before}[MATCH]{match_text}[/MATCH]{after}")
+
+        await self._send({
+            "type": "search_results",
+            "query": query,
+            "count": len(results),
+            "text": "\n".join(lines),
+            "results": [
+                {
+                    "message_index": r.message_index,
+                    "line_number": r.line_number,
+                    "line_text": r.line_text,
+                    "match_start": r.match_start,
+                    "match_end": r.match_end,
+                }
+                for r in results
+            ],
+        })
+
+    async def _handle_vcr_command(self, args: str) -> None:
+        """Handle /vcr start|stop|list commands."""
+        sub = args.strip().split(None, 1)[0] if args.strip() else ""
+
+        if sub == "start":
+            if getattr(self, "_vcr_recorder", None) is not None:
+                await self._send({"type": "message", "text": "VCR recording already active."})
+                return
+            import uuid
+            from llm_code.runtime.vcr import VCRRecorder
+            recordings_dir = self._cwd / ".llm-code" / "recordings"
+            session_id = uuid.uuid4().hex[:8]
+            path = recordings_dir / f"{session_id}.jsonl"
+            self._vcr_recorder = VCRRecorder(path)
+            if self._runtime is not None:
+                self._runtime._vcr_recorder = self._vcr_recorder
+            await self._send({"type": "message", "text": f"VCR recording started: {path.name}"})
+
+        elif sub == "stop":
+            recorder = getattr(self, "_vcr_recorder", None)
+            if recorder is None:
+                await self._send({"type": "message", "text": "No active VCR recording."})
+                return
+            recorder.close()
+            self._vcr_recorder = None
+            if self._runtime is not None:
+                self._runtime._vcr_recorder = None
+            await self._send({"type": "message", "text": "VCR recording stopped."})
+
+        elif sub == "list":
+            recordings_dir = self._cwd / ".llm-code" / "recordings"
+            if not recordings_dir.is_dir():
+                await self._send({"type": "message", "text": "No recordings found."})
+                return
+            files = sorted(recordings_dir.glob("*.jsonl"))
+            if not files:
+                await self._send({"type": "message", "text": "No recordings found."})
+                return
+            from llm_code.runtime.vcr import VCRPlayer
+            lines = ["Recordings:"]
+            for f in files:
+                player = VCRPlayer(f)
+                s = player.summary()
+                lines.append(
+                    f"  {f.name}  events={s['event_count']}  "
+                    f"duration={s['duration']:.1f}s  "
+                    f"tools={sum(s['tool_calls'].values())}"
+                )
+            await self._send({"type": "message", "text": "\n".join(lines)})
+
+        else:
+            await self._send({"type": "message", "text": "Usage: /vcr start|stop|list"})
 
     async def _handle_cron_command(self, args: str) -> None:
         """Handle /cron [list|add|delete <id>] commands."""

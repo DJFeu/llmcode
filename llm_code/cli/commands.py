@@ -28,6 +28,8 @@ KNOWN_COMMANDS = frozenset({
     "voice",
     "ide",
     "swarm",
+    "search",
+    "vcr",
 })
 
 

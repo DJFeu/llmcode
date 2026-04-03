@@ -74,6 +74,12 @@ class SwarmConfig:
 
 
 @dataclass(frozen=True)
+class VCRConfig:
+    enabled: bool = False
+    auto_record: bool = False
+
+
+@dataclass(frozen=True)
 class RuntimeConfig:
     model: str = ""
     provider_base_url: str | None = None
@@ -105,6 +111,7 @@ class RuntimeConfig:
     computer_use: ComputerUseConfig = field(default_factory=ComputerUseConfig)
     ide: IDEConfig = field(default_factory=IDEConfig)
     swarm: SwarmConfig = field(default_factory=SwarmConfig)
+    vcr: VCRConfig = field(default_factory=VCRConfig)
 
 
 class ConfigSchema(BaseModel):
@@ -245,6 +252,12 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         max_members=swarm_raw.get("max_members", 5),
     )
 
+    vcr_raw = data.get("vcr", {})
+    vcr = VCRConfig(
+        enabled=vcr_raw.get("enabled", False),
+        auto_record=vcr_raw.get("auto_record", False),
+    )
+
     return RuntimeConfig(
         model=data.get("model", ""),
         provider_base_url=provider.get("base_url", None),
@@ -276,6 +289,7 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         computer_use=computer_use,
         ide=ide,
         swarm=swarm,
+        vcr=vcr,
     )
 
 

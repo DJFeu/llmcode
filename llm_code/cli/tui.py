@@ -655,6 +655,7 @@ class LLMCodeCLI:
                 ("/budget <n>", "Set token budget"),
                 ("/cd <dir>", "Change directory"),
                 ("/lsp", "LSP server status"),
+                ("/search <query>", "Search conversation history"),
                 ("/exit", "Quit"),
             ]:
                 console.print(f"  [dim]{cmd_name:<30s} {desc}[/]")
@@ -806,8 +807,99 @@ class LLMCodeCLI:
         elif name == "ide":
             self._handle_ide_command(args)
 
+        elif name == "search":
+            self._handle_search_command(args)
+
+        elif name == "vcr":
+            self._handle_vcr_command(args)
+
         else:
             console.print(f"[red]Unknown command: /{name} -- type /help for help[/]")
+
+    def _handle_search_command(self, args: str) -> None:
+        """Handle /search <query> — search TextBlock content in conversation history."""
+        if not args:
+            console.print("[red]Usage: /search <query>[/]")
+            return
+        if not self._runtime:
+            console.print("[dim]No conversation to search.[/]")
+            return
+
+        from llm_code.utils.search import search_messages
+
+        query = args
+        results = search_messages(list(self._runtime.session.messages), query)
+
+        if not results:
+            console.print(f"[dim]No results for: {query}[/]")
+            return
+
+        console.print(f"\n[bold]Search results for '[yellow]{query}[/]' — {len(results)} match(es)[/]\n")
+        prev_idx = -1
+        for r in results:
+            if r.message_index != prev_idx:
+                msg = self._runtime.session.messages[r.message_index]
+                console.print(f"  [dim]── Message {r.message_index} ({msg.role}) ──[/]")
+                prev_idx = r.message_index
+            # Build highlighted line: text before match, yellow match, text after
+            before = r.line_text[:r.match_start]
+            match = r.line_text[r.match_start:r.match_end]
+            after = r.line_text[r.match_end:]
+            console.print(
+                f"    [dim]L{r.line_number}[/]  {before}[bold yellow]{match}[/]{after}"
+            )
+        console.print()
+
+    def _handle_vcr_command(self, args: str) -> None:
+        """Handle /vcr start|stop|list commands."""
+        sub = args.strip().split(None, 1)[0] if args.strip() else ""
+
+        if sub == "start":
+            if getattr(self, "_vcr_recorder", None) is not None:
+                console.print("[dim]VCR recording already active.[/]")
+                return
+            import uuid
+            from llm_code.runtime.vcr import VCRRecorder
+            recordings_dir = self._cwd / ".llm-code" / "recordings"
+            session_id = uuid.uuid4().hex[:8]
+            path = recordings_dir / f"{session_id}.jsonl"
+            self._vcr_recorder = VCRRecorder(path)
+            if self._runtime is not None:
+                self._runtime._vcr_recorder = self._vcr_recorder
+            console.print(f"[dim]VCR recording started: {path.name}[/]")
+
+        elif sub == "stop":
+            recorder = getattr(self, "_vcr_recorder", None)
+            if recorder is None:
+                console.print("[dim]No active VCR recording.[/]")
+                return
+            recorder.close()
+            self._vcr_recorder = None
+            if self._runtime is not None:
+                self._runtime._vcr_recorder = None
+            console.print("[dim]VCR recording stopped.[/]")
+
+        elif sub == "list":
+            recordings_dir = self._cwd / ".llm-code" / "recordings"
+            if not recordings_dir.is_dir():
+                console.print("[dim]No recordings found.[/]")
+                return
+            files = sorted(recordings_dir.glob("*.jsonl"))
+            if not files:
+                console.print("[dim]No recordings found.[/]")
+                return
+            from llm_code.runtime.vcr import VCRPlayer
+            for f in files:
+                player = VCRPlayer(f)
+                s = player.summary()
+                console.print(
+                    f"  [cyan]{f.name}[/]  events={s['event_count']}  "
+                    f"duration={s['duration']:.1f}s  "
+                    f"tools={sum(s['tool_calls'].values())}"
+                )
+
+        else:
+            console.print("[dim]Usage: /vcr start|stop|list[/]")
 
     def _handle_cron_command(self, args: str) -> None:
         """Handle /cron [list|add|delete <id>] commands."""
