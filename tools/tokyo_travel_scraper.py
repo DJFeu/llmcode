@@ -10,9 +10,7 @@ class TokyoTravelScraper:
     """抓取東京旅遊相關資訊"""
     
     def __init__(self):
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
+        pass
     
     def get_weather(self, city: str = "Tokyo") -> Optional[Dict]:
         """獲取天氣資訊（需要 OpenWeatherMap API key）"""
