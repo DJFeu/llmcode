@@ -483,20 +483,12 @@ class LLMCodeCLI:
     # ── NPM Fetchers ───────────────────────────────────────────────
 
     async def _fetch_marketplace_skills(self) -> list[tuple[str, str]]:
-        """Fetch skills from ClawHub (44k+) + npm."""
+        """Fetch skills: npm (Claude official) first, then ClawHub (44k+ community)."""
         results: list[tuple[str, str]] = []
-        # ClawHub first (largest marketplace)
-        try:
-            from llm_code.marketplace.builtin_registry import search_clawhub_skills
-            clawhub = await search_clawhub_skills("", limit=30)
-            for slug, desc in clawhub:
-                results.append((f"clawhub:{slug}", f"[ClawHub] {desc}"))
-        except Exception:
-            pass
-        # npm second
+        # 1. npm — Claude official skills
         try:
             import httpx
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(
                     "https://registry.npmjs.org/-/v1/search",
                     params={"text": "claude-code skill", "size": 20},
@@ -509,6 +501,14 @@ class LLMCodeCLI:
                 desc = pkg.get("description", "")[:70]
                 if "skill" in name.lower() or ("claude" in name.lower() and "skill" in desc.lower()):
                     results.append((name, f"[npm] {desc}"))
+        except Exception:
+            pass
+        # 2. ClawHub — 44k+ community skills
+        try:
+            from llm_code.marketplace.builtin_registry import search_clawhub_skills
+            clawhub = await search_clawhub_skills("", limit=40)
+            for slug, desc in clawhub:
+                results.append((f"clawhub:{slug}", f"[ClawHub] {desc}"))
         except Exception:
             pass
         return results

@@ -49,23 +49,38 @@ def get_all_known_plugins() -> list[dict]:
     return all_plugins
 
 
-async def search_clawhub_skills(query: str, limit: int = 30) -> list[tuple[str, str]]:
+async def search_clawhub_skills(query: str = "", limit: int = 30) -> list[tuple[str, str]]:
     """Search ClawHub.ai skill marketplace (44,000+ skills)."""
     import httpx
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(
-            "https://clawhub.ai/api/search",
-            params={"q": query, "limit": limit},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    results = []
-    for item in data.get("results", []):
-        name = item.get("displayName") or item.get("slug", "")
-        slug = item.get("slug", "")
-        summary = item.get("summary", "")[:70]
-        results.append((slug, f"{name} — {summary}"))
-    return results
+
+    # If no query, fetch popular categories to get a good mix
+    queries = [query] if query else ["code", "test", "review", "debug", "deploy", "security", "api", "frontend"]
+
+    results: list[tuple[str, str]] = []
+    seen_slugs: set[str] = set()
+
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        for q in queries:
+            if len(results) >= limit:
+                break
+            try:
+                resp = await client.get(
+                    "https://clawhub.ai/api/search",
+                    params={"q": q, "limit": min(10, limit - len(results))},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                for item in data.get("results", []):
+                    slug = item.get("slug", "")
+                    if slug and slug not in seen_slugs:
+                        seen_slugs.add(slug)
+                        name = item.get("displayName") or slug
+                        summary = item.get("summary", "")[:60]
+                        results.append((slug, f"{name} — {summary}"))
+            except Exception:
+                continue
+
+    return results[:limit]
 
 
 async def search_clawhub_plugins(query: str, limit: int = 30) -> list[tuple[str, str]]:
