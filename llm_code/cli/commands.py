@@ -26,6 +26,8 @@ KNOWN_COMMANDS = frozenset({
     "cron",
     "vim",
     "voice",
+    "ide",
+    "swarm",
 })
 
 

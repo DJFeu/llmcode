@@ -78,6 +78,34 @@ class MemoryStore:
         files = sorted(self._sessions_dir.glob("*.md"), reverse=True)[:limit]
         return [f.read_text(encoding="utf-8") for f in files]
 
+    @property
+    def consolidated_dir(self) -> Path:
+        """Return the consolidated summaries directory, creating it if needed."""
+        d = self._dir / "consolidated"
+        d.mkdir(exist_ok=True)
+        return d
+
+    def save_consolidated(self, content: str, date_str: str | None = None) -> Path:
+        """Persist a consolidated summary as a dated Markdown file.
+
+        Args:
+            content: The markdown summary content.
+            date_str: Optional date string (YYYY-MM-DD). Defaults to today (UTC).
+
+        Returns:
+            The path to the written file.
+        """
+        if date_str is None:
+            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        path = self.consolidated_dir / f"{date_str}.md"
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def load_consolidated_summaries(self, limit: int = 10) -> list[str]:
+        """Return the most recent consolidated summaries (newest first)."""
+        files = sorted(self.consolidated_dir.glob("*.md"), reverse=True)[:limit]
+        return [f.read_text(encoding="utf-8") for f in files]
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

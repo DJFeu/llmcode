@@ -27,6 +27,7 @@ dependencies = [
     "pydantic>=2.0",
     "click>=8.0",
     "textual>=1.0",
+    "filelock>=3.12",
 ]
 
 [project.urls]
@@ -39,6 +40,8 @@ anthropic = ["anthropic>=0.40"]
 websocket = ["websockets>=12.0"]
 voice = ["sounddevice>=0.5"]
 voice-google = ["google-cloud-speech>=2.0"]
+computer-use = ["pyautogui>=0.9", "Pillow>=10.0", "mss>=9.0"]
+ide = ["psutil>=5.9"]
 docs = ["mkdocs>=1.6", "mkdocs-material>=9.5"]
 dev = [
     "pytest>=8.0",

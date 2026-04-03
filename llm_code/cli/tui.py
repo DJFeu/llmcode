@@ -399,6 +399,78 @@ class LLMCodeCLI:
         except Exception:
             self._cron_storage = None
 
+        # Register swarm tools
+        self._swarm_manager = None
+        try:
+            if self._config.swarm.enabled:
+                from llm_code.swarm.manager import SwarmManager
+                from llm_code.tools.swarm_create import SwarmCreateTool
+                from llm_code.tools.swarm_list import SwarmListTool
+                from llm_code.tools.swarm_message import SwarmMessageTool
+                from llm_code.tools.swarm_delete import SwarmDeleteTool
+
+                swarm_mgr = SwarmManager(
+                    swarm_dir=self._cwd / ".llm-code" / "swarm",
+                    max_members=self._config.swarm.max_members,
+                    backend_preference=self._config.swarm.backend,
+                )
+                self._swarm_manager = swarm_mgr
+                for tool in (
+                    SwarmCreateTool(swarm_mgr),
+                    SwarmListTool(swarm_mgr),
+                    SwarmMessageTool(swarm_mgr),
+                    SwarmDeleteTool(swarm_mgr),
+                ):
+                    try:
+                        self._tool_reg.register(tool)
+                    except ValueError:
+                        pass
+        except Exception:
+            self._swarm_manager = None
+
+        # Register computer-use tools (only when enabled)
+        if self._config.computer_use.enabled:
+            try:
+                from llm_code.tools.computer_use_tools import (
+                    ScreenshotTool, MouseClickTool, KeyboardTypeTool,
+                    KeyPressTool, ScrollTool, MouseDragTool,
+                )
+                cu_config = self._config.computer_use
+                for tool in (
+                    ScreenshotTool(cu_config), MouseClickTool(cu_config),
+                    KeyboardTypeTool(cu_config), KeyPressTool(cu_config),
+                    ScrollTool(cu_config), MouseDragTool(cu_config),
+                ):
+                    try:
+                        self._tool_reg.register(tool)
+                    except ValueError:
+                        pass
+            except ImportError:
+                pass
+
+        # Register IDE tools if enabled
+        if self._config.ide.enabled:
+            try:
+                from llm_code.ide.bridge import IDEBridge
+                from llm_code.tools.ide_open import IDEOpenTool
+                from llm_code.tools.ide_diagnostics import IDEDiagnosticsTool
+                from llm_code.tools.ide_selection import IDESelectionTool
+
+                self._ide_bridge = IDEBridge(self._config.ide)
+                for tool in (
+                    IDEOpenTool(self._ide_bridge),
+                    IDEDiagnosticsTool(self._ide_bridge),
+                    IDESelectionTool(self._ide_bridge),
+                ):
+                    try:
+                        self._tool_reg.register(tool)
+                    except ValueError:
+                        pass
+            except ImportError:
+                self._ide_bridge = None
+        else:
+            self._ide_bridge = None
+
     # ── Display Helpers ─────────────────────────────────────────────
 
     def _flush_text(self) -> None:
@@ -731,6 +803,9 @@ class LLMCodeCLI:
         elif name == "voice":
             self._handle_voice_command(args)
 
+        elif name == "ide":
+            self._handle_ide_command(args)
+
         else:
             console.print(f"[red]Unknown command: /{name} -- type /help for help[/]")
 
@@ -795,6 +870,41 @@ class LLMCodeCLI:
             status = "on" if getattr(self, "_voice_active", False) else "off"
             console.print(f"Voice input: [bold]{status}[/bold]")
             console.print("Usage: /voice [on|off]")
+
+    def _handle_ide_command(self, args: str) -> None:
+        """Handle /ide [status|connect] commands."""
+        sub = args.strip().lower()
+
+        if sub == "status":
+            ide_bridge = getattr(self, "_ide_bridge", None)
+            if ide_bridge is None:
+                console.print("[dim]IDE integration is disabled. Set ide.enabled=true in config.[/]")
+                return
+            if ide_bridge.is_connected:
+                ides = ide_bridge._server.connected_ides if ide_bridge._server else []
+                names = ", ".join(ide.name for ide in ides) if ides else "unknown"
+                console.print(f"[green]IDE connected: {names}[/]")
+            else:
+                port = ide_bridge._config.port
+                console.print(f"[dim]IDE bridge listening on port {port}, no IDE connected.[/]")
+
+        elif sub == "connect":
+            ide_bridge = getattr(self, "_ide_bridge", None)
+            if ide_bridge is None:
+                console.print("[dim]IDE integration is disabled. Set ide.enabled=true in config.[/]")
+                return
+            if not ide_bridge.is_enabled:
+                console.print("[dim]IDE integration is disabled.[/]")
+                return
+            if ide_bridge._server is None:
+                import asyncio
+                asyncio.get_event_loop().run_until_complete(ide_bridge.start())
+                console.print(f"[green]IDE bridge started on port {ide_bridge._server.actual_port}.[/]")
+            else:
+                console.print(f"[dim]IDE bridge already running on port {ide_bridge._server.actual_port}.[/]")
+
+        else:
+            console.print("[dim]Usage: /ide status | /ide connect[/]")
 
     def _show_recording_indicator(self, elapsed: float) -> str:
         """Return terminal recording indicator string."""
@@ -1098,6 +1208,38 @@ class LLMCodeCLI:
         elif subcmd == "delete" and len(parts) > 1:
             self._memory.delete(parts[1])
             console.print(f"[dim]Deleted: {parts[1]}[/]")
+        elif subcmd == "consolidate":
+            if not self._runtime:
+                console.print("[red]No active session to consolidate.[/]")
+                return
+            console.print("[dim]Consolidating session...[/]")
+
+            async def _run_consolidation():
+                from llm_code.runtime.dream import DreamTask
+                dream = DreamTask()
+                result = await dream.consolidate(
+                    self._runtime.session,
+                    self._memory,
+                    self._runtime._provider,
+                    self._config,
+                )
+                if result:
+                    console.print(f"[green]Consolidated:[/]\n{result[:500]}")
+                else:
+                    console.print("[dim]Nothing to consolidate (too few turns or disabled).[/]")
+
+            asyncio.create_task(_run_consolidation())
+
+        elif subcmd == "history":
+            summaries = self._memory.load_consolidated_summaries(limit=5)
+            if not summaries:
+                console.print("[dim]No consolidated memories yet.[/]")
+            else:
+                console.print(f"[bold]Consolidated Memories ({len(summaries)} most recent)[/]\n")
+                for i, s in enumerate(summaries):
+                    # Show first 3 lines of each
+                    preview = "\n".join(s.strip().splitlines()[:3])
+                    console.print(f"  [cyan]#{i+1}[/] {preview}\n")
         else:
             entries = self._memory.get_all()
             console.print(f"[bold]Memory ({len(entries)} entries)[/]")
@@ -1242,6 +1384,31 @@ class LLMCodeCLI:
         console.print(f"[bold green]✓[/] [green]Done ({time_str})[/][dim]{tokens_str}[/]")
         console.print()
 
+    async def _dream_on_exit(self) -> None:
+        """Fire DreamTask consolidation on session exit (non-blocking, best-effort)."""
+        if not self._memory or not self._runtime:
+            return
+        try:
+            from llm_code.runtime.dream import DreamTask
+
+            dream = DreamTask()
+            # Await directly since we're about to exit — give it up to 30s
+            result = await asyncio.wait_for(
+                dream.consolidate(
+                    self._runtime.session,
+                    self._memory,
+                    self._runtime._provider,
+                    self._config,
+                ),
+                timeout=30.0,
+            )
+            if result:
+                console.print("[dim]Session consolidated to memory.[/]")
+        except asyncio.TimeoutError:
+            console.print("[dim]Consolidation timed out.[/]")
+        except Exception:
+            pass
+
     # ── Main REPL Loop ──────────────────────────────────────────────
 
     async def run(self) -> None:
@@ -1296,6 +1463,7 @@ class LLMCodeCLI:
             "/mcp", "/mcp install", "/mcp remove", "/mcp search",
             "/plugin", "/plugin install", "/plugin enable", "/plugin disable", "/plugin remove",
             "/memory", "/memory get", "/memory set", "/memory delete",
+            "/memory consolidate", "/memory history",
             "/session list", "/session save", "/session switch",
             "/undo", "/undo list", "/index", "/index rebuild",
             "/image", "/cost", "/budget", "/cd", "/lsp", "/vim", "/exit",
@@ -1316,6 +1484,13 @@ class LLMCodeCLI:
             try:
                 user_input = await session.prompt_async("❯ ")
             except (EOFError, KeyboardInterrupt):
+                await self._dream_on_exit()
+                # Stop all swarm members on exit
+                if getattr(self, "_swarm_manager", None) is not None:
+                    try:
+                        await self._swarm_manager.stop_all()
+                    except Exception:
+                        pass
                 console.print("\n[dim]Goodbye![/]")
                 break
 

@@ -38,6 +38,12 @@ class ThinkingConfig:
 
 
 @dataclass(frozen=True)
+class DreamConfig:
+    enabled: bool = True
+    min_turns: int = 3
+
+
+@dataclass(frozen=True)
 class VoiceConfig:
     enabled: bool = False
     backend: str = "whisper"  # "whisper" | "google" | "anthropic"
@@ -46,6 +52,25 @@ class VoiceConfig:
     anthropic_ws_url: str = "wss://api.anthropic.com"
     language: str = "en"
     hotkey: str = "ctrl+space"
+
+
+@dataclass(frozen=True)
+class ComputerUseConfig:
+    enabled: bool = False
+    screenshot_delay: float = 0.5
+
+
+@dataclass(frozen=True)
+class IDEConfig:
+    enabled: bool = False
+    port: int = 9876
+
+
+@dataclass(frozen=True)
+class SwarmConfig:
+    enabled: bool = False
+    backend: str = "auto"       # "auto" | "tmux" | "subprocess"
+    max_members: int = 5
 
 
 @dataclass(frozen=True)
@@ -76,6 +101,10 @@ class RuntimeConfig:
     thinking: ThinkingConfig = field(default_factory=ThinkingConfig)
     vim_mode: bool = False
     voice: VoiceConfig = field(default_factory=VoiceConfig)
+    dream: DreamConfig = field(default_factory=DreamConfig)
+    computer_use: ComputerUseConfig = field(default_factory=ComputerUseConfig)
+    ide: IDEConfig = field(default_factory=IDEConfig)
+    swarm: SwarmConfig = field(default_factory=SwarmConfig)
 
 
 class ConfigSchema(BaseModel):
@@ -191,6 +220,31 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         budget_tokens=thinking_raw.get("budget_tokens", 10000),
     )
 
+    dream_raw = data.get("dream", {})
+    dream = DreamConfig(
+        enabled=dream_raw.get("enabled", True),
+        min_turns=dream_raw.get("min_turns", 3),
+    )
+
+    computer_use_raw = data.get("computer_use", {})
+    computer_use = ComputerUseConfig(
+        enabled=computer_use_raw.get("enabled", False),
+        screenshot_delay=computer_use_raw.get("screenshot_delay", 0.5),
+    )
+
+    ide_raw = data.get("ide", {})
+    ide = IDEConfig(
+        enabled=ide_raw.get("enabled", False),
+        port=ide_raw.get("port", 9876),
+    )
+
+    swarm_raw = data.get("swarm", {})
+    swarm = SwarmConfig(
+        enabled=swarm_raw.get("enabled", False),
+        backend=swarm_raw.get("backend", "auto"),
+        max_members=swarm_raw.get("max_members", 5),
+    )
+
     return RuntimeConfig(
         model=data.get("model", ""),
         provider_base_url=provider.get("base_url", None),
@@ -218,6 +272,10 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         thinking=thinking,
         vim_mode=data.get("vim_mode", False),
         voice=voice,
+        dream=dream,
+        computer_use=computer_use,
+        ide=ide,
+        swarm=swarm,
     )
 
 

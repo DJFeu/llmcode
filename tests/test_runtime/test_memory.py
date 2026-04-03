@@ -138,3 +138,43 @@ class TestMemoryStore:
     def test_get_all_empty_returns_empty_dict(self, tmp_path):
         store = MemoryStore(tmp_path / "mem", Path("/project/a"))
         assert store.get_all() == {}
+
+    def test_consolidated_dir_property(self, tmp_path):
+        store = MemoryStore(tmp_path / "mem", Path("/project/a"))
+        cdir = store.consolidated_dir
+        assert cdir.name == "consolidated"
+        assert cdir.parent == store._dir
+        assert cdir.is_dir()
+
+    def test_save_consolidated_creates_file(self, tmp_path):
+        store = MemoryStore(tmp_path / "mem", Path("/project/a"))
+        store.save_consolidated("# 2026-04-03 Summary\nModified: foo.py")
+        files = list(store.consolidated_dir.glob("*.md"))
+        assert len(files) == 1
+        assert "Modified: foo.py" in files[0].read_text()
+
+    def test_save_consolidated_uses_date_filename(self, tmp_path):
+        store = MemoryStore(tmp_path / "mem", Path("/project/a"))
+        store.save_consolidated("summary content", date_str="2026-04-03")
+        path = store.consolidated_dir / "2026-04-03.md"
+        assert path.exists()
+        assert path.read_text(encoding="utf-8") == "summary content"
+
+    def test_load_consolidated_summaries_reverse_order(self, tmp_path):
+        store = MemoryStore(tmp_path / "mem", Path("/project/a"))
+        store.save_consolidated("first", date_str="2026-04-01")
+        store.save_consolidated("second", date_str="2026-04-02")
+        summaries = store.load_consolidated_summaries(limit=5)
+        assert summaries[0] == "second"
+        assert summaries[1] == "first"
+
+    def test_load_consolidated_summaries_respects_limit(self, tmp_path):
+        store = MemoryStore(tmp_path / "mem", Path("/project/a"))
+        for i in range(5):
+            store.save_consolidated(f"summary {i}", date_str=f"2026-04-0{i+1}")
+        summaries = store.load_consolidated_summaries(limit=2)
+        assert len(summaries) == 2
+
+    def test_load_consolidated_summaries_empty(self, tmp_path):
+        store = MemoryStore(tmp_path / "mem", Path("/project/a"))
+        assert store.load_consolidated_summaries() == []

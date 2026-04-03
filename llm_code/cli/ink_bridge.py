@@ -390,14 +390,50 @@ class InkBridge:
 
         elif name == "memory":
             if self._memory:
-                entries = self._memory.get_all()
-                if entries:
-                    lines = [f"Memory ({len(entries)} entries)"]
-                    for k, v in entries.items():
-                        lines.append(f"  {k}: {v.value[:60]}")
-                    await self._send({"type": "message", "text": "\n".join(lines)})
+                mem_parts = args.strip().split(None, 1)
+                mem_subcmd = mem_parts[0] if mem_parts else ""
+
+                if mem_subcmd == "consolidate":
+                    if not self._runtime:
+                        await self._send({"type": "error", "message": "No active session to consolidate."})
+                    else:
+                        await self._send({"type": "message", "text": "Consolidating session..."})
+                        try:
+                            from llm_code.runtime.dream import DreamTask
+                            dream = DreamTask()
+                            result = await dream.consolidate(
+                                self._runtime.session,
+                                self._memory,
+                                self._runtime._provider,
+                                self._config,
+                            )
+                            if result:
+                                await self._send({"type": "message", "text": f"Consolidated:\n{result[:500]}"})
+                            else:
+                                await self._send({"type": "message", "text": "Nothing to consolidate (too few turns or disabled)."})
+                        except Exception as e:
+                            await self._send({"type": "error", "message": f"Consolidation failed: {e}"})
+
+                elif mem_subcmd == "history":
+                    summaries = self._memory.load_consolidated_summaries(limit=5)
+                    if not summaries:
+                        await self._send({"type": "message", "text": "No consolidated memories yet."})
+                    else:
+                        lines = [f"Consolidated Memories ({len(summaries)} most recent)"]
+                        for i, s in enumerate(summaries):
+                            preview = "\n".join(s.strip().splitlines()[:3])
+                            lines.append(f"#{i+1} {preview}")
+                        await self._send({"type": "message", "text": "\n\n".join(lines)})
+
                 else:
-                    await self._send({"type": "message", "text": "No memories stored."})
+                    entries = self._memory.get_all()
+                    if entries:
+                        lines = [f"Memory ({len(entries)} entries)"]
+                        for k, v in entries.items():
+                            lines.append(f"  {k}: {v.value[:60]}")
+                        await self._send({"type": "message", "text": "\n".join(lines)})
+                    else:
+                        await self._send({"type": "message", "text": "No memories stored."})
             else:
                 await self._send({"type": "message", "text": "Memory not initialized."})
 
@@ -463,6 +499,9 @@ class InkBridge:
 
         elif name == "cron":
             await self._handle_cron_command(args)
+
+        elif name == "ide":
+            await self._handle_ide_command(args)
 
         else:
             await self._send({"type": "message", "text": f"Command /{name} not recognized. Type /help for available commands."})
@@ -530,6 +569,40 @@ class InkBridge:
 
         else:
             await self._send({"type": "message", "text": "Usage: /cron [list|add|delete <id>]"})
+
+    async def _handle_ide_command(self, args: str) -> None:
+        """Handle /ide [status|connect] commands."""
+        sub = args.strip().lower()
+
+        if sub == "status":
+            ide_bridge = getattr(self, "_ide_bridge", None)
+            if ide_bridge is None:
+                await self._send({"type": "message", "text": "IDE integration is disabled. Set ide.enabled=true in config."})
+                return
+            if ide_bridge.is_connected:
+                ides = ide_bridge._server.connected_ides if ide_bridge._server else []
+                names = ", ".join(ide.name for ide in ides) if ides else "unknown"
+                await self._send({"type": "message", "text": f"IDE connected: {names}"})
+            else:
+                port = ide_bridge._config.port
+                await self._send({"type": "message", "text": f"IDE bridge listening on port {port}, no IDE connected."})
+
+        elif sub == "connect":
+            ide_bridge = getattr(self, "_ide_bridge", None)
+            if ide_bridge is None:
+                await self._send({"type": "message", "text": "IDE integration is disabled. Set ide.enabled=true in config."})
+                return
+            if not ide_bridge.is_enabled:
+                await self._send({"type": "message", "text": "IDE integration is disabled."})
+                return
+            if ide_bridge._server is None:
+                await ide_bridge.start()
+                await self._send({"type": "message", "text": f"IDE bridge started on port {ide_bridge._server.actual_port}."})
+            else:
+                await self._send({"type": "message", "text": f"IDE bridge already running on port {ide_bridge._server.actual_port}."})
+
+        else:
+            await self._send({"type": "message", "text": "Usage: /ide status | /ide connect"})
 
     async def _show_skill_marketplace(self) -> None:
         """Show skills as text + numbered list for selection."""
@@ -1087,6 +1160,78 @@ class InkBridge:
         except Exception:
             self._cron_storage = None
 
+        # Register swarm tools
+        self._swarm_manager = None
+        try:
+            if self._config.swarm.enabled:
+                from llm_code.swarm.manager import SwarmManager
+                from llm_code.tools.swarm_create import SwarmCreateTool
+                from llm_code.tools.swarm_list import SwarmListTool
+                from llm_code.tools.swarm_message import SwarmMessageTool
+                from llm_code.tools.swarm_delete import SwarmDeleteTool
+
+                swarm_mgr = SwarmManager(
+                    swarm_dir=self._cwd / ".llm-code" / "swarm",
+                    max_members=self._config.swarm.max_members,
+                    backend_preference=self._config.swarm.backend,
+                )
+                self._swarm_manager = swarm_mgr
+                for tool in (
+                    SwarmCreateTool(swarm_mgr),
+                    SwarmListTool(swarm_mgr),
+                    SwarmMessageTool(swarm_mgr),
+                    SwarmDeleteTool(swarm_mgr),
+                ):
+                    try:
+                        registry.register(tool)
+                    except ValueError:
+                        pass
+        except Exception:
+            self._swarm_manager = None
+
+        # Register computer-use tools (only when enabled)
+        if self._config.computer_use.enabled:
+            try:
+                from llm_code.tools.computer_use_tools import (
+                    ScreenshotTool, MouseClickTool, KeyboardTypeTool,
+                    KeyPressTool, ScrollTool, MouseDragTool,
+                )
+                cu_config = self._config.computer_use
+                for tool in (
+                    ScreenshotTool(cu_config), MouseClickTool(cu_config),
+                    KeyboardTypeTool(cu_config), KeyPressTool(cu_config),
+                    ScrollTool(cu_config), MouseDragTool(cu_config),
+                ):
+                    try:
+                        registry.register(tool)
+                    except ValueError:
+                        pass
+            except ImportError:
+                pass
+
+        # Register IDE tools if enabled
+        if self._config.ide.enabled:
+            try:
+                from llm_code.ide.bridge import IDEBridge
+                from llm_code.tools.ide_open import IDEOpenTool
+                from llm_code.tools.ide_diagnostics import IDEDiagnosticsTool
+                from llm_code.tools.ide_selection import IDESelectionTool
+
+                self._ide_bridge = IDEBridge(self._config.ide)
+                for tool in (
+                    IDEOpenTool(self._ide_bridge),
+                    IDEDiagnosticsTool(self._ide_bridge),
+                    IDESelectionTool(self._ide_bridge),
+                ):
+                    try:
+                        registry.register(tool)
+                    except ValueError:
+                        pass
+            except ImportError:
+                self._ide_bridge = None
+        else:
+            self._ide_bridge = None
+
         # Store checkpoint manager
         self._checkpoint_mgr = checkpoint_mgr
 
@@ -1150,6 +1295,31 @@ class InkBridge:
                     summary = "Session topics: " + "; ".join(topics[:5])
                     self._memory.save_session_summary(summary)
                     print(f"Session saved with {len(topics)} topics.", file=sys.stderr)
+            except Exception:
+                pass
+
+        # 3. Fire DreamTask consolidation (non-blocking)
+        if self._memory and self._runtime and self._runtime.session:
+            try:
+                import asyncio as _asyncio
+                from llm_code.runtime.dream import DreamTask
+
+                dream = DreamTask()
+                _asyncio.create_task(
+                    dream.consolidate(
+                        self._runtime.session,
+                        self._memory,
+                        self._runtime._provider,
+                        self._config,
+                    )
+                )
+            except Exception:
+                pass
+
+        # Stop all swarm members
+        if getattr(self, "_swarm_manager", None) is not None:
+            try:
+                await self._swarm_manager.stop_all()
             except Exception:
                 pass
 
