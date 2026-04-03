@@ -25,12 +25,12 @@ A production-grade terminal coding agent that works with **any LLM** — local (
   |    LLM  CODE     |  | ------------------------------------ |
   |                  |  | Model        qwen3.5-122b            |
   +------------------+  | Workspace    my-project, main        |
-                        | Directory    ~/my-project             |
-                        | Permissions  prompt                   |
+                        | Directory    ~/my-project            |
+                        | Permissions  prompt                  |
                         |                                      |
                         | Quick start  /help, /skill, /mcp     |
-                        | Multiline    Shift+Enter              |
-                        | Images       Cmd+V pastes             |
+                        | Multiline    Shift+Enter             |
+                        | Images       Cmd+V pastes            |
                         | ------------------------------------ |
                         | Ready                                |
                         +--------------------------------------+
