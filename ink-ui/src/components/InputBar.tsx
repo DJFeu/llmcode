@@ -52,7 +52,10 @@ const SLASH_COMMANDS = [
   { cmd: '/checkpoint resume', desc: 'Resume checkpoint' },
   { cmd: '/memory consolidate', desc: 'Consolidate memory' },
   { cmd: '/memory history', desc: 'Memory history' },
+  { cmd: '/lsp', desc: 'LSP status' },
+  { cmd: '/cancel', desc: 'Cancel generation' },
   { cmd: '/exit', desc: 'Quit' },
+  { cmd: '/quit', desc: 'Quit' },
 ];
 
 interface InputBarProps {

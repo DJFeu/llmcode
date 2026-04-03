@@ -33,6 +33,7 @@ KNOWN_COMMANDS = frozenset({
     "hida",
     "task",
     "checkpoint",
+    "cancel",
 })
 
 

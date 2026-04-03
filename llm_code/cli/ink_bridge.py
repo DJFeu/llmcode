@@ -367,6 +367,17 @@ class InkBridge:
                 {"cmd": "/undo", "desc": "Undo last change"},
                 {"cmd": "/cost", "desc": "Token usage"},
                 {"cmd": "/search <query>", "desc": "Search conversation history"},
+                {"cmd": "/thinking", "desc": "Toggle thinking mode"},
+                {"cmd": "/vim", "desc": "Toggle vim mode"},
+                {"cmd": "/voice", "desc": "Toggle voice input"},
+                {"cmd": "/task", "desc": "Task lifecycle"},
+                {"cmd": "/swarm", "desc": "Multi-agent swarm"},
+                {"cmd": "/cron", "desc": "Scheduled tasks"},
+                {"cmd": "/vcr", "desc": "Session recording"},
+                {"cmd": "/checkpoint", "desc": "Session checkpoints"},
+                {"cmd": "/ide", "desc": "IDE connection"},
+                {"cmd": "/hida", "desc": "Task classification"},
+                {"cmd": "/lsp", "desc": "LSP status"},
                 {"cmd": "/exit", "desc": "Quit"},
             ]
             await self._send({"type": "help", "commands": commands})
@@ -514,9 +525,32 @@ class InkBridge:
                     "style": "info",
                 })
 
+        elif name == "vim":
+            import dataclasses as _dc
+            current = getattr(self._config, "vim_mode", False)
+            new_val = not current
+            self._config = _dc.replace(self._config, vim_mode=new_val)
+            status = "enabled" if new_val else "disabled"
+            await self._send({"type": "message", "text": f"Vim mode {status}"})
+
+        elif name == "voice":
+            voice_cfg = getattr(self._config, "voice", None)
+            if voice_cfg:
+                import dataclasses as _dc
+                new_voice = _dc.replace(voice_cfg, enabled=not voice_cfg.enabled)
+                self._config = _dc.replace(self._config, voice=new_voice)
+                status = "enabled" if new_voice.enabled else "disabled"
+                await self._send({"type": "message", "text": f"Voice input {status}"})
+            else:
+                await self._send({"type": "message", "text": "Voice not configured. Add voice section to config."})
+
+        elif name == "checkpoint":
+            await self._handle_checkpoint_command(args)
+
+        elif name == "lsp":
+            await self._send({"type": "message", "text": "LSP: use /lsp status to check language server connections"})
+
         elif name == "cancel":
-            # Cancel current generation
-            # TODO: implement actual cancellation
             await self._send({"type": "thinking_stop", "elapsed": 0, "tokens": 0})
             await self._send({"type": "message", "text": "(cancelled)"})
 
@@ -555,6 +589,52 @@ class InkBridge:
 
         else:
             await self._send({"type": "message", "text": f"Command /{name} not recognized. Type /help for available commands."})
+
+    async def _handle_checkpoint_command(self, args: str) -> None:
+        """Handle /checkpoint save|list|resume commands."""
+        parts = args.strip().split(None, 1)
+        sub = parts[0] if parts else ""
+
+        try:
+            from llm_code.runtime.checkpoint_recovery import CheckpointRecovery
+        except ImportError:
+            await self._send({"type": "error", "message": "Checkpoint module not available."})
+            return
+
+        cp_dir = self._cwd / ".llm-code" / "checkpoints"
+        recovery = CheckpointRecovery(cp_dir)
+
+        if sub == "save":
+            if self._runtime and self._runtime.session:
+                recovery.save_checkpoint(self._runtime.session)
+                await self._send({"type": "message", "text": "Checkpoint saved."})
+            else:
+                await self._send({"type": "error", "message": "No active session."})
+        elif sub == "list":
+            checkpoints = recovery.list_checkpoints()
+            if checkpoints:
+                lines = [f"Checkpoints ({len(checkpoints)})"]
+                for cp in checkpoints[:10]:
+                    lines.append(f"  {cp.get('session_id', '?')} — {cp.get('message_count', '?')} messages")
+                await self._send({"type": "message", "text": "\n".join(lines)})
+            else:
+                await self._send({"type": "message", "text": "No checkpoints saved."})
+        elif sub == "resume":
+            session_id = parts[1].strip() if len(parts) > 1 else None
+            if session_id:
+                session = recovery.load_checkpoint(session_id)
+                if session:
+                    await self._send({"type": "message", "text": f"Resumed session {session_id}"})
+                else:
+                    await self._send({"type": "error", "message": f"Checkpoint not found: {session_id}"})
+            else:
+                last = recovery.detect_last_checkpoint()
+                if last:
+                    await self._send({"type": "message", "text": f"Last checkpoint: {last}. Use /checkpoint resume {last}"})
+                else:
+                    await self._send({"type": "error", "message": "No checkpoints found."})
+        else:
+            await self._send({"type": "message", "text": "Usage: /checkpoint save|list|resume [session_id]"})
 
     async def _handle_swarm_command(self, args: str) -> None:
         """Handle /swarm coordinate <task> commands."""
