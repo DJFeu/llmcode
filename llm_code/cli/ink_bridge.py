@@ -309,12 +309,22 @@ class InkBridge:
             if self._skills:
                 all_skills = list(self._skills.auto_skills) + list(self._skills.command_skills)
 
+            # Check which skills are local vs from plugins
+            local_skill_dir = Path.home() / ".llm-code" / "skills"
+            local_names = set()
+            if local_skill_dir.is_dir():
+                local_names = {d.name for d in local_skill_dir.iterdir() if d.is_dir()}
+
             items: list[dict] = []
             for s in all_skills:
                 tokens = len(s.content) // 4
+                source = "local" if s.name in local_names else "plugin"
+                desc = f"~{tokens} tokens"
+                if source == "plugin":
+                    desc += " · from plugin"
                 items.append({
                     "name": s.name,
-                    "description": f"~{tokens} tokens",
+                    "description": desc,
                     "installed": True,
                     "index": len(items),
                 })
@@ -475,11 +485,16 @@ class InkBridge:
         actions: list[dict] = []
         if market_type == "skill":
             if installed:
-                actions = [
-                    {"id": "view", "label": "View skill content"},
-                    {"id": "uninstall", "label": "Remove skill"},
-                    {"id": "cancel", "label": "Cancel"},
-                ]
+                # Check if skill is from a plugin (can't remove individually)
+                skill_dir = Path.home() / ".llm-code" / "skills" / item["name"]
+                is_local = skill_dir.is_dir()
+                actions = [{"id": "view", "label": "View skill content"}]
+                if is_local:
+                    actions.append({"id": "disable", "label": "Disable skill"})
+                    actions.append({"id": "uninstall", "label": "Remove skill"})
+                else:
+                    actions.append({"id": "info", "label": "From plugin — manage via /plugin"})
+                actions.append({"id": "cancel", "label": "Cancel"})
             else:
                 actions = [
                     {"id": "install", "label": f"Install {item['name']}"},
