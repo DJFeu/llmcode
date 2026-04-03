@@ -707,6 +707,8 @@ class LLMCodeCLI:
                 ("/cost", "Token usage"),
                 ("/budget <n>", "Set token budget"),
                 ("/cd <dir>", "Change directory"),
+                ("/config", "Show runtime config"),
+                ("/config set <key> <value>", "Set a config value"),
                 ("/lsp", "LSP server status"),
                 ("/search <query>", "Search conversation history"),
                 ("/exit", "Quit"),
@@ -726,6 +728,9 @@ class LLMCodeCLI:
                 console.print(f"[dim]Model switched to: {args}[/]")
             else:
                 console.print(f"[dim]Current model: {self._config.model or '(not set)'}[/]")
+
+        elif name == "config":
+            self._handle_config_command(args)
 
         elif name == "cost":
             console.print(f"[dim]{self._cost_tracker.format_cost()}[/]")
@@ -892,6 +897,62 @@ class LLMCodeCLI:
 
         else:
             console.print(f"[red]Unknown command: /{name} -- type /help for help[/]")
+
+    def _handle_config_command(self, args: str) -> None:
+        """Handle /config [set <key> <value> | get <key>] commands."""
+        import dataclasses
+
+        parts = args.strip().split(None, 2)
+        sub = parts[0].lower() if parts else ""
+
+        # Flat keys that can be changed at runtime
+        _SETTABLE = {
+            "model": str,
+            "temperature": float,
+            "max_tokens": int,
+            "max_turn_iterations": int,
+            "compact_after_tokens": int,
+            "timeout": float,
+            "max_retries": int,
+            "permission_mode": str,
+        }
+
+        if sub == "set":
+            if len(parts) < 3:
+                console.print("[red]Usage: /config set <key> <value>[/]")
+                return
+            key, raw_value = parts[1], parts[2]
+            if key not in _SETTABLE:
+                console.print(f"[red]Cannot set '{key}'. Settable keys: {', '.join(sorted(_SETTABLE))}[/]")
+                return
+            try:
+                typed_value = _SETTABLE[key](raw_value)
+                self._config = dataclasses.replace(self._config, **{key: typed_value})
+                if self._runtime:
+                    self._runtime._config = self._config
+                console.print(f"[dim]{key} = {typed_value}[/]")
+            except (ValueError, TypeError) as exc:
+                console.print(f"[red]Invalid value for {key}: {exc}[/]")
+
+        elif sub == "get":
+            key = parts[1] if len(parts) > 1 else ""
+            if not key:
+                console.print("[red]Usage: /config get <key>[/]")
+                return
+            if hasattr(self._config, key):
+                console.print(f"[dim]{key} = {getattr(self._config, key)}[/]")
+            else:
+                console.print(f"[red]Unknown config key: {key}[/]")
+
+        else:
+            # Show all config
+            console.print("[bold]Runtime Config:[/]")
+            for f in dataclasses.fields(self._config):
+                val = getattr(self._config, f.name)
+                if isinstance(val, (dict, tuple, frozenset)) and not val:
+                    continue
+                console.print(f"  [cyan]{f.name:<28s}[/] {val}")
+            console.print()
 
     def _handle_checkpoint_command(self, args: str) -> None:
         """Handle /checkpoint [save|list|resume [session_id]] commands."""

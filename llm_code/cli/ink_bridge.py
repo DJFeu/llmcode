@@ -363,6 +363,7 @@ class InkBridge:
                 {"cmd": "/skill", "desc": "Browse skills"},
                 {"cmd": "/mcp", "desc": "Browse MCP servers"},
                 {"cmd": "/plugin", "desc": "Browse plugins"},
+                {"cmd": "/config", "desc": "View/set runtime config"},
                 {"cmd": "/memory", "desc": "Project memory"},
                 {"cmd": "/undo", "desc": "Undo last change"},
                 {"cmd": "/cost", "desc": "Token usage"},
@@ -493,6 +494,9 @@ class InkBridge:
         elif name == "image":
             await self._send({"type": "message", "text": "Use Cmd+V to paste image, or type the path after your message."})
 
+        elif name == "config":
+            await self._handle_config_command(args)
+
         elif name == "session":
             await self._send({"type": "message", "text": "Sessions: /session list · /session save (use print-based CLI for full support)"})
 
@@ -589,6 +593,60 @@ class InkBridge:
 
         else:
             await self._send({"type": "message", "text": f"Command /{name} not recognized. Type /help for available commands."})
+
+    async def _handle_config_command(self, args: str) -> None:
+        """Handle /config [set <key> <value> | get <key>] commands."""
+        import dataclasses
+
+        parts = args.strip().split(None, 2)
+        sub = parts[0].lower() if parts else ""
+
+        _SETTABLE = {
+            "model": str,
+            "temperature": float,
+            "max_tokens": int,
+            "max_turn_iterations": int,
+            "compact_after_tokens": int,
+            "timeout": float,
+            "max_retries": int,
+            "permission_mode": str,
+        }
+
+        if sub == "set":
+            if len(parts) < 3:
+                await self._send({"type": "error", "message": "Usage: /config set <key> <value>"})
+                return
+            key, raw_value = parts[1], parts[2]
+            if key not in _SETTABLE:
+                await self._send({"type": "error", "message": f"Cannot set '{key}'. Settable: {', '.join(sorted(_SETTABLE))}"})
+                return
+            try:
+                typed_value = _SETTABLE[key](raw_value)
+                self._config = dataclasses.replace(self._config, **{key: typed_value})
+                if self._runtime:
+                    self._runtime._config = self._config
+                await self._send({"type": "message", "text": f"{key} = {typed_value}"})
+            except (ValueError, TypeError) as exc:
+                await self._send({"type": "error", "message": f"Invalid value for {key}: {exc}"})
+
+        elif sub == "get":
+            key = parts[1] if len(parts) > 1 else ""
+            if not key:
+                await self._send({"type": "error", "message": "Usage: /config get <key>"})
+                return
+            if hasattr(self._config, key):
+                await self._send({"type": "message", "text": f"{key} = {getattr(self._config, key)}"})
+            else:
+                await self._send({"type": "error", "message": f"Unknown config key: {key}"})
+
+        else:
+            lines = ["Runtime Config:"]
+            for f in dataclasses.fields(self._config):
+                val = getattr(self._config, f.name)
+                if isinstance(val, (dict, tuple, frozenset)) and not val:
+                    continue
+                lines.append(f"  {f.name:<28s} {val}")
+            await self._send({"type": "message", "text": "\n".join(lines)})
 
     async def _handle_checkpoint_command(self, args: str) -> None:
         """Handle /checkpoint save|list|resume commands."""

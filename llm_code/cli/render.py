@@ -54,6 +54,8 @@ SLASH_COMMANDS_HELP = [
     ("/session list", "List saved sessions"),
     ("/session save", "Save the current session"),
     ("/session switch <id>", "Switch to a saved session"),
+    ("/config", "Show runtime config"),
+    ("/config get <key>", "Get a config value"),
     ("/config set <key> <value>", "Set a runtime config value"),
     ("/cd <path>", "Change the working directory"),
     ("/image <path>", "Attach an image from file path"),
