@@ -1,4 +1,4 @@
-"""Entry point for llm-code TUI."""
+"""Entry point for llm-code."""
 from __future__ import annotations
 
 import os
@@ -23,7 +23,7 @@ _PERMISSION_CHOICES = ["prompt", "auto_accept", "read_only", "workspace_write", 
 )
 @click.option("--budget", type=int, default=None, help="Token budget target")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
-@click.option("--ink", is_flag=True, help="Use React+Ink frontend (experimental)")
+@click.option("--lite", is_flag=True, help="Use lightweight print-based CLI (no Node.js required)")
 @click.option("--serve", is_flag=True, help="Start as remote server")
 @click.option("--port", type=int, default=8765, help="Server port (for --serve)")
 @click.option("--connect", default=None, help="Connect to remote server (host:port)")
@@ -36,7 +36,7 @@ def main(
     permission: str | None,
     budget: int | None,
     verbose: bool = False,
-    ink: bool = False,
+    lite: bool = False,
     serve: bool = False,
     port: int = 8765,
     connect: str | None = None,
@@ -87,11 +87,13 @@ def main(
         asyncio.run(ssh_connect(ssh, port=port))
         return
 
-    if ink:
-        from llm_code.cli.ink_bridge import InkBridge
-        bridge = InkBridge(config=config, cwd=cwd, budget=budget)
-        asyncio.run(bridge.start())
-    else:
+    if lite:
+        # Lightweight print-based CLI
         from llm_code.cli.tui import LLMCodeCLI
         cli = LLMCodeCLI(config=config, cwd=cwd, budget=budget)
         asyncio.run(cli.run())
+    else:
+        # Default: React+Ink UI
+        from llm_code.cli.ink_bridge import InkBridge
+        bridge = InkBridge(config=config, cwd=cwd, budget=budget)
+        asyncio.run(bridge.start())
