@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
@@ -28,6 +29,7 @@ from llm_code.api.types import (
 )
 from llm_code.runtime.compressor import ContextCompressor
 from llm_code.runtime.permissions import PermissionOutcome
+from llm_code.runtime.telemetry import Telemetry, get_noop_telemetry
 from llm_code.tools.base import PermissionLevel, ToolResult
 from llm_code.tools.parsing import ParsedToolCall, parse_tool_calls
 
@@ -95,6 +97,8 @@ class ConversationRuntime:
         token_budget: Any = None,
         vcr_recorder: Any = None,
         deferred_tool_manager: Any = None,
+        telemetry: Telemetry | None = None,
+        recovery_checkpoint: Any = None,
     ) -> None:
         self._provider = provider
         self._tool_registry = tool_registry
@@ -108,6 +112,8 @@ class ConversationRuntime:
         self._token_budget = token_budget
         self._vcr_recorder = vcr_recorder
         self._deferred_tool_manager = deferred_tool_manager
+        self._telemetry: Telemetry = telemetry if telemetry is not None else get_noop_telemetry()
+        self._recovery_checkpoint = recovery_checkpoint
         self._has_attempted_reactive_compact = False
         self._consecutive_failures: int = 0
         self._active_model: str = getattr(config, "model", "")
@@ -129,6 +135,7 @@ class ConversationRuntime:
     async def run_turn(self, user_input: str, images: list | None = None) -> AsyncIterator[StreamEvent]:
         """Run one user turn (may involve multiple LLM calls for tool use)."""
         logger.debug("Starting turn: %s", user_input[:80])
+        _turn_start = time.monotonic()
         if self._vcr_recorder is not None:
             self._vcr_recorder.record("user_input", {"text": user_input})
         # 1. Add user message to session (with optional images)
@@ -426,11 +433,26 @@ class ConversationRuntime:
 
         # Update session usage
         self.session = self.session.update_usage(accumulated_usage)
+        _turn_duration_ms = (time.monotonic() - _turn_start) * 1000
         logger.debug(
             "Turn complete: %d input tokens, %d output tokens",
             accumulated_usage.input_tokens,
             accumulated_usage.output_tokens,
         )
+        self._telemetry.trace_turn(
+            session_id=getattr(self.session, "session_id", ""),
+            model=self._active_model,
+            input_tokens=accumulated_usage.input_tokens,
+            output_tokens=accumulated_usage.output_tokens,
+            duration_ms=_turn_duration_ms,
+        )
+
+        # Auto-checkpoint: persist session state after each turn completes
+        if self._recovery_checkpoint is not None:
+            try:
+                self._recovery_checkpoint.save_checkpoint(self.session)
+            except Exception as exc:
+                logger.debug("Recovery checkpoint save failed: %s", exc)
 
     async def _execute_tool_with_streaming(
         self, call: ParsedToolCall
@@ -551,6 +573,7 @@ class ConversationRuntime:
         if self._vcr_recorder is not None:
             self._vcr_recorder.record("tool_call", {"name": call.name, "args": args_preview})
         yield StreamToolExecStart(tool_name=call.name, args_summary=args_preview)
+        _tool_start = time.monotonic()
 
         # 7. Execute in thread pool with asyncio.Queue progress bridge
         loop = asyncio.get_running_loop()
@@ -578,6 +601,12 @@ class ConversationRuntime:
 
         tool_result = await future
         tool_result = self._budget_tool_result(tool_result, call.id)
+        _tool_duration_ms = (time.monotonic() - _tool_start) * 1000
+        self._telemetry.trace_tool(
+            tool_name=call.name,
+            duration_ms=_tool_duration_ms,
+            is_error=tool_result.is_error,
+        )
 
         # 7. Post-tool hook
         if hasattr(hook_runner, "post_tool_use"):

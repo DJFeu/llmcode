@@ -32,6 +32,7 @@ KNOWN_COMMANDS = frozenset({
     "vcr",
     "hida",
     "task",
+    "checkpoint",
 })
 
 

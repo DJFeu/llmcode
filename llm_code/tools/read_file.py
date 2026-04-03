@@ -7,6 +7,7 @@ import pathlib
 
 from pydantic import BaseModel
 
+from llm_code.runtime.file_protection import check_read
 from llm_code.tools.base import PermissionLevel, Tool, ToolResult
 
 
@@ -83,15 +84,25 @@ class ReadFileTool(Tool):
         if not path.exists():
             return ToolResult(output=f"File not found: {path}", is_error=True)
 
+        read_check = check_read(str(path))
+        read_warning = read_check.reason if read_check.severity == "warn" else ""
+
         suffix = path.suffix.lower()
 
         if suffix == _NOTEBOOK_EXTENSION:
-            return self._read_notebook(path)
+            result = self._read_notebook(path)
+        elif suffix in _IMAGE_EXTENSIONS:
+            result = self._read_image(path, _IMAGE_EXTENSIONS[suffix])
+        else:
+            result = self._read_text(path, offset, limit)
 
-        if suffix in _IMAGE_EXTENSIONS:
-            return self._read_image(path, _IMAGE_EXTENSIONS[suffix])
-
-        return self._read_text(path, offset, limit)
+        if read_warning and not result.is_error:
+            result = ToolResult(
+                output=f"[WARNING] {read_warning}\n{result.output}",
+                metadata=result.metadata,
+                is_error=result.is_error,
+            )
+        return result
 
     def _read_notebook(self, path: pathlib.Path) -> ToolResult:
         from llm_code.utils.notebook import format_cells, parse_notebook, validate_notebook

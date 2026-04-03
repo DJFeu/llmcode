@@ -90,6 +90,13 @@ class HidaConfig:
 
 
 @dataclass(frozen=True)
+class TelemetryConfig:
+    enabled: bool = False
+    endpoint: str = "http://localhost:4318"  # OTLP HTTP default
+    service_name: str = "llm-code"
+
+
+@dataclass(frozen=True)
 class RuntimeConfig:
     model: str = ""
     provider_base_url: str | None = None
@@ -123,6 +130,7 @@ class RuntimeConfig:
     swarm: SwarmConfig = field(default_factory=SwarmConfig)
     vcr: VCRConfig = field(default_factory=VCRConfig)
     hida: HidaConfig = field(default_factory=HidaConfig)
+    telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
 
 
 class ConfigSchema(BaseModel):
@@ -279,6 +287,13 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         custom_profiles=tuple(hida_raw.get("custom_profiles", [])),
     )
 
+    telemetry_raw = data.get("telemetry", {})
+    telemetry = TelemetryConfig(
+        enabled=telemetry_raw.get("enabled", False),
+        endpoint=telemetry_raw.get("endpoint", "http://localhost:4318"),
+        service_name=telemetry_raw.get("service_name", "llm-code"),
+    )
+
     return RuntimeConfig(
         model=data.get("model", ""),
         provider_base_url=provider.get("base_url", None),
@@ -312,6 +327,7 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         swarm=swarm,
         vcr=vcr,
         hida=hida,
+        telemetry=telemetry,
     )
 
 

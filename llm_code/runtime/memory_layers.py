@@ -327,13 +327,102 @@ class TaskMemory:
         path.write_text(json.dumps(data, indent=2))
 
 
+class SummaryMemory:
+    """Stores conversation summaries per session.
+
+    Storage: ``<memory_dir>/<project_hash>/summaries/<session_id>.md``
+    """
+
+    def __init__(self, memory_dir: Path, project_path: Path) -> None:
+        project_hash = hashlib.sha256(str(project_path).encode()).hexdigest()[:8]
+        self._summaries_dir = memory_dir / project_hash / "summaries"
+        self._summaries_dir.mkdir(parents=True, exist_ok=True)
+
+    def save_summary(self, session_id: str, summary: str, messages_count: int) -> None:
+        """Persist a summary for *session_id*.
+
+        The file header stores metadata as YAML-style front-matter so the
+        summary body remains plain markdown and human-readable.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        path = self._summaries_dir / f"{session_id}.md"
+        content = (
+            f"---\n"
+            f"session_id: {session_id}\n"
+            f"timestamp: {now}\n"
+            f"messages_count: {messages_count}\n"
+            f"---\n\n"
+            f"{summary}"
+        )
+        path.write_text(content, encoding="utf-8")
+
+    def load_summary(self, session_id: str) -> str | None:
+        """Return the summary body for *session_id*, or None if not found."""
+        path = self._summaries_dir / f"{session_id}.md"
+        if not path.exists():
+            return None
+        text = path.read_text(encoding="utf-8")
+        # Strip front-matter block if present
+        if text.startswith("---\n"):
+            end = text.find("\n---\n", 4)
+            if end != -1:
+                return text[end + 5:].strip()
+        return text.strip()
+
+    def list_summaries(self) -> list[dict]:
+        """Return a list of summary descriptors sorted by modification time (newest first).
+
+        Each dict has keys: ``id``, ``timestamp``, ``message_count``, ``first_line``.
+        """
+        results: list[dict] = []
+        for path in sorted(
+            self._summaries_dir.glob("*.md"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        ):
+            session_id = path.stem
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+
+            timestamp = ""
+            messages_count = 0
+            body = text
+
+            if text.startswith("---\n"):
+                end = text.find("\n---\n", 4)
+                if end != -1:
+                    front = text[4:end]
+                    body = text[end + 5:].strip()
+                    for line in front.splitlines():
+                        if line.startswith("timestamp:"):
+                            timestamp = line.split(":", 1)[1].strip()
+                        elif line.startswith("messages_count:"):
+                            try:
+                                messages_count = int(line.split(":", 1)[1].strip())
+                            except ValueError:
+                                pass
+
+            first_line = next((line for line in body.splitlines() if line.strip()), "")
+            results.append({
+                "id": session_id,
+                "timestamp": timestamp,
+                "message_count": messages_count,
+                "first_line": first_line[:120],
+            })
+
+        return results
+
+
 class LayeredMemory:
-    """Facade wrapping all 4 memory layers.
+    """Facade wrapping all 5 memory layers.
 
     - L0 Governance: parsed rules from CLAUDE.md / .llm-code/rules/ / governance.md
     - L1 Working: in-memory, session-scoped, not persisted
     - L2 Project: persistent, tag-based (wraps MemoryStore for backward compat)
     - L3 Task: per-task JSON files with status tracking
+    - L4 Summary: conversation summaries persisted per session
     """
 
     def __init__(
@@ -346,6 +435,7 @@ class LayeredMemory:
         self._working = WorkingMemory()
         self._project = ProjectMemory(memory_dir, project_path)
         self._tasks = TaskMemory(memory_dir, project_path)
+        self._summaries = SummaryMemory(memory_dir, project_path)
 
     @property
     def governance(self) -> GovernanceLayer:
@@ -362,6 +452,10 @@ class LayeredMemory:
     @property
     def tasks(self) -> TaskMemory:
         return self._tasks
+
+    @property
+    def summaries(self) -> SummaryMemory:
+        return self._summaries
 
     def get_governance_rules(self) -> tuple[GovernanceRule, ...]:
         """Return all governance rules, sorted by priority descending."""

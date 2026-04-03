@@ -29,6 +29,7 @@ _PERMISSION_CHOICES = ["prompt", "auto_accept", "read_only", "workspace_write", 
 @click.option("--ssh", default=None, help="SSH to remote host and connect (user@host)")
 @click.option("--replay", default=None, help="Replay a VCR recording file (.jsonl)")
 @click.option("--replay-speed", type=float, default=1.0, help="Playback speed for --replay (0 = instant)")
+@click.option("--resume", default=None, help="Resume from a checkpoint (session_id or 'last')")
 def main(
     prompt: str | None,
     model: str | None,
@@ -44,6 +45,7 @@ def main(
     ssh: str | None = None,
     replay: str | None = None,
     replay_speed: float = 1.0,
+    resume: str | None = None,
 ) -> None:
     """llm-code: AI coding assistant CLI."""
     from llm_code.logging import setup_logging
@@ -101,10 +103,27 @@ def main(
         asyncio.run(ssh_connect(ssh, port=port))
         return
 
+    # Resolve resume session if requested
+    resume_session = None
+    if resume:
+        from llm_code.runtime.checkpoint_recovery import CheckpointRecovery
+        checkpoints_dir = Path.home() / ".llm-code" / "checkpoints"
+        recovery = CheckpointRecovery(checkpoints_dir)
+        if resume == "last":
+            resume_session = recovery.detect_last_checkpoint()
+        else:
+            resume_session = recovery.load_checkpoint(resume)
+        if resume_session is None:
+            print(f"[warning] No checkpoint found for: {resume}")
+        else:
+            print(f"Resuming session {resume_session.id} ({len(resume_session.messages)} messages)")
+
     if lite:
         # Lightweight print-based CLI
         from llm_code.cli.tui import LLMCodeCLI
         cli = LLMCodeCLI(config=config, cwd=cwd, budget=budget)
+        if resume_session is not None:
+            cli._init_session(existing_session=resume_session)
         asyncio.run(cli.run())
     else:
         # Default: React+Ink UI

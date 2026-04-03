@@ -248,8 +248,12 @@ class LLMCodeCLI:
 
     # ── Session Initialization ──────────────────────────────────────
 
-    def _init_session(self) -> None:
-        """Initialize the conversation runtime."""
+    def _init_session(self, existing_session=None) -> None:
+        """Initialize the conversation runtime.
+
+        If *existing_session* is provided it is used directly instead of
+        creating a new empty :class:`~llm_code.runtime.session.Session`.
+        """
         api_key = os.environ.get(self._config.provider_api_key_env, "")
         base_url = self._config.provider_base_url or ""
 
@@ -303,7 +307,7 @@ class LLMCodeCLI:
             pass
 
         context = ProjectContext.discover(self._cwd)
-        session = Session.create(self._cwd)
+        session = existing_session if existing_session is not None else Session.create(self._cwd)
 
         mode_map = {
             "read_only": PermissionMode.READ_ONLY,
@@ -322,12 +326,16 @@ class LLMCodeCLI:
         hooks = HookRunner(self._config.hooks)
         prompt_builder = SystemPromptBuilder()
 
-        # Checkpoint manager
+        # Checkpoint manager (git-based undo)
         checkpoint_mgr = None
         if (self._cwd / ".git").is_dir():
             from llm_code.runtime.checkpoint import CheckpointManager
             checkpoint_mgr = CheckpointManager(self._cwd)
         self._checkpoint_mgr = checkpoint_mgr
+
+        # Recovery checkpoint (session state persistence)
+        from llm_code.runtime.checkpoint_recovery import CheckpointRecovery
+        recovery_checkpoint = CheckpointRecovery(Path.home() / ".llm-code" / "checkpoints")
 
         # Token budget
         token_budget = None
@@ -346,6 +354,7 @@ class LLMCodeCLI:
             context=context,
             checkpoint_manager=checkpoint_mgr,
             token_budget=token_budget,
+            recovery_checkpoint=recovery_checkpoint,
         )
 
         # Skills
@@ -408,6 +417,8 @@ class LLMCodeCLI:
                 from llm_code.tools.swarm_list import SwarmListTool
                 from llm_code.tools.swarm_message import SwarmMessageTool
                 from llm_code.tools.swarm_delete import SwarmDeleteTool
+                from llm_code.tools.coordinator_tool import CoordinatorTool
+                from llm_code.swarm.coordinator import Coordinator
 
                 swarm_mgr = SwarmManager(
                     swarm_dir=self._cwd / ".llm-code" / "swarm",
@@ -425,6 +436,9 @@ class LLMCodeCLI:
                         self._tool_reg.register(tool)
                     except ValueError:
                         pass
+                # Store coordinator classes for lazy registration after runtime init
+                self._coordinator_class = Coordinator
+                self._coordinator_tool_class = CoordinatorTool
         except Exception:
             self._swarm_manager = None
 
@@ -862,8 +876,68 @@ class LLMCodeCLI:
         elif name == "task":
             self._handle_task_command(args)
 
+        elif name == "swarm":
+            self._handle_swarm_command(args)
+
+        elif name == "checkpoint":
+            self._handle_checkpoint_command(args)
+
         else:
             console.print(f"[red]Unknown command: /{name} -- type /help for help[/]")
+
+    def _handle_checkpoint_command(self, args: str) -> None:
+        """Handle /checkpoint [save|list|resume [session_id]] commands."""
+        from llm_code.runtime.checkpoint_recovery import CheckpointRecovery
+
+        checkpoints_dir = Path.home() / ".llm-code" / "checkpoints"
+        recovery = CheckpointRecovery(checkpoints_dir)
+
+        parts = args.strip().split(None, 1)
+        sub = parts[0].lower() if parts else "list"
+        rest = parts[1].strip() if len(parts) > 1 else ""
+
+        if sub == "save":
+            if self._runtime is None:
+                console.print("[dim]No active session to checkpoint.[/]")
+                return
+            path = recovery.save_checkpoint(self._runtime.session)
+            console.print(f"[dim]Checkpoint saved: {path}[/]")
+
+        elif sub in ("list", ""):
+            entries = recovery.list_checkpoints()
+            if not entries:
+                console.print("[dim]No checkpoints found.[/]")
+                return
+            console.print("\n[bold]Checkpoints:[/]")
+            for e in entries:
+                console.print(
+                    f"  [cyan]{e['session_id']}[/]  "
+                    f"{e['saved_at'][:19]}  "
+                    f"({e['message_count']} msgs)  "
+                    f"[dim]{e['project_path']}[/]"
+                )
+            console.print()
+
+        elif sub == "resume":
+            session_id = rest or None
+            if session_id:
+                session = recovery.load_checkpoint(session_id)
+            else:
+                session = recovery.detect_last_checkpoint()
+
+            if session is None:
+                console.print("[red]No checkpoint found to resume.[/]")
+                return
+
+            # Re-initialise the runtime with the restored session
+            self._init_session(existing_session=session)
+            console.print(
+                f"[green]Resumed session {session.id} "
+                f"({len(session.messages)} messages)[/]"
+            )
+
+        else:
+            console.print("[dim]Usage: /checkpoint [save|list|resume [session_id]][/]")
 
     def _handle_task_command(self, args: str) -> None:
         """Handle /task [new|verify <id>|close <id>|list] commands."""
@@ -898,6 +972,40 @@ class LLMCodeCLI:
                 console.print(f"[dim]Close task {task_id} using the task_close tool.[/]")
         else:
             console.print("[dim]Usage: /task [new|verify <id>|close <id>|list][/]")
+
+    def _handle_swarm_command(self, args: str) -> None:
+        """Handle /swarm coordinate <task> commands."""
+        parts = args.strip().split(None, 1)
+        sub = parts[0] if parts else ""
+        rest = parts[1].strip() if len(parts) > 1 else ""
+
+        if sub == "coordinate":
+            if not rest:
+                console.print("[red]Usage: /swarm coordinate <task>[/]")
+                return
+            if not self._swarm_manager:
+                console.print("[red]Swarm not enabled. Set swarm.enabled=true in config.[/]")
+                return
+            if not self._runtime:
+                console.print("[red]No active session.[/]")
+                return
+            console.print(f"[dim]Coordinating task: {rest}[/]")
+            import asyncio as _asyncio
+            from llm_code.swarm.coordinator import Coordinator
+            coordinator = Coordinator(
+                manager=self._swarm_manager,
+                provider=self._runtime._provider,
+                config=self._config,
+            )
+            try:
+                result = _asyncio.run(coordinator.orchestrate(rest))
+            except RuntimeError:
+                import concurrent.futures as _cf
+                with _cf.ThreadPoolExecutor() as pool:
+                    result = pool.submit(_asyncio.run, coordinator.orchestrate(rest)).result()
+            console.print(f"\n[bold]Coordination result:[/]\n{result}\n")
+        else:
+            console.print("[dim]Usage: /swarm coordinate <task>[/]")
 
     def _handle_search_command(self, args: str) -> None:
         """Handle /search <query> — search TextBlock content in conversation history."""

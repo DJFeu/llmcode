@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
+from llm_code.runtime.file_protection import check_write
 from llm_code.tools.base import PermissionLevel, Tool, ToolResult
 
 if TYPE_CHECKING:
@@ -59,6 +60,11 @@ class EditFileTool(Tool):
         new: str = args["new"]
         replace_all: bool = bool(args.get("replace_all", False))
 
+        protection = check_write(str(path))
+        if not protection.allowed:
+            return ToolResult(output=protection.reason, is_error=True)
+        warning_prefix = f"[WARNING] {protection.reason}\n" if protection.severity == "warn" else ""
+
         # Resolve content source: overlay first, then real FS
         if overlay is not None:
             try:
@@ -96,7 +102,7 @@ class EditFileTool(Tool):
         hunks = generate_diff(content, new_content, path.name)
         adds, dels = count_changes(hunks)
 
-        diff_parts = [f"Replaced {replaced} occurrence(s) in {path}"]
+        diff_parts = [warning_prefix + f"Replaced {replaced} occurrence(s) in {path}"]
         for line in old.splitlines()[:5]:
             diff_parts.append(f"- {line}")
         for line in new.splitlines()[:5]:

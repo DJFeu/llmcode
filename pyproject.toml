@@ -42,6 +42,11 @@ voice = ["sounddevice>=0.5"]
 voice-google = ["google-cloud-speech>=2.0"]
 computer-use = ["pyautogui>=0.9", "Pillow>=10.0", "mss>=9.0"]
 ide = ["psutil>=5.9"]
+telemetry = [
+    "opentelemetry-api>=1.20",
+    "opentelemetry-sdk>=1.20",
+    "opentelemetry-exporter-otlp>=1.20",
+]
 docs = ["mkdocs>=1.6", "mkdocs-material>=9.5"]
 dev = [
     "pytest>=8.0",

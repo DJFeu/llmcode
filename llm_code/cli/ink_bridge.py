@@ -528,8 +528,42 @@ class InkBridge:
         elif name == "task":
             await self._handle_task_command(args)
 
+        elif name == "swarm":
+            await self._handle_swarm_command(args)
+
         else:
             await self._send({"type": "message", "text": f"Command /{name} not recognized. Type /help for available commands."})
+
+    async def _handle_swarm_command(self, args: str) -> None:
+        """Handle /swarm coordinate <task> commands."""
+        parts = args.strip().split(None, 1)
+        sub = parts[0] if parts else ""
+        rest = parts[1].strip() if len(parts) > 1 else ""
+
+        if sub == "coordinate":
+            if not rest:
+                await self._send({"type": "error", "message": "Usage: /swarm coordinate <task>"})
+                return
+            if not getattr(self, "_swarm_manager", None):
+                await self._send({"type": "error", "message": "Swarm not enabled. Set swarm.enabled=true in config."})
+                return
+            if not self._runtime:
+                await self._send({"type": "error", "message": "No active session."})
+                return
+            await self._send({"type": "message", "text": f"Coordinating task: {rest}"})
+            from llm_code.swarm.coordinator import Coordinator
+            coordinator = Coordinator(
+                manager=self._swarm_manager,
+                provider=self._runtime._provider,
+                config=self._config,
+            )
+            try:
+                result = await coordinator.orchestrate(rest)
+                await self._send({"type": "message", "text": f"Coordination result:\n{result}"})
+            except Exception as exc:
+                await self._send({"type": "error", "message": f"Coordination failed: {exc}"})
+        else:
+            await self._send({"type": "message", "text": "Usage: /swarm coordinate <task>"})
 
     async def _handle_task_command(self, args: str) -> None:
         """Handle /task [new|verify <id>|close <id>|list] commands."""
@@ -1329,6 +1363,8 @@ class InkBridge:
                 from llm_code.tools.swarm_list import SwarmListTool
                 from llm_code.tools.swarm_message import SwarmMessageTool
                 from llm_code.tools.swarm_delete import SwarmDeleteTool
+                from llm_code.tools.coordinator_tool import CoordinatorTool
+                from llm_code.swarm.coordinator import Coordinator
 
                 swarm_mgr = SwarmManager(
                     swarm_dir=self._cwd / ".llm-code" / "swarm",
@@ -1346,6 +1382,9 @@ class InkBridge:
                         registry.register(tool)
                     except ValueError:
                         pass
+                # Store coordinator classes for lazy registration after runtime init
+                self._coordinator_class = Coordinator
+                self._coordinator_tool_class = CoordinatorTool
         except Exception:
             self._swarm_manager = None
 

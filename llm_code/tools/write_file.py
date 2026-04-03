@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
+from llm_code.runtime.file_protection import check_write
 from llm_code.tools.base import PermissionLevel, Tool, ToolResult
 
 if TYPE_CHECKING:
@@ -49,6 +50,15 @@ class WriteFileTool(Tool):
         path = pathlib.Path(args["path"])
         content: str = args["content"]
 
+        protection = check_write(str(path))
+        if not protection.allowed:
+            return ToolResult(output=protection.reason, is_error=True)
+        if protection.severity == "warn":
+            # Surface the warning in output metadata; execution still proceeds
+            warning_prefix = f"[WARNING] {protection.reason}\n"
+        else:
+            warning_prefix = ""
+
         if overlay is not None:
             # Speculative mode: write to overlay, read old content from overlay/real FS
             old_content: str | None = None
@@ -60,7 +70,7 @@ class WriteFileTool(Tool):
             overlay.write(path, content)
 
             line_count = len(content.splitlines())
-            output = f"Wrote {line_count} lines to {path}"
+            output = warning_prefix + f"Wrote {line_count} lines to {path}"
 
             metadata: dict | None = None
             if old_content is not None and old_content != content:
@@ -86,7 +96,7 @@ class WriteFileTool(Tool):
         path.write_text(content)
 
         line_count = len(content.splitlines())
-        output = f"Wrote {line_count} lines to {path}"
+        output = warning_prefix + f"Wrote {line_count} lines to {path}"
 
         # Generate diff for overwrites
         metadata = None
