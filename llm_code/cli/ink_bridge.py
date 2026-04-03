@@ -293,10 +293,8 @@ class InkBridge:
                 "index": len(items),
             })
 
-        # Send local skills immediately so UI shows something
-        if items:
-            self._current_marketplace = {"type": "skill", "items": list(items)}
-            await self._send({"type": "marketplace_show", "title": f"Skills ({len(items)} installed, loading marketplace...)", "items": items})
+        # Show loading message while fetching marketplace
+        await self._send({"type": "message", "text": "Loading skills marketplace..."})
 
         # Fetch marketplace (npm + ClawHub) with timeout
         try:
@@ -364,10 +362,8 @@ class InkBridge:
         except Exception:
             pass
 
-        # Send installed immediately
-        if items:
-            self._current_marketplace = {"type": "plugin", "items": list(items)}
-            await self._send({"type": "marketplace_show", "title": f"Plugins ({len(items)} installed, loading marketplace...)", "items": items})
+        # Show loading message
+        await self._send({"type": "message", "text": "Loading plugin marketplace..."})
 
         installed_names = {it["name"] for it in items}
 
