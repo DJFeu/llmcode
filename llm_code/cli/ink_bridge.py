@@ -339,8 +339,9 @@ class InkBridge:
             display_items = items[:50]  # Cap to prevent large JSON
             installed_count = sum(1 for i in display_items if i.get("installed"))
             market_count = len(display_items) - installed_count
+            import time as _t
             title = f"Skills ({installed_count} installed + {market_count} available)"
-            await self._send({"type": "marketplace_show", "title": title, "items": display_items})
+            await self._send({"type": "marketplace_show", "title": title, "items": display_items, "ts": _t.time()})
         except Exception as exc:
             await self._send({"type": "error", "message": f"Error: {exc}"})
 

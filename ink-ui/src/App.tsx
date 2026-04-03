@@ -77,7 +77,11 @@ export function App() {
         addEntry({ type: 'help', commands: msg.commands });
         break;
       case 'marketplace_show':
-        setMarketplace({ title: msg.title, items: msg.items });
+        // Force new object reference every time (prevents React skipping re-render)
+        setMarketplace(null);
+        setTimeout(() => {
+          setMarketplace({ title: msg.title, items: msg.items });
+        }, 10);
         break;
       case 'action_show':
         setActionPicker({ name: msg.name, actions: msg.actions });
