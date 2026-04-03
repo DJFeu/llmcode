@@ -297,31 +297,9 @@ class InkBridge:
                 "index": len(items),
             })
 
-        # Fetch marketplace — but always show results even if fetch fails
-        market: list[tuple[str, str]] = []
-        try:
-            market = await asyncio.wait_for(self._fetch_marketplace_skills(), timeout=8.0)
-        except Exception:
-            pass
-
-        installed_names = {s.name for s in all_skills}
-        for pkg_name, desc in market:
-            if pkg_name not in installed_names:
-                items.append({
-                    "name": pkg_name,
-                    "description": desc,
-                    "installed": False,
-                    "index": len(items),
-                })
-
-        # Always send — even if only local skills
+        # Send local skills only (fast, reliable) — use /skill search for marketplace
         self._current_marketplace = {"type": "skill", "items": items}
-        installed_count = sum(1 for i in items if i.get("installed"))
-        market_count = len(items) - installed_count
-        title = f"Skills ({installed_count} installed"
-        if market_count > 0:
-            title += f" + {market_count} available"
-        title += ")"
+        title = f"Skills ({len(items)} installed · /skill search <keyword> for marketplace)"
         await self._send({"type": "marketplace_show", "title": title, "items": items})
 
     async def _show_mcp_marketplace(self) -> None:

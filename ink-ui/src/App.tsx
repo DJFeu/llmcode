@@ -137,6 +137,7 @@ export function App() {
       {isThinking && <ThinkingSpinner />}
       {marketplace && (
         <MarketplaceSelect
+          key={`mp-${Date.now()}`}
           title={marketplace.title}
           items={marketplace.items}
           onSelect={(item) => {
