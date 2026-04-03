@@ -67,9 +67,13 @@ class InkBridge:
     async def _send(self, msg: dict) -> None:
         """Send a JSON message to Ink frontend."""
         if self._ink_process and self._ink_process.stdin:
-            line = json.dumps(msg, ensure_ascii=False) + "\n"
-            self._ink_process.stdin.write(line.encode())
-            await self._ink_process.stdin.drain()
+            try:
+                line = json.dumps(msg, ensure_ascii=False) + "\n"
+                self._ink_process.stdin.write(line.encode())
+                await asyncio.wait_for(self._ink_process.stdin.drain(), timeout=3.0)
+            except Exception as e:
+                import sys
+                print(f"[send error: {e}]", file=sys.stderr)
 
     async def _read_loop(self) -> None:
         """Read messages from Ink frontend and handle them."""
