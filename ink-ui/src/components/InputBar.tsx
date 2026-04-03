@@ -50,8 +50,14 @@ export function InputBar({ onSubmit, disabled }: InputBarProps) {
       } else if (key.upArrow) {
         setSelectedHint(s => Math.max(s - 1, 0));
       } else if (key.tab) {
-        // Tab complete
+        // Tab: fill the suggestion into input
         setValue(suggestions[selectedHint].cmd + ' ');
+        setSelectedHint(0);
+      } else if (key.return && selectedHint >= 0) {
+        // Enter on suggestion: submit the selected command directly
+        const cmd = suggestions[selectedHint].cmd.trim();
+        onSubmit(cmd);
+        setValue('');
         setSelectedHint(0);
       }
     }
@@ -63,7 +69,13 @@ export function InputBar({ onSubmit, disabled }: InputBarProps) {
   };
 
   const handleSubmit = (text: string) => {
-    if (text.trim()) {
+    if (suggestions.length > 0) {
+      // If suggestions visible, submit the highlighted one
+      const cmd = suggestions[selectedHint].cmd.trim();
+      onSubmit(cmd);
+      setValue('');
+      setSelectedHint(0);
+    } else if (text.trim()) {
       onSubmit(text.trim());
       setValue('');
       setSelectedHint(0);
