@@ -15,16 +15,10 @@ class TokyoTravelScraper:
         }
     
     def get_weather(self, city: str = "Tokyo") -> Optional[Dict]:
-        """獲取天氣資訊（使用 OpenWeatherMap API）"""
-        # 需要 API key，這裡示範結構
-        api_key = "YOUR_OPENWEATHER_API_KEY"
-        url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric&lang=zh_tw"
-        try:
-            resp = requests.get(url, headers=self.headers, timeout=10)
-            if resp.status_code == 200:
-                return resp.json()
-        except Exception as e:
-            print(f"天氣 API 錯誤: {e}")
+        """獲取天氣資訊（需要 OpenWeatherMap API key）"""
+        # 需要 API key，這裡僅提供結構範例
+        # 請到 https://openweathermap.org/api 申請免費 API key
+        print(f"天氣查詢需要 OpenWeatherMap API key，請自行申請後加入程式")
         return None
     
     def get_spot_info(self, spot_name: str) -> Dict:
