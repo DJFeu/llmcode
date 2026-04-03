@@ -495,7 +495,7 @@ class InkBridge:
                     _, stderr = await proc.communicate()
                     if proc.returncode == 0:
                         await self._send({"type": "message", "text": f"Skill '{item['name']}' installed."})
-                        self._init_session()  # Reload skills
+                        self._reload_skills()  # Reload skills
                     else:
                         await self._send({"type": "error", "message": f"Install failed: {stderr.decode()[:200]}"})
                 except Exception as exc:
@@ -509,7 +509,7 @@ class InkBridge:
                     pi = PluginInstaller(plugin_dir)
                     await asyncio.get_event_loop().run_in_executor(None, pi.install, item["name"])
                     await self._send({"type": "message", "text": f"Plugin '{item['name']}' installed."})
-                    self._init_session()
+                    self._reload_skills()
                 except Exception as exc:
                     await self._send({"type": "error", "message": f"Plugin install failed: {exc}"})
 
@@ -534,7 +534,7 @@ class InkBridge:
                 if skill_dir.is_dir():
                     shutil.rmtree(skill_dir)
                     await self._send({"type": "message", "text": f"✓ Removed skill '{name}'"})
-                    self._init_session()  # Reload skills
+                    self._reload_skills()  # Reload skills
                 else:
                     await self._send({"type": "message", "text": f"Skill '{name}' not found on disk."})
             elif market_type == "plugin":
@@ -543,7 +543,7 @@ class InkBridge:
                     pi = PluginInstaller(Path.home() / ".llm-code" / "plugins")
                     pi.uninstall(name)
                     await self._send({"type": "message", "text": f"✓ Removed plugin '{name}'"})
-                    self._init_session()
+                    self._reload_skills()
                 except Exception as exc:
                     await self._send({"type": "error", "message": f"Remove failed: {exc}"})
 
@@ -554,7 +554,7 @@ class InkBridge:
                 marker.parent.mkdir(parents=True, exist_ok=True)
                 marker.touch()
                 await self._send({"type": "message", "text": f"Disabled skill '{name}'"})
-                self._init_session()
+                self._reload_skills()
             elif market_type == "plugin":
                 try:
                     from llm_code.marketplace.installer import PluginInstaller
@@ -757,3 +757,24 @@ class InkBridge:
         if ink_dir.is_dir():
             return ink_dir
         raise FileNotFoundError("ink-ui/ directory not found. Run 'cd ink-ui && npm install' first.")
+
+    def _reload_skills(self) -> None:
+        """Lightweight reload of skills only — does not rebuild runtime."""
+        try:
+            from llm_code.runtime.skills import SkillLoader
+            from llm_code.marketplace.installer import PluginInstaller
+            skill_dirs = [
+                Path.home() / ".llm-code" / "skills",
+                self._cwd / ".llm-code" / "skills",
+            ]
+            plugin_dir = Path.home() / ".llm-code" / "plugins"
+            if plugin_dir.is_dir():
+                pi = PluginInstaller(plugin_dir)
+                for p in pi.list_installed():
+                    if p.enabled:
+                        direct = p.path / "skills"
+                        if direct.is_dir():
+                            skill_dirs.append(direct)
+            self._skills = SkillLoader().load_from_dirs(skill_dirs)
+        except Exception:
+            pass
