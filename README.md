@@ -2,7 +2,7 @@
 
 <p align="center">
   <strong>Open-source CLI coding agent for any LLM</strong><br>
-  Claude Code-level developer experience — with the model of your choice
+  Production-grade agent runtime with Claude Code-level architecture — your model, your hardware
 </p>
 
 <p align="center">
@@ -18,6 +18,8 @@
 ## What is llm-code?
 
 A production-grade terminal coding agent that works with **any LLM** — local models (Qwen, Llama, Mistral via vLLM/Ollama) or cloud APIs (OpenAI, Anthropic, xAI, DeepSeek). Free or paid, your choice.
+
+Not just a CLI tool — a full **AI Agent Runtime** with ReAct loop engine, multi-layer memory, speculative execution, 7-layer error recovery, and multi-agent orchestration.
 
 ```
   +------------------+  +--------------------------------------+
@@ -44,7 +46,17 @@ A production-grade terminal coding agent that works with **any LLM** — local m
 - **Zero cost with local models** — run Qwen, Llama, or any open-weight model on your own hardware
 - **Cloud APIs** — switch to GPT-4o, Claude, or Grok with a config change
 - **Model aliases** — short names like `qwen`, `gpt`, `opus` resolve automatically
-- **Model routing** — use different models for sub-agents and compaction
+- **Model routing** — different models for sub-agents, compaction, and fallback
+
+### Agent Runtime Engine
+
+- **ReAct 5-stage loop** — context prep, streaming, tool exec, attachment collection, continue/stop
+- **Speculative execution** — copy-on-write overlay pre-executes writes before user confirms
+- **7-layer error recovery** — API retry, 529 overload, tool fallback, reactive compact, token auto-upgrade, context drain, model fallback
+- **4-level context compression** — snip, microcompact, autocompact, reactive (progressive)
+- **Prompt cache splitting** — static/dynamic separation maximizes cache hits
+- **Tool deferred loading** — core tools always visible, others discoverable via `tool_search` when >20
+- **HIDA dynamic context** — classifies task type (10 categories), loads only relevant tools/memory/rules
 
 ### Rich Terminal UI
 
@@ -54,6 +66,7 @@ A production-grade terminal coding agent that works with **any LLM** — local m
 - **Diff visualization** — syntax-highlighted diffs on every file change
 - **Search highlight** — `/search` or Ctrl+F to find text across conversation history
 - **Clickable links** — URLs auto-detected and wrapped with OSC8 hyperlinks
+- **Voice input** — hold-to-talk STT with Whisper/Google/Anthropic backends
 - **Lightweight mode** — `--lite` for a print-based CLI (no Node.js required)
 
 ### Agent Capabilities
@@ -64,30 +77,35 @@ A production-grade terminal coding agent that works with **any LLM** — local m
 - **Extended thinking** — adaptive/enabled/disabled modes with visual thinking panel
 - **Notebook support** — read and edit Jupyter `.ipynb` files directly
 - **Computer use** — screenshot, mouse click, keyboard type for GUI automation
-- **Context compression** — 4-level progressive compaction keeps long sessions efficient
+- **Task lifecycle** — PLAN -> DO -> VERIFY -> CLOSE state machine with cross-session persistence
 - **Token budget** — `--budget` to control token spending per session
 - **Cost tracking** — per-model pricing with custom config
 
 ### Multi-Agent Collaboration
 
 - **Team/Swarm** — spawn multiple agents in parallel via `/swarm create <role> <task>`
+- **Coordinator** — auto-decompose complex tasks and dispatch to workers via `/swarm coordinate`
 - **tmux integration** — each agent runs in its own tmux pane (subprocess fallback)
 - **Mailbox system** — agents communicate via file-based message passing
 - **Shared memory** — all agents read/write the same project memory with file locking
 - **Built-in roles** — coder, reviewer, researcher, tester (or custom)
 
-### Smart Safety
+### Defense-in-Depth Security
 
+- **Bash 20-point security** — injection, newline attack, interpreter blacklist, credential protection, and more
+- **File protection** — sensitive files (.env, SSH keys, credentials) blocked or warned on read/write
+- **Sandbox detection** — Docker/container awareness with path restrictions
 - **Input-aware permissions** — `bash ls` auto-approved, `rm -rf` needs confirmation
 - **Permission modes** — read_only, workspace_write, full_access, prompt, auto_accept
-- **Hook system** — pre/post tool-use hooks for auto-formatting, linting, validation
+- **Hook system** — 6 types, 24 events with glob matching and per-hook timeout/error handling
 - **Git checkpoint** — auto-checkpoint before writes, `/undo` to restore
 
 ### Memory & Sessions
 
-- **Cross-session memory** — persistent key-value store per project
+- **5-layer memory** — L0 governance (always loaded), L1 working, L2 project, L3 task, L4 summary
 - **DreamTask** — auto-consolidates session knowledge on exit into long-term memory
-- **Session persistence** — save, list, and switch sessions
+- **Checkpoint recovery** — auto-save every 60s, `--resume` to restore full conversation state
+- **Task lifecycle memory** — PLAN/DO/VERIFY/CLOSE states persist across sessions
 - **VCR recording** — record structured event streams for debugging and replay
 - **Cron scheduling** — schedule recurring agent tasks with standard cron expressions
 
@@ -98,6 +116,13 @@ A production-grade terminal coding agent that works with **any LLM** — local m
 - **Diagnostics** — read lint/error info from connected IDE
 - **Selection** — get currently selected code from IDE
 - **Auto-detection** — detects running VSCode, JetBrains, Neovim, Sublime
+
+### Observability
+
+- **OpenTelemetry** — optional tracing for turns and tool executions
+- **VCR replay** — `--replay` for offline event stream analysis
+- **Cost tracking** — per-model pricing with session totals
+- **Structured logging** — configurable log levels
 
 ### Remote Execution
 
@@ -178,6 +203,7 @@ llm-code
 pip install llm-code[voice]          # Voice input (sounddevice)
 pip install llm-code[computer-use]   # GUI automation (pyautogui, Pillow)
 pip install llm-code[ide]            # IDE integration (psutil)
+pip install llm-code[telemetry]      # OpenTelemetry tracing
 ```
 
 ### Modes
@@ -189,6 +215,7 @@ llm-code --serve --port 8765   # Remote server
 llm-code --connect host:8765   # Remote client
 llm-code --ssh user@host       # SSH tunnel + connect
 llm-code --replay <file>       # Replay a VCR recording
+llm-code --resume              # Resume from last checkpoint
 ```
 
 ## Configuration
@@ -222,12 +249,10 @@ llm-code --replay <file>       # Replay a VCR recording
   },
   "model_routing": {
     "sub_agent": "qwen3.5-32b",
-    "compaction": "qwen3.5-7b"
+    "compaction": "qwen3.5-7b",
+    "fallback": "qwen3.5-7b"
   },
-  "thinking": {
-    "mode": "adaptive",
-    "budget_tokens": 10000
-  },
+  "thinking": { "mode": "adaptive", "budget_tokens": 10000 },
   "vim_mode": false,
   "voice": {
     "enabled": false,
@@ -240,6 +265,8 @@ llm-code --replay <file>       # Replay a VCR recording
   "swarm": { "enabled": false, "backend": "auto", "max_members": 5 },
   "dream": { "enabled": true, "min_turns": 3 },
   "vcr": { "enabled": false, "auto_record": false },
+  "hida": { "enabled": true, "confidence_threshold": 0.5 },
+  "telemetry": { "enabled": false, "endpoint": "http://localhost:4318" },
   "hooks": [
     {"event": "post_tool_use", "tool_pattern": "write_file|edit_file", "command": "ruff format {path}"}
   ],
@@ -258,6 +285,7 @@ llm-code --replay <file>       # Replay a VCR recording
 | `/model <name>` | Switch model |
 | `/memory` | Project memory |
 | `/memory consolidate` | Consolidate session into long-term memory |
+| `/memory history` | View consolidation history |
 | `/undo` | Undo last file change |
 | `/cost` | Token usage + cost |
 | `/budget <n>` | Set token budget |
@@ -265,10 +293,13 @@ llm-code --replay <file>       # Replay a VCR recording
 | `/vim` | Toggle vim mode |
 | `/voice` | Toggle voice input |
 | `/search <query>` | Search conversation history |
-| `/swarm` | List/create/stop agent swarm members |
+| `/task` | Task lifecycle management |
+| `/swarm` | List/create/stop/coordinate agent swarm |
 | `/cron` | List/add/delete scheduled tasks |
 | `/vcr` | Start/stop/list session recordings |
+| `/checkpoint` | Save/list/resume session checkpoints |
 | `/ide` | IDE connection status |
+| `/hida` | Show HIDA task classification |
 | `/clear` | Clear conversation |
 | `/session save` | Save session |
 | `/index` | Project index |
@@ -280,8 +311,10 @@ llm-code --replay <file>       # Replay a VCR recording
 ```
 llm_code/
 ├── api/            # Provider abstraction (OpenAI-compat + Anthropic)
-├── tools/          # Builtin tools + agent + parsing
-├── runtime/        # Conversation engine, permissions, hooks, session, memory, dream, VCR
+├── tools/          # Builtin tools + agent + deferred loading + parsing
+├── runtime/        # ReAct engine, permissions, hooks, compression, memory layers,
+│                   # dream, VCR, checkpoint, speculative exec, telemetry, HIDA
+├── task/           # Task lifecycle (PLAN/DO/VERIFY/CLOSE state machine)
 ├── mcp/            # MCP client (stdio/HTTP/SSE/WebSocket) + OAuth
 ├── marketplace/    # Plugin system, registries, ClawHub integration
 ├── lsp/            # LSP client, auto-detector
@@ -291,18 +324,27 @@ llm_code/
 ├── computer_use/   # GUI automation (screenshot, mouse, keyboard)
 ├── cron/           # Task scheduling (cron parser, storage, async scheduler)
 ├── ide/            # IDE integration (WebSocket server, bridge, detector)
-├── swarm/          # Multi-agent collaboration (manager, backends, mailbox)
+├── hida/           # Dynamic context loading (classifier, profiles, engine)
+├── swarm/          # Multi-agent (manager, coordinator, backends, mailbox)
 ├── utils/          # Notebook parser, diff engine, hyperlinks, search
 ├── cli/            # Print-based CLI + Ink bridge
 ink-ui/             # React+Ink frontend (TypeScript)
 ```
 
+### Engine Layers
+
 ```
-cli -> runtime -> {tools, api}
+cli -> runtime (ReAct loop + 7-layer recovery + speculative exec)
+          |
+       tools (20-point bash security + file protection + deferred loading)
+          |
+       api (prompt cache split + streaming + model fallback)
           |
     mcp / lsp / marketplace / remote
           |
-    vim / voice / computer_use / cron / ide / swarm
+    memory (5 layers) / task lifecycle / HIDA / telemetry
+          |
+    vim / voice / computer_use / cron / ide / swarm + coordinator
 ```
 
 ## Development
