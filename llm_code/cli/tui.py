@@ -16,6 +16,7 @@ from llm_code.api.client import ProviderClient
 from llm_code.api.types import (
     StreamMessageStop,
     StreamTextDelta,
+    StreamThinkingDelta,
     StreamToolExecResult,
     StreamToolExecStart,
     StreamToolProgress,
@@ -382,6 +383,22 @@ class LLMCodeCLI:
             except ValueError:
                 pass
 
+        # Register cron tools
+        try:
+            from llm_code.cron.storage import CronStorage
+            from llm_code.tools.cron_create import CronCreateTool
+            from llm_code.tools.cron_list import CronListTool
+            from llm_code.tools.cron_delete import CronDeleteTool
+            cron_storage = CronStorage(self._cwd / ".llm-code" / "scheduled_tasks.json")
+            self._cron_storage = cron_storage
+            for tool in (CronCreateTool(cron_storage), CronListTool(cron_storage), CronDeleteTool(cron_storage)):
+                try:
+                    self._tool_reg.register(tool)
+                except ValueError:
+                    pass
+        except Exception:
+            self._cron_storage = None
+
     # ── Display Helpers ─────────────────────────────────────────────
 
     def _flush_text(self) -> None:
@@ -688,8 +705,76 @@ class LLMCodeCLI:
         elif name == "lsp":
             console.print("[dim]LSP: not started in this session.[/]")
 
+        elif name == "thinking":
+            mode_map = {"on": "enabled", "off": "disabled", "adaptive": "adaptive"}
+            if args in mode_map:
+                new_mode = mode_map[args]
+                from llm_code.runtime.config import ThinkingConfig
+                new_thinking = ThinkingConfig(mode=new_mode, budget_tokens=self._config.thinking.budget_tokens)
+                self._config = dataclasses.replace(self._config, thinking=new_thinking)
+                if self._runtime:
+                    self._runtime._config = self._config
+                console.print(f"[dim]Thinking mode: {new_mode}[/]")
+            else:
+                current = self._config.thinking.mode
+                budget = self._config.thinking.budget_tokens
+                console.print(f"[dim]Thinking: {current} (budget: {budget} tokens)\nUsage: /thinking [adaptive|on|off][/]")
+
+        elif name == "cron":
+            self._handle_cron_command(args)
+
+        elif name == "vim":
+            self._vim_enabled = not getattr(self, "_vim_enabled", self._config.vim_mode)
+            status = "enabled" if self._vim_enabled else "disabled"
+            console.print(f"[dim]Vim mode {status}[/]")
+
         else:
             console.print(f"[red]Unknown command: /{name} -- type /help for help[/]")
+
+    def _handle_cron_command(self, args: str) -> None:
+        """Handle /cron [list|add|delete <id>] commands."""
+        cron_storage = getattr(self, "_cron_storage", None)
+        if cron_storage is None:
+            console.print("[red]Cron storage not initialized.[/]")
+            return
+
+        sub = args.strip() if args else "list"
+
+        if not sub or sub == "list":
+            tasks = cron_storage.list_all()
+            if not tasks:
+                console.print("[dim]No scheduled tasks.[/]")
+            else:
+                console.print(f"[bold]Scheduled tasks ({len(tasks)}):[/]")
+                for t in tasks:
+                    flags = []
+                    if t.recurring:
+                        flags.append("recurring")
+                    if t.permanent:
+                        flags.append("permanent")
+                    flag_str = f" [{', '.join(flags)}]" if flags else ""
+                    fired = f", last fired: {t.last_fired_at:%Y-%m-%d %H:%M}" if t.last_fired_at else ""
+                    console.print(f"  [cyan]{t.id}[/]  [yellow]{t.cron}[/]  \"{t.prompt}\"{flag_str}{fired}")
+
+        elif sub.startswith("delete "):
+            task_id = sub.split(None, 1)[1].strip()
+            removed = cron_storage.remove(task_id)
+            if removed:
+                console.print(f"[green]Deleted task {task_id}[/]")
+            else:
+                console.print(f"[red]Task '{task_id}' not found[/]")
+
+        elif sub == "add":
+            console.print(
+                "Use the cron_create tool to schedule a task:\n"
+                "  cron: '0 9 * * *'  (5-field cron expression)\n"
+                "  prompt: 'your prompt here'\n"
+                "  recurring: true/false\n"
+                "  permanent: true/false"
+            )
+
+        else:
+            console.print("[dim]Usage: /cron [list|add|delete <id>][/]")
 
     # ── Marketplace Handlers ─────────────────────────────────────────
 
@@ -1018,6 +1103,7 @@ class LLMCodeCLI:
         in_tool_call_tag = False
         in_think_tag = False
         tool_tag_buffer = ""
+        thinking_buffer = ""
 
         status = console.status("[blue]⠋ Thinking…[/]", spinner="dots")
         status.start()
@@ -1067,6 +1153,9 @@ class LLMCodeCLI:
                             ):
                                 self._flush_text()
 
+                elif isinstance(event, StreamThinkingDelta):
+                    thinking_buffer += event.text
+
                 elif isinstance(event, StreamToolExecStart):
                     if not first_token:
                         first_token = True
@@ -1111,6 +1200,17 @@ class LLMCodeCLI:
             self._text_buffer += tool_tag_buffer
         self._flush_text()
 
+        # Render thinking content as dim panel (if any)
+        if thinking_buffer:
+            from rich.panel import Panel
+            console.print(Panel(
+                thinking_buffer[:2000] + ("…" if len(thinking_buffer) > 2000 else ""),
+                title="[dim italic]∴ Thinking[/]",
+                border_style="dim",
+                style="dim italic",
+                expand=False,
+            ))
+
         # Turn summary
         elapsed = time.monotonic() - start
         time_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{elapsed / 60:.1f}m"
@@ -1131,6 +1231,9 @@ class LLMCodeCLI:
 
         self._render_welcome()
         self._init_session()
+
+        # Initialize vim mode from config
+        self._vim_enabled = getattr(self, "_vim_enabled", self._config.vim_mode)
 
         bindings = KeyBindings()
 
@@ -1171,14 +1274,18 @@ class LLMCodeCLI:
             "/memory", "/memory get", "/memory set", "/memory delete",
             "/session list", "/session save", "/session switch",
             "/undo", "/undo list", "/index", "/index rebuild",
-            "/image", "/cost", "/budget", "/cd", "/lsp", "/exit",
+            "/image", "/cost", "/budget", "/cd", "/lsp", "/vim", "/exit",
         ]
+
+        from prompt_toolkit.enums import EditingMode
+        editing_mode = EditingMode.VI if self._vim_enabled else EditingMode.EMACS
 
         session = PromptSession(
             history=FileHistory(str(history_path)),
             auto_suggest=AutoSuggestFromHistory(),
             completer=WordCompleter(SLASH_COMMANDS, sentence=True),
             key_bindings=bindings,
+            editing_mode=editing_mode,
         )
 
         while True:

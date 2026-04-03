@@ -22,6 +22,9 @@ KNOWN_COMMANDS = frozenset({
     "lsp",
     "mcp",
     "budget",
+    "thinking",
+    "cron",
+    "vim",
 })
 
 

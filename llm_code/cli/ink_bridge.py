@@ -51,6 +51,21 @@ class InkBridge:
         # Initialize backend
         self._init_session()
 
+        # Start cron scheduler
+        self._cron_scheduler_task = None
+        if getattr(self, "_cron_storage", None) is not None:
+            try:
+                from llm_code.cron.scheduler import CronScheduler
+
+                async def _on_cron_fire(prompt: str) -> None:
+                    await self._run_turn(prompt)
+
+                lock_path = self._cwd / ".llm-code" / "cron.lock"
+                self._cron_scheduler = CronScheduler(self._cron_storage, lock_path, _on_cron_fire)
+                self._cron_scheduler_task = asyncio.create_task(self._cron_scheduler.start())
+            except Exception:
+                pass
+
         # Send welcome
         branch = self._detect_git_branch()
         await self._send({
@@ -64,6 +79,14 @@ class InkBridge:
 
         # Start reading from Ink frontend
         await self._read_loop()
+
+        # Stop cron scheduler on exit
+        if getattr(self, "_cron_scheduler_task", None) is not None:
+            try:
+                self._cron_scheduler.stop()
+                self._cron_scheduler_task.cancel()
+            except Exception:
+                pass
 
         # On exit: auto-save session + generate summary
         await self._auto_save_on_exit()
@@ -159,7 +182,7 @@ class InkBridge:
         await self._send({"type": "thinking_start"})
 
         from llm_code.api.types import (
-            StreamTextDelta, StreamToolExecStart, StreamToolExecResult,
+            StreamTextDelta, StreamThinkingDelta, StreamToolExecStart, StreamToolExecResult,
             StreamToolProgress, StreamMessageStop,
         )
 
@@ -208,6 +231,9 @@ class InkBridge:
                             await self._send({"type": "text_delta", "text": text_buffer})
                             text_buffer = ""
 
+                elif isinstance(event, StreamThinkingDelta):
+                    await self._send({"type": "thinking_delta", "text": event.text})
+
                 elif isinstance(event, StreamToolExecStart):
                     # Flush any pending text
                     if text_buffer:
@@ -217,12 +243,19 @@ class InkBridge:
                     await self._send({"type": "tool_start", "name": event.tool_name, "detail": event.args_summary})
 
                 elif isinstance(event, StreamToolExecResult):
-                    await self._send({
+                    msg = {
                         "type": "tool_result",
                         "name": event.tool_name,
                         "output": event.output[:500],
                         "isError": event.is_error,
-                    })
+                    }
+                    if event.metadata and "diff" in event.metadata:
+                        msg["diff"] = {
+                            "hunks": event.metadata["diff"],
+                            "additions": event.metadata.get("additions", 0),
+                            "deletions": event.metadata.get("deletions", 0),
+                        }
+                    await self._send(msg)
 
                 elif isinstance(event, StreamToolProgress):
                     await self._send({"type": "tool_progress", "name": event.tool_name, "message": event.message})
@@ -367,14 +400,101 @@ class InkBridge:
         elif name == "plugin":
             await self._show_plugin_marketplace()
 
+        elif name == "thinking":
+            mode_map = {"on": "enabled", "off": "disabled", "adaptive": "adaptive"}
+            if args in mode_map:
+                new_mode = mode_map[args]
+                from llm_code.runtime.config import ThinkingConfig
+                import dataclasses as _dc
+                new_thinking = ThinkingConfig(mode=new_mode, budget_tokens=self._config.thinking.budget_tokens)
+                self._config = _dc.replace(self._config, thinking=new_thinking)
+                if self._runtime:
+                    self._runtime._config = self._config
+                await self._send({"type": "message", "text": f"Thinking mode: {new_mode}", "style": "info"})
+            else:
+                current = self._config.thinking.mode
+                budget = self._config.thinking.budget_tokens
+                await self._send({
+                    "type": "message",
+                    "text": f"Thinking: {current} (budget: {budget} tokens)\nUsage: /thinking [adaptive|on|off]",
+                    "style": "info",
+                })
+
         elif name == "cancel":
             # Cancel current generation
             # TODO: implement actual cancellation
             await self._send({"type": "thinking_stop", "elapsed": 0, "tokens": 0})
             await self._send({"type": "message", "text": "(cancelled)"})
 
+        elif name == "cron":
+            await self._handle_cron_command(args)
+
         else:
             await self._send({"type": "message", "text": f"Command /{name} not recognized. Type /help for available commands."})
+
+    async def _handle_cron_command(self, args: str) -> None:
+        """Handle /cron [list|add|delete <id>] commands."""
+        cron_storage = getattr(self, "_cron_storage", None)
+        if cron_storage is None:
+            await self._send({"type": "error", "message": "Cron storage not initialized."})
+            return
+
+        sub = args.strip() if args else "list"
+
+        if not sub or sub == "list":
+            tasks = cron_storage.list_all()
+            await self._send({
+                "type": "cron_list",
+                "tasks": [
+                    {
+                        "id": t.id,
+                        "cron": t.cron,
+                        "prompt": t.prompt,
+                        "recurring": t.recurring,
+                        "permanent": t.permanent,
+                        "created_at": t.created_at.strftime("%Y-%m-%d %H:%M"),
+                        "last_fired_at": t.last_fired_at.strftime("%Y-%m-%d %H:%M") if t.last_fired_at else None,
+                    }
+                    for t in tasks
+                ],
+            })
+            if not tasks:
+                await self._send({"type": "message", "text": "No scheduled tasks."})
+            else:
+                lines = [f"Scheduled tasks ({len(tasks)}):"]
+                for t in tasks:
+                    flags = []
+                    if t.recurring:
+                        flags.append("recurring")
+                    if t.permanent:
+                        flags.append("permanent")
+                    flag_str = f" [{', '.join(flags)}]" if flags else ""
+                    fired = f", last fired: {t.last_fired_at:%Y-%m-%d %H:%M}" if t.last_fired_at else ""
+                    lines.append(f"  {t.id}  {t.cron}  \"{t.prompt}\"{flag_str}{fired}")
+                await self._send({"type": "message", "text": "\n".join(lines)})
+
+        elif sub.startswith("delete "):
+            task_id = sub.split(None, 1)[1].strip()
+            removed = cron_storage.remove(task_id)
+            if removed:
+                await self._send({"type": "message", "text": f"Deleted task {task_id}"})
+            else:
+                await self._send({"type": "error", "message": f"Task '{task_id}' not found"})
+
+        elif sub == "add":
+            await self._send({
+                "type": "message",
+                "text": (
+                    "Use the cron_create tool to schedule a task:\n"
+                    "  cron: '0 9 * * *'  (5-field cron expression)\n"
+                    "  prompt: 'your prompt here'\n"
+                    "  recurring: true/false\n"
+                    "  permanent: true/false"
+                ),
+            })
+
+        else:
+            await self._send({"type": "message", "text": "Usage: /cron [list|add|delete <id>]"})
 
     async def _show_skill_marketplace(self) -> None:
         """Show skills as text + numbered list for selection."""
@@ -915,6 +1035,22 @@ class InkBridge:
                         pass
             except Exception:
                 pass
+
+        # Register cron tools
+        try:
+            from llm_code.cron.storage import CronStorage
+            from llm_code.tools.cron_create import CronCreateTool
+            from llm_code.tools.cron_list import CronListTool
+            from llm_code.tools.cron_delete import CronDeleteTool
+            cron_storage = CronStorage(self._cwd / ".llm-code" / "scheduled_tasks.json")
+            self._cron_storage = cron_storage
+            for tool in (CronCreateTool(cron_storage), CronListTool(cron_storage), CronDeleteTool(cron_storage)):
+                try:
+                    registry.register(tool)
+                except ValueError:
+                    pass
+        except Exception:
+            self._cron_storage = None
 
         # Store checkpoint manager
         self._checkpoint_mgr = checkpoint_mgr
