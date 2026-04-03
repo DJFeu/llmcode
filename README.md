@@ -20,20 +20,20 @@
 A production-grade terminal coding agent that works with **any LLM** — local (Qwen, Llama, Mistral via vLLM/Ollama) or cloud (OpenAI, Anthropic, xAI, DeepSeek). One tool, any model.
 
 ```
-  ╭──────────────────╮  ╭─────────────────────────────────────╮
-  │                  │  │ Local LLM Agent                     │
-  │    LLM  CODE     │  │ ─────────────────────────────────── │
-  │                  │  │ Model        qwen3.5-122b           │
-  ╰──────────────────╯  │ Workspace    my-project · main      │
-                        │ Directory    ~/my-project            │
-                        │ Permissions  prompt                  │
-                        │                                     │
-                        │ Quick start  /help · /skill · /mcp  │
-                        │ Multiline    Shift+Enter             │
-                        │ Images       Cmd+V pastes            │
-                        │ ─────────────────────────────────── │
-                        │ Ready                               │
-                        ╰─────────────────────────────────────╯
+  ╭──────────────────╮  ╭────────────────────────────────────╮
+  │                  │  │ Local LLM Agent                    │
+  │    LLM  CODE     │  │ ────────────────────────────────── │
+  │                  │  │ Model        qwen3.5-122b          │
+  ╰──────────────────╯  │ Workspace    my-project · main     │
+                        │ Directory    ~/my-project           │
+                        │ Permissions  prompt                 │
+                        │                                    │
+                        │ Quick start  /help · /skill · /mcp │
+                        │ Multiline    Shift+Enter            │
+                        │ Images       Cmd+V pastes           │
+                        │ ────────────────────────────────── │
+                        │ Ready                              │
+                        ╰────────────────────────────────────╯
 ```
 
 ## Quick Start
