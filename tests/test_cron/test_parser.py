@@ -5,7 +5,7 @@ import datetime
 
 import pytest
 
-from llm_code.cron.parser import CronExpression, parse_cron, next_fire_time
+from llm_code.cron.parser import parse_cron, next_fire_time
 
 
 class TestParseCron:

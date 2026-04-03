@@ -124,3 +124,10 @@ class StreamToolExecResult(StreamEvent):
     tool_name: str
     output: str
     is_error: bool = False
+    metadata: dict | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class StreamThinkingDelta(StreamEvent):
+    """Emitted when the model produces a thinking/reasoning token."""
+    text: str

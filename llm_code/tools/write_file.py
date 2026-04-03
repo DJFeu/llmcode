@@ -45,8 +45,28 @@ class WriteFileTool(Tool):
         path = pathlib.Path(args["path"])
         content: str = args["content"]
 
+        # Capture old content if overwriting
+        old_content: str | None = None
+        if path.exists():
+            old_content = path.read_text()
+
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content)
 
         line_count = len(content.splitlines())
-        return ToolResult(output=f"Wrote {line_count} lines to {path}")
+        output = f"Wrote {line_count} lines to {path}"
+
+        # Generate diff for overwrites
+        metadata: dict | None = None
+        if old_content is not None and old_content != content:
+            from llm_code.utils.diff import generate_diff, count_changes
+
+            hunks = generate_diff(old_content, content, path.name)
+            adds, dels = count_changes(hunks)
+            metadata = {
+                "diff": [h.to_dict() for h in hunks],
+                "additions": adds,
+                "deletions": dels,
+            }
+
+        return ToolResult(output=output, metadata=metadata)

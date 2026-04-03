@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Text } from 'ink';
+import { DiffPanel } from './DiffPanel.js';
 
 export interface ChatEntry {
   type: 'user' | 'assistant' | 'tool_start' | 'tool_result' | 'status' | 'info' | 'error' | 'help';
@@ -10,6 +11,7 @@ export interface ChatEntry {
   isError?: boolean;
   style?: string;
   commands?: Array<{cmd: string; desc: string}>;
+  diff?: import('../protocol.js').DiffData;
 }
 
 interface ChatLogProps {
@@ -60,6 +62,18 @@ function ChatEntryView({ entry }: { entry: ChatEntry }) {
       if (entry.isError) {
         return <Text color="red">  ✗ {entry.output?.slice(0, 150)}</Text>;
       }
+
+      // If diff data present, render DiffPanel
+      if (entry.diff && entry.diff.hunks.length > 0) {
+        return (
+          <Box flexDirection="column">
+            <Text><Text color="green">  ✓</Text> <Text dimColor>{entry.output?.split('\n')[0]?.slice(0, 150)}</Text></Text>
+            <DiffPanel filename={entry.name || 'file'} diff={entry.diff} />
+          </Box>
+        );
+      }
+
+      // Fallback: original behavior
       const lines = entry.output?.split('\n').slice(0, 5) || [];
       return (
         <Box flexDirection="column">

@@ -1,7 +1,6 @@
 """Integration tests for the cron scheduling feature."""
 from __future__ import annotations
 
-import asyncio
 import datetime
 
 import pytest

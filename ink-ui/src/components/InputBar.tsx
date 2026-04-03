@@ -1,6 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
+import { VimEngine } from '../vim/index.js';
+import type { VimMode } from '../vim/types.js';
 
 const SLASH_COMMANDS = [
   { cmd: '/help', desc: 'Show commands' },
@@ -24,17 +26,22 @@ const SLASH_COMMANDS = [
   { cmd: '/cost', desc: 'Token usage' },
   { cmd: '/budget', desc: 'Set token budget' },
   { cmd: '/cd', desc: 'Change directory' },
+  { cmd: '/vim', desc: 'Toggle vim mode' },
   { cmd: '/exit', desc: 'Quit' },
 ];
 
 interface InputBarProps {
   onSubmit: (text: string) => void;
   disabled: boolean;
+  vimEnabled?: boolean;
+  onVimModeChange?: (mode: VimMode) => void;
 }
 
-export function InputBar({ onSubmit, disabled }: InputBarProps) {
+export function InputBar({ onSubmit, disabled, vimEnabled, onVimModeChange }: InputBarProps) {
   const [value, setValue] = useState('');
   const [selectedHint, setSelectedHint] = useState(0);
+  const engineRef = useRef<VimEngine>(new VimEngine(''));
+  const [vimMode, setVimMode] = useState<VimMode>('insert');
 
   const suggestions = useMemo(() => {
     if (!value.startsWith('/') || value.includes(' ') && !value.startsWith('/skill ') && !value.startsWith('/mcp ') && !value.startsWith('/plugin ') && !value.startsWith('/memory ') && !value.startsWith('/session ')) {
@@ -44,17 +51,43 @@ export function InputBar({ onSubmit, disabled }: InputBarProps) {
   }, [value]);
 
   useInput((input, key) => {
+    // Vim mode key handling — intercept in NORMAL mode
+    if (vimEnabled && vimMode === 'normal') {
+      if (key.escape || input === '\x1b') {
+        // Already in normal, stay
+        return;
+      }
+      // Feed key to engine
+      engineRef.current.feedKey(input);
+      const newMode = engineRef.current.mode;
+      const newBuffer = engineRef.current.buffer;
+      setValue(newBuffer);
+      if (newMode !== vimMode) {
+        setVimMode(newMode);
+        onVimModeChange?.(newMode);
+      }
+      return;
+    }
+
+    // Escape in insert mode — switch to normal if vim enabled
+    if (vimEnabled && (key.escape || input === '\x1b')) {
+      engineRef.current.setBuffer(value);
+      engineRef.current.feedKey('\x1b');
+      const newMode = engineRef.current.mode;
+      setVimMode(newMode);
+      onVimModeChange?.(newMode);
+      return;
+    }
+
     if (suggestions.length > 0) {
       if (key.downArrow) {
         setSelectedHint(s => Math.min(s + 1, suggestions.length - 1));
       } else if (key.upArrow) {
         setSelectedHint(s => Math.max(s - 1, 0));
       } else if (input === '\t' || key.tab || key.rightArrow) {
-        // Tab or Right Arrow: fill the suggestion into input
         setValue(suggestions[selectedHint].cmd);
         setSelectedHint(0);
       } else if (key.return && selectedHint >= 0) {
-        // Enter on suggestion: submit the selected command directly
         const cmd = suggestions[selectedHint].cmd.trim();
         onSubmit(cmd);
         setValue('');
@@ -66,11 +99,13 @@ export function InputBar({ onSubmit, disabled }: InputBarProps) {
   const handleChange = (newValue: string) => {
     setValue(newValue);
     setSelectedHint(0);
+    if (vimEnabled) {
+      engineRef.current.setBuffer(newValue);
+    }
   };
 
   const handleSubmit = (text: string) => {
     if (suggestions.length > 0) {
-      // If suggestions visible, submit the highlighted one
       const cmd = suggestions[selectedHint].cmd.trim();
       onSubmit(cmd);
       setValue('');
@@ -79,8 +114,15 @@ export function InputBar({ onSubmit, disabled }: InputBarProps) {
       onSubmit(text.trim());
       setValue('');
       setSelectedHint(0);
+      if (vimEnabled) {
+        engineRef.current.setBuffer('');
+        setVimMode('insert');
+        onVimModeChange?.('insert');
+      }
     }
   };
+
+  const modeIndicator = vimEnabled && vimMode === 'normal' ? '[N] ' : '';
 
   return (
     <Box flexDirection="column">
@@ -100,6 +142,7 @@ export function InputBar({ onSubmit, disabled }: InputBarProps) {
         </Box>
       )}
       <Box>
+        {modeIndicator ? <Text color="yellow" bold>{modeIndicator}</Text> : null}
         <Text color="cyan" bold>❯ </Text>
         <TextInput
           value={value}

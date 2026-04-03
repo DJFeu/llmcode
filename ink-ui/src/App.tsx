@@ -11,6 +11,7 @@ import { ActionSelect } from './components/ActionSelect.js';
 import { StatusBar } from './components/StatusBar.js';
 import { CronPanel } from './components/CronPanel.js';
 import type { BackendMessage, FrontendMessage, MarketplaceItem, CronTaskInfo } from './protocol.js';
+import type { VimMode } from './vim/types.js';
 import * as readline from 'readline';
 
 function sendToBackend(msg: FrontendMessage) {
@@ -31,6 +32,8 @@ export function App() {
   const [marketplace, setMarketplace] = useState<{title: string; items: MarketplaceItem[]} | null>(null);
   const [actionPicker, setActionPicker] = useState<{name: string; actions: Array<{id: string; label: string}>} | null>(null);
   const [cronTasks, setCronTasks] = useState<CronTaskInfo[] | null>(null);
+  const [vimEnabled, setVimEnabled] = useState(false);
+  const [vimMode, setVimMode] = useState<VimMode>('insert');
 
   const addEntry = useCallback((entry: ChatEntry) => {
     setEntries(prev => [...prev, entry]);
@@ -128,6 +131,11 @@ export function App() {
   });
 
   const handleSubmit = useCallback((text: string) => {
+    if (text === '/vim') {
+      setVimEnabled(prev => !prev);
+      setVimMode('insert');
+      return;
+    }
     sendToBackend({ type: 'user_input', text });
   }, []);
 
@@ -185,12 +193,19 @@ export function App() {
           onAction={handlePermission}
         />
       ) : (
-        <InputBar onSubmit={handleSubmit} disabled={isThinking} />
+        <InputBar
+          onSubmit={handleSubmit}
+          disabled={isThinking}
+          vimEnabled={vimEnabled}
+          onVimModeChange={setVimMode}
+        />
       )}
       <StatusBar
         model={welcomeData?.model || ''}
         tokens={totalTokens}
         isThinking={isThinking}
+        vimEnabled={vimEnabled}
+        vimMode={vimMode}
       />
     </Box>
   );

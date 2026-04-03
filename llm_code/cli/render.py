@@ -99,8 +99,10 @@ class TerminalRenderer:
         # Determine content to display
         output = result.output or ""
 
-        # Syntax highlight based on context
-        if tool_name == "read_file":
+        # Check for diff metadata first
+        if result.metadata and "diff" in result.metadata:
+            content = self._build_diff_content(args, result)
+        elif tool_name == "read_file":
             file_path = args.get("path", "")
             ext = Path(file_path).suffix.lower()
             lang = _EXT_TO_LANG.get(ext, "text")
@@ -121,6 +123,41 @@ class TerminalRenderer:
                 expand=False,
             )
         )
+
+    def _build_diff_content(self, args: dict, result: ToolResult) -> Text:
+        """Build Rich Text with colored diff output."""
+        text = Text()
+        meta = result.metadata or {}
+        adds = meta.get("additions", 0)
+        dels = meta.get("deletions", 0)
+
+        # Header line
+        filename = Path(args.get("path", "file")).name
+        text.append(f"{filename}  ", style="bold")
+        text.append(f"+{adds}", style="bold green")
+        text.append("  ")
+        text.append(f"-{dels}", style="bold red")
+        text.append("\n")
+
+        # Summary
+        text.append(result.output or "")
+        text.append("\n")
+
+        for hunk in meta.get("diff", []):
+            text.append(
+                f"@@ -{hunk['old_start']},{hunk['old_lines']} "
+                f"+{hunk['new_start']},{hunk['new_lines']} @@\n",
+                style="cyan",
+            )
+            for line in hunk.get("lines", []):
+                if line.startswith("+"):
+                    text.append(line + "\n", style="green")
+                elif line.startswith("-"):
+                    text.append(line + "\n", style="red")
+                else:
+                    text.append(line + "\n")
+
+        return text
 
     def render_permission_prompt(self, tool_name: str, args: dict) -> None:
         """Render a permission prompt for a tool call."""

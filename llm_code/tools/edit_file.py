@@ -75,12 +75,24 @@ class EditFileTool(Tool):
             replaced = 1
 
         path.write_text(new_content)
-        # Build diff-style output for display
-        old_lines = old.splitlines()
-        new_lines = new.splitlines()
+
+        # Generate structured diff
+        from llm_code.utils.diff import generate_diff, count_changes
+
+        hunks = generate_diff(content, new_content, path.name)
+        adds, dels = count_changes(hunks)
+
         diff_parts = [f"Replaced {replaced} occurrence(s) in {path}"]
-        for line in old_lines[:5]:
+        for line in old.splitlines()[:5]:
             diff_parts.append(f"- {line}")
-        for line in new_lines[:5]:
+        for line in new.splitlines()[:5]:
             diff_parts.append(f"+ {line}")
-        return ToolResult(output="\n".join(diff_parts))
+
+        return ToolResult(
+            output="\n".join(diff_parts),
+            metadata={
+                "diff": [h.to_dict() for h in hunks],
+                "additions": adds,
+                "deletions": dels,
+            },
+        )

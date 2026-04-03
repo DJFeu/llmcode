@@ -39,6 +39,26 @@ if TYPE_CHECKING:
     from llm_code.tools.registry import ToolRegistry
 
 
+def build_thinking_extra_body(thinking_config) -> dict | None:
+    """Build extra_body dict for thinking mode configuration.
+
+    Returns None for adaptive mode (let provider decide),
+    explicit enable/disable dict for other modes.
+    """
+    mode = thinking_config.mode
+    if mode == "enabled":
+        return {
+            "chat_template_kwargs": {
+                "enable_thinking": True,
+                "thinking_budget": thinking_config.budget_tokens,
+            }
+        }
+    if mode == "disabled":
+        return {"chat_template_kwargs": {"enable_thinking": False}}
+    # adaptive: no override
+    return None
+
+
 # Thread pool for running blocking tool execution off the event loop
 _TOOL_EXECUTOR = ThreadPoolExecutor(max_workers=4)
 
@@ -118,7 +138,7 @@ class ConversationRuntime:
                 tools=tool_defs if use_native else (),
                 max_tokens=self._config.max_tokens,
                 temperature=self._config.temperature,
-                extra_body={"chat_template_kwargs": {"enable_thinking": False}} if not use_native else None,
+                extra_body=build_thinking_extra_body(self._config.thinking) if not use_native else None,
             )
 
             # Error recovery: tool choice fallback + reactive compact
@@ -141,7 +161,7 @@ class ConversationRuntime:
                         tools=(),
                         max_tokens=self._config.max_tokens,
                         temperature=self._config.temperature,
-                        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+                        extra_body=build_thinking_extra_body(self._config.thinking),
                     )
                     stream = await self._provider.stream_message(request)
                 elif (
@@ -421,6 +441,7 @@ class ConversationRuntime:
             tool_name=call.name,
             output=tool_result.output[:200],
             is_error=tool_result.is_error,
+            metadata=tool_result.metadata,
         )
 
         yield ToolResultBlock(
