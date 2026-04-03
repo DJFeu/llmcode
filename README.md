@@ -2,13 +2,13 @@
 
 <p align="center">
   <strong>Open-source CLI coding agent for any LLM</strong><br>
-  Claude Code-level developer experience with local or cloud models
+  Claude Code-level developer experience — with the model of your choice
 </p>
 
 <p align="center">
   <a href="#quick-start">Quick Start</a> ·
-  <a href="#marketplace">Marketplace</a> ·
   <a href="#features">Features</a> ·
+  <a href="#marketplace">Marketplace</a> ·
   <a href="#configuration">Configuration</a> ·
   <a href="#architecture">Architecture</a>
 </p>
@@ -17,7 +17,7 @@
 
 ## What is llm-code?
 
-A production-grade terminal coding agent that works with **any LLM** — local (Qwen, Llama, Mistral via vLLM/Ollama) or cloud (OpenAI, Anthropic, xAI, DeepSeek). One tool, any model.
+A production-grade terminal coding agent that works with **any LLM** — local models (Qwen, Llama, Mistral via vLLM/Ollama) or cloud APIs (OpenAI, Anthropic, xAI, DeepSeek). Free or paid, your choice.
 
 ```
   +------------------+  +--------------------------------------+
@@ -36,86 +36,73 @@ A production-grade terminal coding agent that works with **any LLM** — local (
                         +--------------------------------------+
 ```
 
-## Quick Start
+## Features
 
-```bash
-# Install
-pip install llm-code
+### Any Model, One Tool
 
-# Configure
-mkdir -p ~/.llm-code
-cat > ~/.llm-code/config.json << 'EOF'
-{
-  "model": "qwen3.5",
-  "provider": {
-    "base_url": "http://localhost:8000/v1"
-  }
-}
-EOF
+- **Multi-provider** — OpenAI-compatible servers (vLLM, Ollama, LM Studio), Anthropic, xAI, DeepSeek
+- **Zero cost with local models** — run Qwen, Llama, or any open-weight model on your own hardware
+- **Cloud APIs** — switch to GPT-4o, Claude, or Grok with a config change
+- **Model aliases** — short names like `qwen`, `gpt`, `opus` resolve automatically
+- **Model routing** — use different models for sub-agents and compaction
 
-# Run
-llm-code
-```
+### Rich Terminal UI
 
-### Model Aliases
+- **React+Ink interface** — interactive menus, syntax highlighting, real-time streaming
+- **Image support** — paste screenshots from clipboard (Cmd+V), attach local images
+- **File operations** — read, write, edit, glob, grep with smart permissions
+- **Tool panels** — see what the agent is doing in real-time
+- **Lightweight mode** — `--lite` for a print-based CLI (no Node.js required)
 
-Use short names — llm-code resolves them automatically:
+### Agent Capabilities
 
-```json
-{
-  "model": "qwen",
-  "model_aliases": {
-    "qwen": "/models/Qwen3.5-122B-A10B-int4-AutoRound",
-    "fast": "qwen3.5-7b",
-    "gpt": "gpt-4o"
-  }
-}
-```
+- **Built-in tools** — file I/O, bash, glob, grep, git, LSP, memory, and more
+- **Dual-track tool calling** — native function calling when available, XML fallback for any model
+- **Sub-agents** — parallel child agents with specialized roles (Explore, Plan, Verify)
+- **Context compression** — 4-level progressive compaction keeps long sessions efficient
+- **Token budget** — `--budget` to control token spending per session
+- **Cost tracking** — per-model pricing with custom config
 
-Built-in aliases: `opus`, `sonnet`, `haiku`, `gpt4o`, `gpt-mini`, `qwen`, `o3`
+### Smart Safety
+
+- **Input-aware permissions** — `bash ls` auto-approved, `rm -rf` needs confirmation
+- **Permission modes** — read_only, workspace_write, full_access, prompt, auto_accept
+- **Hook system** — pre/post tool-use hooks for auto-formatting, linting, validation
+- **Git checkpoint** — auto-checkpoint before writes, `/undo` to restore
+
+### Remote Execution
+
+- **Server mode** — `llm-code --serve` exposes a WebSocket JSON-RPC endpoint
+- **Client mode** — `llm-code --connect host:port` to use a remote agent
+- **SSH proxy** — `llm-code --ssh user@host` auto-tunnels and connects
 
 ## Marketplace
 
-llm-code connects to **three marketplace sources** with 44,000+ skills and plugins available:
+llm-code is compatible with Claude Code's plugin ecosystem — skills, plugins, and MCP servers work out of the box.
 
 ### Skills — `/skill`
 
-Browse and install skills with an interactive React selector:
+Browse and install skills with an interactive selector:
 
 ```
-Skills (14 installed + 91 available)
-↑↓ navigate · Enter select · Esc close
-
- ❯ ● brainstorming  · ~2588 tokens (installed)
-   ● test-driven-development  · ~2431 tokens (installed)
-   ○ claude-code-skill-security-check  · [npm] ...
-   ○ clawhub:code-review-fix  · [ClawHub] ...
-   ↓ 80 more below
+ > brainstorming          (installed)
+   test-driven-development (installed)
+   code-review-fix         [ClawHub]
+   security-check          [npm]
 ```
 
-| Source | Skills | Description |
-|--------|-------:|-------------|
-| **ClawHub.ai** | 44,000+ | Largest skill marketplace for AI agents |
-| **npm** | 50+ | Claude Code official skill packages |
-| **Local plugins** | varies | Skills from installed plugins (e.g., superpowers) |
+Sources: **ClawHub.ai** (largest AI skill marketplace), **npm** (official packages), **local plugins**
 
 ### Plugins — `/plugin`
 
 Plugins bundle skills, hooks, MCP servers, and agents:
 
 ```bash
-# Install from GitHub
-/plugin install obra/superpowers    # 14 workflow skills
-
-# Browse marketplace (Official + ClawHub + npm)
-/plugin
+/plugin install obra/superpowers    # workflow skills
+/plugin                             # browse marketplace
 ```
 
-| Source | Plugins | Description |
-|--------|--------:|-------------|
-| **Official** | 28 | Claude Code official plugins (data-engineering, figma, playwright...) |
-| **ClawHub** | 50+ | Community plugins (memory engines, security, integrations) |
-| **npm** | 20+ | npm-distributed plugins |
+Sources: **Official** (Claude Code plugins), **ClawHub** (community), **npm**, **GitHub**
 
 ### MCP Servers — `/mcp`
 
@@ -133,50 +120,37 @@ Connect any [MCP](https://modelcontextprotocol.io/) server to extend tools:
 }
 ```
 
-Supports **stdio**, **HTTP**, **SSE**, and **WebSocket** transports. MCP server instructions are auto-injected into the system prompt.
+Supports **stdio**, **HTTP**, **SSE**, and **WebSocket** transports.
 
-## Features
-
-### Core Agent
-- **20+ built-in tools** — read/write/edit files, bash, glob, grep, 7 git tools, LSP, memory
-- **Multi-provider** — OpenAI-compatible (vLLM, Ollama, LM Studio) + Anthropic + xAI
-- **Dual-track tool calling** — native function calling when available, XML tag fallback for any model
-- **Sub-agents** — parallel child agents with specialized roles (Explore, Plan, Verify)
-- **Streaming** — real-time Markdown rendering + tool progress indicators
-
-### Smart Safety
-- **Input-aware permissions** — `bash ls` auto-approved, `rm -rf` needs confirmation
-- **5 permission modes** — read_only, workspace_write, full_access, prompt, auto_accept
-- **Hook system** — pre/post tool-use hooks with exit code semantics
-- **Git checkpoint** — auto-checkpoint before writes, `/undo` to restore
-
-### Context Management
-- **4-level compression** — snip → micro → collapse → auto (progressive)
-- **Prefix cache optimization** — prompt ordering for vLLM 2-5x speedup
-- **Token budget** — `--budget 500000` to control spending
-- **Tool result budget** — large outputs persisted to disk, summaries in context
-
-### Developer Experience
-- **React+Ink UI** — interactive marketplace, tool panels, syntax highlighting
-- **Image support** — Cmd+V paste from clipboard, drag-and-drop
-- **Cross-session memory** — persistent notes + auto session summaries
-- **Project indexing** — file tree + symbol index for smarter context
-- **LSP integration** — go-to-definition, find-references, diagnostics
-- **Cost tracking** — per-model pricing with custom config
-
-### Remote Execution
-- **Server mode** — `llm-code --serve` (WebSocket JSON-RPC)
-- **Client mode** — `llm-code --connect host:8765`
-- **SSH proxy** — `llm-code --ssh user@host` (auto-tunnel)
-
-## Modes
+## Quick Start
 
 ```bash
-llm-code                           # Default: React+Ink UI
-llm-code --lite                    # Lightweight print-based CLI
-llm-code --serve --port 8765       # Remote server
-llm-code --connect host:8765       # Remote client
-llm-code --ssh user@host           # SSH tunnel + connect
+# Install
+pip install llm-code
+
+# Configure (local model example)
+mkdir -p ~/.llm-code
+cat > ~/.llm-code/config.json << 'EOF'
+{
+  "model": "qwen3.5",
+  "provider": {
+    "base_url": "http://localhost:8000/v1"
+  }
+}
+EOF
+
+# Run
+llm-code
+```
+
+### Modes
+
+```bash
+llm-code                       # Default: React+Ink UI
+llm-code --lite                # Lightweight print-based CLI
+llm-code --serve --port 8765   # Remote server
+llm-code --connect host:8765   # Remote client
+llm-code --ssh user@host       # SSH tunnel + connect
 ```
 
 ## Configuration
@@ -194,7 +168,9 @@ llm-code --ssh user@host           # SSH tunnel + connect
 {
   "model": "qwen3.5-122b",
   "model_aliases": {
-    "qwen": "/models/Qwen3.5-122B-A10B-int4-AutoRound"
+    "qwen": "/models/Qwen3.5-122B-A10B-int4-AutoRound",
+    "fast": "qwen3.5-7b",
+    "gpt": "gpt-4o"
   },
   "provider": {
     "base_url": "http://localhost:8000/v1",
@@ -214,24 +190,14 @@ llm-code --ssh user@host           # SSH tunnel + connect
     "qwen3.5-122b": [0.50, 1.00],
     "default": [0, 0]
   },
-  "vision": {
-    "vision_model": "qwen2.5-vl-7b",
-    "vision_api": "http://localhost:8001/v1"
-  },
   "hooks": [
     {"event": "post_tool_use", "tool_pattern": "write_file|edit_file", "command": "ruff format {path}"}
   ],
-  "mcpServers": {
-    "github": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": {"GITHUB_TOKEN": "ghp_xxx"}
-    }
-  }
+  "mcpServers": {}
 }
 ```
 
-## Slash Commands
+### Slash Commands
 
 | Command | Description |
 |---------|-------------|
@@ -255,17 +221,15 @@ llm-code --ssh user@host           # SSH tunnel + connect
 ```
 llm_code/
 ├── api/            # Provider abstraction (OpenAI-compat + Anthropic)
-├── tools/          # 20+ builtin tools + agent + parsing
+├── tools/          # Builtin tools + agent + parsing
 ├── runtime/        # Conversation engine, permissions, hooks, session, memory
 ├── mcp/            # MCP client (stdio/HTTP/SSE/WebSocket) + OAuth
-├── marketplace/    # Plugin system, 5 registries, ClawHub integration
-├── lsp/            # LSP client, auto-detector, 3 tools
+├── marketplace/    # Plugin system, registries, ClawHub integration
+├── lsp/            # LSP client, auto-detector
 ├── remote/         # WebSocket server/client + SSH proxy
 ├── cli/            # Print-based CLI + Ink bridge
 ink-ui/             # React+Ink frontend (TypeScript)
 ```
-
-### Layer Dependencies
 
 ```
 cli → runtime → {tools, api}
@@ -276,7 +240,7 @@ cli → runtime → {tools, api}
 ## Development
 
 ```bash
-git clone https://github.com/adamhong/llm-code
+git clone https://github.com/djfeu-adam/llm-code
 cd llm-code
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
