@@ -527,8 +527,43 @@ class InkBridge:
         elif action_id == "info":
             await self._send({"type": "message", "text": f"MCP server: {item['name']}"})
 
-        elif action_id in ("uninstall", "disable"):
-            await self._send({"type": "message", "text": f"Action '{action_id}' for '{item['name']}' — use the CLI for full management."})
+        elif action_id == "uninstall":
+            name = item["name"]
+            if market_type == "skill":
+                import shutil
+                skill_dir = Path.home() / ".llm-code" / "skills" / name
+                if skill_dir.is_dir():
+                    shutil.rmtree(skill_dir)
+                    await self._send({"type": "message", "text": f"✓ Removed skill '{name}'"})
+                    self._init_session()  # Reload skills
+                else:
+                    await self._send({"type": "message", "text": f"Skill '{name}' not found on disk."})
+            elif market_type == "plugin":
+                try:
+                    from llm_code.marketplace.installer import PluginInstaller
+                    pi = PluginInstaller(Path.home() / ".llm-code" / "plugins")
+                    pi.uninstall(name)
+                    await self._send({"type": "message", "text": f"✓ Removed plugin '{name}'"})
+                    self._init_session()
+                except Exception as exc:
+                    await self._send({"type": "error", "message": f"Remove failed: {exc}"})
+
+        elif action_id == "disable":
+            name = item["name"]
+            if market_type == "skill":
+                marker = Path.home() / ".llm-code" / "skills" / name / ".disabled"
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.touch()
+                await self._send({"type": "message", "text": f"Disabled skill '{name}'"})
+                self._init_session()
+            elif market_type == "plugin":
+                try:
+                    from llm_code.marketplace.installer import PluginInstaller
+                    pi = PluginInstaller(Path.home() / ".llm-code" / "plugins")
+                    pi.disable(name)
+                    await self._send({"type": "message", "text": f"Disabled plugin '{name}'"})
+                except Exception as exc:
+                    await self._send({"type": "error", "message": f"Disable failed: {exc}"})
 
     async def _fetch_marketplace_skills(self) -> list[tuple[str, str]]:
         """Fetch skills: npm (Claude official) first, then ClawHub (44k+ community)."""
