@@ -292,6 +292,7 @@ llm_code/
 ├── cron/           # Task scheduling (cron parser, storage, async scheduler)
 ├── ide/            # IDE integration (WebSocket server, bridge, detector)
 ├── swarm/          # Multi-agent collaboration (manager, backends, mailbox)
+├── utils/          # Notebook parser, diff engine, hyperlinks, search
 ├── cli/            # Print-based CLI + Ink bridge
 ink-ui/             # React+Ink frontend (TypeScript)
 ```
