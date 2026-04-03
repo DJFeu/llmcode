@@ -336,7 +336,7 @@ class InkBridge:
 
             # Send via marketplace_show — limit to 50 items to avoid pipe overflow
             self._current_marketplace = {"type": "skill", "items": items}
-            display_items = items[:100]  # Cap to prevent oversized JSON
+            display_items = items  # Show all
             installed_count = sum(1 for i in display_items if i.get("installed"))
             market_count = len(display_items) - installed_count
             import time as _t
