@@ -50,18 +50,31 @@ A production-grade terminal coding agent that works with **any LLM** — local m
 
 - **React+Ink interface** — interactive menus, syntax highlighting, real-time streaming
 - **Image support** — paste screenshots from clipboard (Cmd+V), attach local images
-- **File operations** — read, write, edit, glob, grep with smart permissions
-- **Tool panels** — see what the agent is doing in real-time
+- **Vim mode** — full vim keybindings (motions, operators, text objects) via `/vim`
+- **Diff visualization** — syntax-highlighted diffs on every file change
+- **Search highlight** — `/search` or Ctrl+F to find text across conversation history
+- **Clickable links** — URLs auto-detected and wrapped with OSC8 hyperlinks
 - **Lightweight mode** — `--lite` for a print-based CLI (no Node.js required)
 
 ### Agent Capabilities
 
-- **Built-in tools** — file I/O, bash, glob, grep, git, LSP, memory, and more
+- **Built-in tools** — file I/O, bash, glob, grep, git, LSP, memory, notebook, and more
 - **Dual-track tool calling** — native function calling when available, XML fallback for any model
 - **Sub-agents** — parallel child agents with specialized roles (Explore, Plan, Verify)
+- **Extended thinking** — adaptive/enabled/disabled modes with visual thinking panel
+- **Notebook support** — read and edit Jupyter `.ipynb` files directly
+- **Computer use** — screenshot, mouse click, keyboard type for GUI automation
 - **Context compression** — 4-level progressive compaction keeps long sessions efficient
 - **Token budget** — `--budget` to control token spending per session
 - **Cost tracking** — per-model pricing with custom config
+
+### Multi-Agent Collaboration
+
+- **Team/Swarm** — spawn multiple agents in parallel via `/swarm create <role> <task>`
+- **tmux integration** — each agent runs in its own tmux pane (subprocess fallback)
+- **Mailbox system** — agents communicate via file-based message passing
+- **Shared memory** — all agents read/write the same project memory with file locking
+- **Built-in roles** — coder, reviewer, researcher, tester (or custom)
 
 ### Smart Safety
 
@@ -69,6 +82,22 @@ A production-grade terminal coding agent that works with **any LLM** — local m
 - **Permission modes** — read_only, workspace_write, full_access, prompt, auto_accept
 - **Hook system** — pre/post tool-use hooks for auto-formatting, linting, validation
 - **Git checkpoint** — auto-checkpoint before writes, `/undo` to restore
+
+### Memory & Sessions
+
+- **Cross-session memory** — persistent key-value store per project
+- **DreamTask** — auto-consolidates session knowledge on exit into long-term memory
+- **Session persistence** — save, list, and switch sessions
+- **VCR recording** — record structured event streams for debugging and replay
+- **Cron scheduling** — schedule recurring agent tasks with standard cron expressions
+
+### IDE Integration
+
+- **Generic protocol** — WebSocket JSON-RPC server for any IDE to connect
+- **Open in IDE** — agent can open files at specific lines in your editor
+- **Diagnostics** — read lint/error info from connected IDE
+- **Selection** — get currently selected code from IDE
+- **Auto-detection** — detects running VSCode, JetBrains, Neovim, Sublime
 
 ### Remote Execution
 
@@ -143,6 +172,14 @@ EOF
 llm-code
 ```
 
+### Optional Features
+
+```bash
+pip install llm-code[voice]          # Voice input (sounddevice)
+pip install llm-code[computer-use]   # GUI automation (pyautogui, Pillow)
+pip install llm-code[ide]            # IDE integration (psutil)
+```
+
 ### Modes
 
 ```bash
@@ -151,11 +188,12 @@ llm-code --lite                # Lightweight print-based CLI
 llm-code --serve --port 8765   # Remote server
 llm-code --connect host:8765   # Remote client
 llm-code --ssh user@host       # SSH tunnel + connect
+llm-code --replay <file>       # Replay a VCR recording
 ```
 
 ## Configuration
 
-### Config Locations (precedence low → high)
+### Config Locations (precedence low -> high)
 
 1. `~/.llm-code/config.json` — User global
 2. `.llm-code/config.json` — Project
@@ -186,10 +224,22 @@ llm-code --ssh user@host       # SSH tunnel + connect
     "sub_agent": "qwen3.5-32b",
     "compaction": "qwen3.5-7b"
   },
-  "pricing": {
-    "qwen3.5-122b": [0.50, 1.00],
-    "default": [0, 0]
+  "thinking": {
+    "mode": "adaptive",
+    "budget_tokens": 10000
   },
+  "vim_mode": false,
+  "voice": {
+    "enabled": false,
+    "backend": "whisper",
+    "whisper_url": "http://localhost:8000/v1/audio/transcriptions",
+    "language": "auto"
+  },
+  "computer_use": { "enabled": false },
+  "ide": { "enabled": false, "port": 9876 },
+  "swarm": { "enabled": false, "backend": "auto", "max_members": 5 },
+  "dream": { "enabled": true, "min_turns": 3 },
+  "vcr": { "enabled": false, "auto_record": false },
   "hooks": [
     {"event": "post_tool_use", "tool_pattern": "write_file|edit_file", "command": "ruff format {path}"}
   ],
@@ -207,9 +257,18 @@ llm-code --ssh user@host       # SSH tunnel + connect
 | `/mcp` | Browse & install MCP servers |
 | `/model <name>` | Switch model |
 | `/memory` | Project memory |
+| `/memory consolidate` | Consolidate session into long-term memory |
 | `/undo` | Undo last file change |
 | `/cost` | Token usage + cost |
 | `/budget <n>` | Set token budget |
+| `/thinking` | Toggle thinking mode (adaptive/on/off) |
+| `/vim` | Toggle vim mode |
+| `/voice` | Toggle voice input |
+| `/search <query>` | Search conversation history |
+| `/swarm` | List/create/stop agent swarm members |
+| `/cron` | List/add/delete scheduled tasks |
+| `/vcr` | Start/stop/list session recordings |
+| `/ide` | IDE connection status |
 | `/clear` | Clear conversation |
 | `/session save` | Save session |
 | `/index` | Project index |
@@ -222,19 +281,27 @@ llm-code --ssh user@host       # SSH tunnel + connect
 llm_code/
 ├── api/            # Provider abstraction (OpenAI-compat + Anthropic)
 ├── tools/          # Builtin tools + agent + parsing
-├── runtime/        # Conversation engine, permissions, hooks, session, memory
+├── runtime/        # Conversation engine, permissions, hooks, session, memory, dream, VCR
 ├── mcp/            # MCP client (stdio/HTTP/SSE/WebSocket) + OAuth
 ├── marketplace/    # Plugin system, registries, ClawHub integration
 ├── lsp/            # LSP client, auto-detector
 ├── remote/         # WebSocket server/client + SSH proxy
+├── vim/            # Vim engine (motions, operators, text objects, state machine)
+├── voice/          # Voice input (STT multi-backend: Whisper, Google, Anthropic)
+├── computer_use/   # GUI automation (screenshot, mouse, keyboard)
+├── cron/           # Task scheduling (cron parser, storage, async scheduler)
+├── ide/            # IDE integration (WebSocket server, bridge, detector)
+├── swarm/          # Multi-agent collaboration (manager, backends, mailbox)
 ├── cli/            # Print-based CLI + Ink bridge
 ink-ui/             # React+Ink frontend (TypeScript)
 ```
 
 ```
-cli → runtime → {tools, api}
-         ↓
+cli -> runtime -> {tools, api}
+          |
     mcp / lsp / marketplace / remote
+          |
+    vim / voice / computer_use / cron / ide / swarm
 ```
 
 ## Development
