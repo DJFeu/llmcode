@@ -32,6 +32,23 @@ class ModelRoutingConfig:
 
 
 @dataclass(frozen=True)
+class ThinkingConfig:
+    mode: str = "adaptive"        # "adaptive" | "enabled" | "disabled"
+    budget_tokens: int = 10000
+
+
+@dataclass(frozen=True)
+class VoiceConfig:
+    enabled: bool = False
+    backend: str = "whisper"  # "whisper" | "google" | "anthropic"
+    whisper_url: str = "http://localhost:8000/v1/audio/transcriptions"
+    google_language_code: str = ""
+    anthropic_ws_url: str = "wss://api.anthropic.com"
+    language: str = "en"
+    hotkey: str = "ctrl+space"
+
+
+@dataclass(frozen=True)
 class RuntimeConfig:
     model: str = ""
     provider_base_url: str | None = None
@@ -56,6 +73,9 @@ class RuntimeConfig:
     lsp_auto_detect: bool = True
     model_aliases: dict = field(default_factory=dict)
     pricing: dict = field(default_factory=dict)
+    thinking: ThinkingConfig = field(default_factory=ThinkingConfig)
+    vim_mode: bool = False
+    voice: VoiceConfig = field(default_factory=VoiceConfig)
 
 
 class ConfigSchema(BaseModel):
@@ -72,6 +92,7 @@ class ConfigSchema(BaseModel):
     registries: dict = {}
     lsp_auto_detect: bool = True
     max_turn_iterations: int = 10
+    thinking: dict = {}
     max_tokens: int = 4096
     temperature: float = 0.7
     compact_after_tokens: int = 80000
@@ -153,6 +174,23 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
     allow_tools = permissions.get("allow_tools", data.get("allowed_tools", []))
     deny_tools = permissions.get("deny_tools", data.get("denied_tools", []))
 
+    voice_raw = data.get("voice", {})
+    voice = VoiceConfig(
+        enabled=voice_raw.get("enabled", False),
+        backend=voice_raw.get("backend", "whisper"),
+        whisper_url=voice_raw.get("whisper_url", "http://localhost:8000/v1/audio/transcriptions"),
+        google_language_code=voice_raw.get("google_language_code", ""),
+        anthropic_ws_url=voice_raw.get("anthropic_ws_url", "wss://api.anthropic.com"),
+        language=voice_raw.get("language", "en"),
+        hotkey=voice_raw.get("hotkey", "ctrl+space"),
+    )
+
+    thinking_raw = data.get("thinking", {})
+    thinking = ThinkingConfig(
+        mode=thinking_raw.get("mode", "adaptive"),
+        budget_tokens=thinking_raw.get("budget_tokens", 10000),
+    )
+
     return RuntimeConfig(
         model=data.get("model", ""),
         provider_base_url=provider.get("base_url", None),
@@ -177,6 +215,9 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         lsp_auto_detect=data.get("lsp_auto_detect", True),
         model_aliases=data.get("model_aliases", {}),
         pricing=data.get("pricing", {}),
+        thinking=thinking,
+        vim_mode=data.get("vim_mode", False),
+        voice=voice,
     )
 
 

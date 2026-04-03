@@ -25,6 +25,7 @@ KNOWN_COMMANDS = frozenset({
     "thinking",
     "cron",
     "vim",
+    "voice",
 })
 
 

@@ -728,6 +728,9 @@ class LLMCodeCLI:
             status = "enabled" if self._vim_enabled else "disabled"
             console.print(f"[dim]Vim mode {status}[/]")
 
+        elif name == "voice":
+            self._handle_voice_command(args)
+
         else:
             console.print(f"[red]Unknown command: /{name} -- type /help for help[/]")
 
@@ -775,6 +778,27 @@ class LLMCodeCLI:
 
         else:
             console.print("[dim]Usage: /cron [list|add|delete <id>][/]")
+
+    def _handle_voice_command(self, args: str) -> None:
+        """Handle /voice [on|off] command."""
+        arg = args.strip().lower()
+        if arg == "on":
+            if not self._config.voice.enabled:
+                console.print("[yellow]Voice is disabled in config. Set voice.enabled=true.[/yellow]")
+                return
+            self._voice_active = True
+            console.print("[green]Voice input enabled.[/green] Press hotkey to record.")
+        elif arg == "off":
+            self._voice_active = False
+            console.print("[dim]Voice input disabled.[/dim]")
+        else:
+            status = "on" if getattr(self, "_voice_active", False) else "off"
+            console.print(f"Voice input: [bold]{status}[/bold]")
+            console.print("Usage: /voice [on|off]")
+
+    def _show_recording_indicator(self, elapsed: float) -> str:
+        """Return terminal recording indicator string."""
+        return f"[Recording...] {elapsed:.1f}s"
 
     # ── Marketplace Handlers ─────────────────────────────────────────
 

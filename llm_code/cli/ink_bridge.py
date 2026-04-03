@@ -173,6 +173,41 @@ class InkBridge:
             # TODO: handle image paste
             pass
 
+        elif msg_type == "voice_toggle":
+            await self._handle_voice_toggle()
+
+    async def _handle_voice_toggle(self) -> None:
+        """Handle voice recording toggle from Ink frontend."""
+        if not hasattr(self, "_voice_recorder") or self._voice_recorder is None:
+            from llm_code.voice.recorder import AudioRecorder, detect_backend
+            from llm_code.voice.stt import create_stt_engine
+            try:
+                backend = detect_backend()
+                self._voice_recorder = AudioRecorder(backend=backend)
+                self._stt_engine = create_stt_engine(self._config.voice)
+            except RuntimeError as exc:
+                await self._send({"type": "error", "message": str(exc)})
+                return
+
+        if not getattr(self, "_voice_recording", False):
+            self._voice_recording = True
+            self._voice_recorder.start()
+            await self._send({"type": "voice_start"})
+        else:
+            self._voice_recording = False
+            audio_bytes = self._voice_recorder.stop()
+            await self._send({"type": "voice_stop"})
+
+            if audio_bytes:
+                try:
+                    text = self._stt_engine.transcribe(
+                        audio_bytes, self._config.voice.language
+                    )
+                    if text.strip():
+                        await self._send({"type": "voice_text", "text": text.strip()})
+                except Exception as exc:
+                    await self._send({"type": "error", "message": f"STT error: {exc}"})
+
     async def _run_turn(self, user_input: str, images=None) -> None:
         """Run a conversation turn and stream events to Ink."""
         if not self._runtime:
