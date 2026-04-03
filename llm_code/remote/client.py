@@ -3,15 +3,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
-import time
-from pathlib import Path
 
 import websockets
 
 from rich.console import Console
 from rich.markdown import Markdown
-from rich.text import Text
 
 console = Console()
 
@@ -28,7 +24,7 @@ class RemoteClient:
         try:
             async with websockets.connect(self._url) as ws:
                 self._ws = ws
-                console.print(f"[green]✓ Connected[/]")
+                console.print("[green]✓ Connected[/]")
 
                 # Start reading server events in background
                 recv_task = asyncio.create_task(self._recv_loop(ws))
@@ -78,9 +74,9 @@ class RemoteClient:
 
         if msg_type == "welcome":
             console.print()
-            console.print(f"  [bold cyan]╭──────────────╮[/]")
-            console.print(f"  [bold cyan]│   llm-code   │[/]  [dim](remote)[/]")
-            console.print(f"  [bold cyan]╰──────────────╯[/]")
+            console.print("  [bold cyan]╭──────────────╮[/]")
+            console.print("  [bold cyan]│   llm-code   │[/]  [dim](remote)[/]")
+            console.print("  [bold cyan]╰──────────────╯[/]")
             console.print(f"  [yellow]Model         [/] {msg.get('model', '')}")
             console.print(f"  [yellow]Directory     [/] {msg.get('cwd', '')}")
             console.print(f"  [yellow]Server        [/] {self._url}")

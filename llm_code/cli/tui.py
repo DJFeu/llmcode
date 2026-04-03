@@ -11,7 +11,6 @@ from pathlib import Path
 
 from rich.console import Console
 from rich.markdown import Markdown
-from rich.text import Text
 
 from llm_code.api.client import ProviderClient
 from llm_code.api.types import (
@@ -21,8 +20,8 @@ from llm_code.api.types import (
     StreamToolExecStart,
     StreamToolProgress,
 )
-from llm_code.cli.commands import SlashCommand, parse_slash_command
-from llm_code.runtime.config import RuntimeConfig, load_config
+from llm_code.cli.commands import parse_slash_command
+from llm_code.runtime.config import RuntimeConfig
 from llm_code.runtime.cost_tracker import CostTracker
 from llm_code.runtime.model_aliases import resolve_model
 from llm_code.runtime.context import ProjectContext
@@ -112,7 +111,7 @@ def _interactive_pick(title: str, items: list[tuple[str, str, bool]], prompt_tex
         num = f"[cyan]{i:>3d}[/]"
         console.print(f"  {num} {icon} [bold]{name}[/]  [dim]· {desc}[/]")
 
-    console.print(f"\n[dim]Enter number to select, or press Enter to cancel.[/]")
+    console.print("\n[dim]Enter number to select, or press Enter to cancel.[/]")
     try:
         choice = input(f"{prompt_text}: ").strip()
     except (EOFError, KeyboardInterrupt):
@@ -660,7 +659,6 @@ class LLMCodeCLI:
         elif name == "session":
             parts = args.split(None, 1)
             subcmd = parts[0] if parts else "list"
-            subargs = parts[1] if len(parts) > 1 else ""
             if subcmd == "list":
                 sessions = self._session_manager.list_sessions()
                 if not sessions:

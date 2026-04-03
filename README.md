@@ -7,15 +7,18 @@ A production-grade CLI coding agent for local LLMs. Delivers a Claude Code-level
 - **20+ built-in tools** — file read/write/edit, bash, glob, grep, 7 git tools, LSP, memory
 - **Multi-provider** — OpenAI-compatible (vLLM, Ollama, LM Studio) + Anthropic
 - **MCP ecosystem** — Connect any MCP server (GitHub, Postgres, filesystem, 500+)
-- **Plugin marketplace** — Claude Code plugin.json compatible, multi-registry search
+- **ClawHub marketplace** — Install plugins/skills from ClawHub, npm, Smithery, GitHub, or custom registries
 - **Skills system** — Auto-inject or slash-command triggered workflow prompts
 - **Sub-agents** — Parallel child agents with specialized roles (Explore, Plan, Verify)
 - **Smart safety** — Input-aware permission (bash ls auto-approved, rm needs confirmation)
 - **Session memory** — Cross-session persistent notes + auto session summaries
-- **Streaming UI** — Real-time Markdown rendering + tool progress indicators
+- **Ink UI** — Rich interactive terminal UI (default); `--lite` for print-based fallback
 - **Git integration** — 7 git tools + auto checkpoint before writes + /undo
 - **LSP integration** — Go-to-definition, find-references, diagnostics
 - **Context management** — 4-level compression + prefix cache + token/result budgets
+- **Cost tracking** — Per-session token cost with custom pricing for local models
+- **Model aliasing** — Short names (e.g. `qwen`, `llama3`) resolve to full model IDs
+- **Remote modes** — `--serve`/`--connect`/`--ssh` for remote agent access
 
 ## Quick Start
 
@@ -45,8 +48,11 @@ EOF
 ### Run
 
 ```bash
-# Interactive REPL
+# Interactive REPL (Ink UI — requires Node.js)
 llm-code
+
+# Lightweight print-based CLI (no Node.js required)
+llm-code --lite
 
 # One-shot
 llm-code "fix the bug in main.py"
@@ -59,6 +65,11 @@ cat error.log | llm-code "explain this error"
 
 # With token budget
 llm-code --budget 500000 "refactor the auth module"
+
+# Remote modes
+llm-code --serve --port 7700          # Start server
+llm-code --connect host:7700          # Connect to remote server
+llm-code --ssh user@host              # SSH tunnel to remote host
 ```
 
 ## Configuration
@@ -165,7 +176,7 @@ llm_code/
 ## Development
 
 ```bash
-git clone https://github.com/user/llm-code
+git clone https://github.com/adamhong/llm-code
 cd llm-code
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"

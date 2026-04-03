@@ -1,6 +1,33 @@
 # Changelog
 
-## v0.1.0 (2026-04-03)
+## v0.1.0 (2026-04-03) — Production Cleanup
+
+### Changed
+
+- Default CLI is now Ink UI (React/Node.js); use `--lite` for print-based fallback
+- Updated `pyproject.toml` GitHub URLs from placeholder to `adamhong/llm-code`
+- README updated: Ink UI default, `--lite`/`--serve`/`--connect`/`--ssh` flags documented, ClawHub marketplace, cost tracking, model aliasing
+
+### Fixed
+
+- `[send error:]` debug print in `ink_bridge.py` replaced with `logging.debug`
+- Dead code: removed unused `removed` variable in `algorithms/gemma4_agent.py`
+- Bare `except:` in `algorithms/gemma4_agent.py` replaced with `except Exception:`
+- Unused `subargs` variable in `cli/tui.py` `/session` handler removed
+- Semicolons on same-line imports in `ink_bridge.py` split to two statements
+- Test `test_cli/test_image.py` updated: `detect_image_references` aliased to `extract_dropped_images`
+
+### Removed
+
+- `bubble_sort.py`, `multiplication.py`, `simple_demo.py` — development test artifacts
+- `llm_code/algorithms/` directory — unreferenced Gemma4 agent prototype
+
+### Chores
+
+- Ruff lint: 39 issues fixed (34 auto-fixed, 5 manually resolved)
+- All 1089 tests pass (3 skipped)
+
+## v0.1.0 — Initial Release (2026-04-03)
 
 ### Features
 

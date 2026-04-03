@@ -90,7 +90,6 @@ class ConversationRuntime:
         """Run one user turn (may involve multiple LLM calls for tool use)."""
         logger.debug("Starting turn: %s", user_input[:80])
         # 1. Add user message to session (with optional images)
-        from llm_code.api.types import ImageBlock as IB
         content_blocks: list = [TextBlock(text=user_input)]
         if images:
             content_blocks.extend(images)

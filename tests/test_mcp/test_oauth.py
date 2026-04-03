@@ -1,12 +1,10 @@
 """Tests for OAuth 2.0 + PKCE (Feature 4)."""
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from llm_code.mcp.oauth import OAuthClient, OAuthToken
 

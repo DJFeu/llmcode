@@ -213,7 +213,6 @@ class RemoteServer:
         from llm_code.runtime.prompt import SystemPromptBuilder
         from llm_code.runtime.session import Session
         from llm_code.tools.registry import ToolRegistry
-        from llm_code.runtime.model_aliases import resolve_model
 
         model = resolve_model(self._config.model, self._config.model_aliases)
         api_key = os.environ.get(self._config.provider_api_key_env, "")

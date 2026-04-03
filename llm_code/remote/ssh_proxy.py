@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import subprocess
-import sys
 
 
 async def ssh_connect(target: str, port: int = 8765) -> None:
@@ -44,7 +42,7 @@ async def ssh_connect(target: str, port: int = 8765) -> None:
         console.print(f"[red]SSH failed: {stderr[:200]}[/]")
         return
 
-    console.print(f"[green]✓ SSH tunnel established[/]")
+    console.print("[green]✓ SSH tunnel established[/]")
 
     # Connect to local forwarded port
     from llm_code.remote.client import RemoteClient

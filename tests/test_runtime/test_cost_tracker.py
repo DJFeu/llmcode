@@ -1,9 +1,8 @@
 """Tests for CostTracker."""
 from __future__ import annotations
 
-import pytest
 
-from llm_code.runtime.cost_tracker import CostTracker, BUILTIN_PRICING
+from llm_code.runtime.cost_tracker import CostTracker
 
 
 class TestCostTrackerDefaultPricing:

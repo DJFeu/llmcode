@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from llm_code.cli.image import detect_image_references, load_image_from_path
+from llm_code.cli.image import extract_dropped_images as detect_image_references, load_image_from_path
 
 
 # Minimal PNG: 1x1 red pixel

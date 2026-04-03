@@ -1,9 +1,8 @@
 """Tests for model alias resolution."""
 from __future__ import annotations
 
-import pytest
 
-from llm_code.runtime.model_aliases import resolve_model, BUILTIN_ALIASES
+from llm_code.runtime.model_aliases import resolve_model
 
 
 class TestBuiltinAliases:

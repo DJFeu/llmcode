@@ -10,7 +10,7 @@ import threading
 import time
 import urllib.parse
 import webbrowser
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 

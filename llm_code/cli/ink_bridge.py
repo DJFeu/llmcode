@@ -76,8 +76,8 @@ class InkBridge:
                 self._ink_process.stdin.write(line.encode())
                 await asyncio.wait_for(self._ink_process.stdin.drain(), timeout=3.0)
             except Exception as e:
-                import sys
-                print(f"[send error: {e}]", file=sys.stderr)
+                import logging
+                logging.getLogger(__name__).debug("IPC send error: %s", e)
 
     async def _read_loop(self) -> None:
         """Read messages from Ink frontend and handle them."""
@@ -450,7 +450,6 @@ class InkBridge:
 
         # Fetch npm MCP servers
         try:
-            from llm_code.marketplace.builtin_registry import search_clawhub_skills
             import httpx
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(
@@ -479,7 +478,8 @@ class InkBridge:
         configured = sum(1 for i in items if i.get("installed"))
         available = len(items) - configured
         title = f"MCP Servers ({configured} configured + {available} available)"
-        import time as _t2; await self._send({"type": "marketplace_show", "title": title, "items": items, "ts": _t2.time()})
+        import time as _t2
+        await self._send({"type": "marketplace_show", "title": title, "items": items, "ts": _t2.time()})
 
     async def _show_plugin_marketplace(self) -> None:
         """Build and send the plugin list."""
@@ -554,7 +554,8 @@ class InkBridge:
         installed_count = sum(1 for i in items if i.get("installed"))
         market_count = len(items) - installed_count
         title = f"Plugins ({installed_count} installed + {market_count} available)"
-        import time as _t2; await self._send({"type": "marketplace_show", "title": title, "items": items, "ts": _t2.time()})
+        import time as _t2
+        await self._send({"type": "marketplace_show", "title": title, "items": items, "ts": _t2.time()})
         return
         # Legacy text display (kept as fallback)
         installed = [it for it in items if it.get("installed")]
@@ -670,7 +671,6 @@ class InkBridge:
                 if repo:
                     await self._send({"type": "message", "text": f"Installing plugin '{name}' from {repo}…"})
                     try:
-                        import subprocess as _sp
                         dest = Path.home() / ".llm-code" / "plugins" / name
                         if dest.exists():
                             import shutil
@@ -798,14 +798,13 @@ class InkBridge:
 
     def _init_session(self) -> None:
         """Initialize the conversation runtime — same as LLMCodeCLI._init_session."""
-        import dataclasses
         from llm_code.api.client import ProviderClient
         from llm_code.runtime.context import ProjectContext
         from llm_code.runtime.conversation import ConversationRuntime
         from llm_code.runtime.hooks import HookRunner
         from llm_code.runtime.permissions import PermissionMode, PermissionPolicy
         from llm_code.runtime.prompt import SystemPromptBuilder
-        from llm_code.runtime.session import Session, SessionManager
+        from llm_code.runtime.session import Session
         from llm_code.tools.registry import ToolRegistry
 
         # Build provider
@@ -951,7 +950,6 @@ class InkBridge:
         if not self._runtime or not self._runtime.session:
             return
 
-        import sys
         print("\n[dim]Saving session...[/]", file=sys.stderr)
 
         # 1. Save session to disk
