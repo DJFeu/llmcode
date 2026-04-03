@@ -282,29 +282,24 @@ class InkBridge:
             await self._send({"type": "message", "text": f"Command /{name} not recognized. Type /help for available commands."})
 
     async def _show_skill_marketplace(self) -> None:
-        """Build and send the skill marketplace list — local first, then async fetch."""
-        all_skills = []
-        if self._skills:
-            all_skills = list(self._skills.auto_skills) + list(self._skills.command_skills)
+        """List installed skills as text."""
+        try:
+            all_skills = []
+            if self._skills:
+                all_skills = list(self._skills.auto_skills) + list(self._skills.command_skills)
 
-        items: list[dict] = []
-        for s in all_skills:
-            tokens = len(s.content) // 4
-            items.append({
-                "name": s.name,
-                "description": f"~{tokens} tokens",
-                "installed": True,
-                "index": len(items),
-            })
-
-        # Display as text messages (always works, no React state issues)
-        lines = [f"Skills ({len(items)} installed)"]
-        for it in items:
-            lines.append(f"  ● {it['name']}  · {it['description']}")
-        lines.append("")
-        lines.append("  /skill enable|disable|remove <name>")
-        lines.append("  /skill search <keyword> — search marketplace")
-        await self._send({"type": "message", "text": "\n".join(lines)})
+            lines = [f"Skills ({len(all_skills)} installed)"]
+            for s in all_skills:
+                tokens = len(s.content) // 4
+                lines.append(f"  ● {s.name}  · ~{tokens} tokens")
+            if not all_skills:
+                lines.append("  (no skills loaded)")
+            lines.append("")
+            lines.append("  /skill enable|disable|remove <name>")
+            lines.append("  /skill search <keyword>")
+            await self._send({"type": "message", "text": "\n".join(lines)})
+        except Exception as exc:
+            await self._send({"type": "error", "message": f"Error listing skills: {exc}"})
 
     async def _show_mcp_marketplace(self) -> None:
         """Build and send the MCP server list."""
