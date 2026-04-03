@@ -12,9 +12,11 @@ from pydantic import BaseModel, ValidationError, field_validator
 
 @dataclass(frozen=True)
 class HookConfig:
-    event: str          # "pre_tool_use" | "post_tool_use" | "on_stop"
+    event: str          # "pre_tool_use" | "post_tool_use" | "on_stop" | glob pattern
     command: str
     tool_pattern: str = "*"
+    timeout: float = 10.0
+    on_error: str = "warn"  # "warn" | "deny" | "ignore"
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,7 @@ class VisionConfig:
 class ModelRoutingConfig:
     sub_agent: str = ""
     compaction: str = ""
+    fallback: str = ""
 
 
 @dataclass(frozen=True)
@@ -197,6 +200,8 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
             event=h["event"],
             command=h["command"],
             tool_pattern=h.get("tool_pattern", "*"),
+            timeout=float(h.get("timeout", 10.0)),
+            on_error=h.get("on_error", "warn"),
         )
         for h in hooks_raw
         if isinstance(h, dict) and "event" in h and "command" in h
@@ -213,6 +218,7 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
     model_routing = ModelRoutingConfig(
         sub_agent=routing_raw.get("sub_agent", ""),
         compaction=routing_raw.get("compaction", ""),
+        fallback=routing_raw.get("fallback", ""),
     )
 
     allow_tools = permissions.get("allow_tools", data.get("allowed_tools", []))

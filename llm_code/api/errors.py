@@ -42,6 +42,13 @@ class ProviderModelNotFoundError(ProviderError):
         super().__init__(message, is_retryable=False)
 
 
+class ProviderOverloadError(ProviderError):
+    """Provider is overloaded (HTTP 529); retryable with long backoff."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, is_retryable=True)
+
+
 class ToolError(LLMCodeError):
     """Base exception for tool-related errors."""
 

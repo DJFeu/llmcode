@@ -32,6 +32,24 @@ class ToolRegistry:
             tools = (t for t in tools if t.name in allowed)  # type: ignore[assignment]
         return tuple(t.to_definition() for t in tools)
 
+    def definitions_with_deferred(
+        self,
+        allowed: set[str] | None = None,
+        max_visible: int = 20,
+    ) -> tuple[tuple[ToolDefinition, ...], int]:
+        """Return (visible_definitions, deferred_count) using DeferredToolManager.
+
+        Core tools are always visible; remaining tools fill slots up to
+        max_visible; the rest are deferred.  Returns the visible definitions
+        as a tuple and the count of deferred tools as an integer.
+        """
+        from llm_code.tools.deferred import DeferredToolManager
+
+        all_defs = list(self.definitions(allowed=allowed))
+        manager = DeferredToolManager()
+        visible, deferred = manager.select_tools(all_defs, max_visible=max_visible)
+        return tuple(visible), len(deferred)
+
     def execute(self, name: str, args: dict) -> ToolResult:
         """Execute a tool by name; returns is_error=True if tool not found."""
         tool = self._tools.get(name)

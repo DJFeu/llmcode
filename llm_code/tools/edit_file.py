@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import pathlib
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
 from llm_code.tools.base import PermissionLevel, Tool, ToolResult
+
+if TYPE_CHECKING:
+    from llm_code.runtime.overlay import OverlayFS
 
 
 class EditFileInput(BaseModel):
@@ -49,16 +53,23 @@ class EditFileTool(Tool):
     def input_model(self) -> type[EditFileInput]:
         return EditFileInput
 
-    def execute(self, args: dict) -> ToolResult:
+    def execute(self, args: dict, overlay: "OverlayFS | None" = None) -> ToolResult:
         path = pathlib.Path(args["path"])
         old: str = args["old"]
         new: str = args["new"]
         replace_all: bool = bool(args.get("replace_all", False))
 
-        if not path.exists():
-            return ToolResult(output=f"File not found: {path}", is_error=True)
+        # Resolve content source: overlay first, then real FS
+        if overlay is not None:
+            try:
+                content = overlay.read(path)
+            except FileNotFoundError:
+                return ToolResult(output=f"File not found: {path}", is_error=True)
+        else:
+            if not path.exists():
+                return ToolResult(output=f"File not found: {path}", is_error=True)
+            content = path.read_text()
 
-        content = path.read_text()
         count = content.count(old)
 
         if count == 0:
@@ -74,7 +85,10 @@ class EditFileTool(Tool):
             new_content = content.replace(old, new, 1)
             replaced = 1
 
-        path.write_text(new_content)
+        if overlay is not None:
+            overlay.write(path, new_content)
+        else:
+            path.write_text(new_content)
 
         # Generate structured diff
         from llm_code.utils.diff import generate_diff, count_changes

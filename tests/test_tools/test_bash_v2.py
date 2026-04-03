@@ -79,8 +79,8 @@ class TestIsReadOnly:
             "git branch",
             "git remote -v",
             "git tag",
-            "env",
-            "printenv PATH",
+            # Note: "env" and "printenv" are now flagged by R12 (env leak) and
+            # are no longer considered purely read-only. See test_bash_security.py.
             "id",
             "hostname",
             "df -h",
@@ -148,7 +148,8 @@ class TestIsDestructive:
             "ls",
             "cat file.txt",
             "npm install",
-            "pip install requests",
+            # Note: "pip install requests" is now flagged by R15 (system packages)
+            # and is considered destructive. See test_bash_security.py.
             "git status",
             "git log",
             "git diff",

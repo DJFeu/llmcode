@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import pathlib
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
 from llm_code.tools.base import PermissionLevel, Tool, ToolResult
+
+if TYPE_CHECKING:
+    from llm_code.runtime.overlay import OverlayFS
 
 
 class WriteFileInput(BaseModel):
@@ -41,12 +45,40 @@ class WriteFileTool(Tool):
     def input_model(self) -> type[WriteFileInput]:
         return WriteFileInput
 
-    def execute(self, args: dict) -> ToolResult:
+    def execute(self, args: dict, overlay: "OverlayFS | None" = None) -> ToolResult:
         path = pathlib.Path(args["path"])
         content: str = args["content"]
 
+        if overlay is not None:
+            # Speculative mode: write to overlay, read old content from overlay/real FS
+            old_content: str | None = None
+            try:
+                old_content = overlay.read(path)
+            except FileNotFoundError:
+                pass
+
+            overlay.write(path, content)
+
+            line_count = len(content.splitlines())
+            output = f"Wrote {line_count} lines to {path}"
+
+            metadata: dict | None = None
+            if old_content is not None and old_content != content:
+                from llm_code.utils.diff import generate_diff, count_changes
+
+                hunks = generate_diff(old_content, content, path.name)
+                adds, dels = count_changes(hunks)
+                metadata = {
+                    "diff": [h.to_dict() for h in hunks],
+                    "additions": adds,
+                    "deletions": dels,
+                }
+
+            return ToolResult(output=output, metadata=metadata)
+
+        # Normal mode: write directly to the real filesystem
         # Capture old content if overwriting
-        old_content: str | None = None
+        old_content = None
         if path.exists():
             old_content = path.read_text()
 
@@ -57,7 +89,7 @@ class WriteFileTool(Tool):
         output = f"Wrote {line_count} lines to {path}"
 
         # Generate diff for overwrites
-        metadata: dict | None = None
+        metadata = None
         if old_content is not None and old_content != content:
             from llm_code.utils.diff import generate_diff, count_changes
 

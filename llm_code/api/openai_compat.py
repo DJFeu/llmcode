@@ -11,6 +11,7 @@ from llm_code.api.errors import (
     ProviderAuthError,
     ProviderConnectionError,
     ProviderModelNotFoundError,
+    ProviderOverloadError,
     ProviderRateLimitError,
 )
 from llm_code.api.provider import LLMProvider
@@ -181,15 +182,30 @@ class OpenAICompatProvider(LLMProvider):
         url = f"{self._base_url}/chat/completions"
         last_exc: Exception | None = None
 
-        for attempt in range(self._max_retries + 1):
+        # 529 Overload: separate long-backoff retry track (30s -> 60s -> 120s, max 3 attempts)
+        _OVERLOAD_BACKOFFS = [30, 60, 120]
+        _overload_attempt = 0
+        attempt = 0
+
+        while attempt <= self._max_retries:
             try:
                 response = await self._client.post(url, json=payload)
                 self._raise_for_status(response)
                 return response
+            except ProviderOverloadError as exc:
+                last_exc = exc
+                if _overload_attempt < len(_OVERLOAD_BACKOFFS):
+                    backoff = _OVERLOAD_BACKOFFS[_overload_attempt]
+                    _overload_attempt += 1
+                    await asyncio.sleep(backoff)
+                    # Overload retries don't count against normal retry budget
+                    continue
+                raise
             except (ProviderConnectionError, ProviderRateLimitError) as exc:
                 last_exc = exc
                 if attempt < self._max_retries:
                     await asyncio.sleep(2 ** attempt)
+                    attempt += 1
                     continue
                 raise
             except (ProviderAuthError, ProviderModelNotFoundError):
@@ -198,8 +214,10 @@ class OpenAICompatProvider(LLMProvider):
                 last_exc = ProviderConnectionError(str(exc))
                 if attempt < self._max_retries:
                     await asyncio.sleep(2 ** attempt)
+                    attempt += 1
                     continue
                 raise last_exc from exc
+            attempt += 1
 
         raise last_exc  # type: ignore[misc]
 
@@ -218,6 +236,8 @@ class OpenAICompatProvider(LLMProvider):
             raise ProviderModelNotFoundError(msg)
         if response.status_code == 429:
             raise ProviderRateLimitError(msg)
+        if response.status_code == 529:
+            raise ProviderOverloadError(msg)
         if response.status_code >= 500:
             raise ProviderConnectionError(msg)
         # Other 4xx — treat as connection error

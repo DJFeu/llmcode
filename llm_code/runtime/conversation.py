@@ -94,6 +94,7 @@ class ConversationRuntime:
         checkpoint_manager: Any = None,
         token_budget: Any = None,
         vcr_recorder: Any = None,
+        deferred_tool_manager: Any = None,
     ) -> None:
         self._provider = provider
         self._tool_registry = tool_registry
@@ -106,7 +107,10 @@ class ConversationRuntime:
         self._checkpoint_mgr = checkpoint_manager
         self._token_budget = token_budget
         self._vcr_recorder = vcr_recorder
+        self._deferred_tool_manager = deferred_tool_manager
         self._has_attempted_reactive_compact = False
+        self._consecutive_failures: int = 0
+        self._active_model: str = getattr(config, "model", "")
         self._hida_classifier: Any | None = None
         self._hida_engine: Any | None = None
         self._last_hida_profile: Any | None = None
@@ -137,6 +141,12 @@ class ConversationRuntime:
         accumulated_usage = TokenUsage(input_tokens=0, output_tokens=0)
         self._has_attempted_reactive_compact = False
         force_xml = getattr(self, "_force_xml_mode", False)
+        # Token limit auto-upgrade state: reset each turn, doubles on max_tokens stop
+        _current_max_tokens: int = self._config.max_tokens
+        # Local models (localhost/private network) have no cost concern — no cap
+        _base_url = getattr(self._config, "provider_base_url", "") or ""
+        _is_local = any(h in _base_url for h in ("localhost", "127.0.0.1", "0.0.0.0", "192.168.", "10.", "172."))
+        _TOKEN_UPGRADE_CAP = 0 if _is_local else 65536  # 0 means unlimited
 
         for _iteration in range(self._config.max_turn_iterations):
             # HIDA dynamic context filtering
@@ -161,22 +171,44 @@ class ConversationRuntime:
 
             # 2. Build system prompt
             use_native = getattr(self._provider, "supports_native_tools", lambda: True)() and not force_xml
-            tool_defs = self._tool_registry.definitions(
-                allowed=allowed_tool_names,
-            )
+
+            # Deferred tool loading: when a manager is present, split tools into
+            # visible and deferred; inject a hint into the system prompt.
+            _deferred_hint: str | None = None
+            if self._deferred_tool_manager is not None:
+                all_defs = list(self._tool_registry.definitions(allowed=allowed_tool_names))
+                max_visible = getattr(self._config, "max_visible_tools", 20)
+                visible_list, deferred_list = self._deferred_tool_manager.select_tools(
+                    all_defs, max_visible=max_visible
+                )
+                tool_defs = tuple(visible_list)
+                if deferred_list:
+                    _deferred_count = len(deferred_list)
+                    _deferred_hint = (
+                        "## Tool Discovery\n\n"
+                        f"There are {_deferred_count} additional tool(s) not shown here. "
+                        "Use the 'tool_search' tool with a query to find and unlock them."
+                    )
+            else:
+                tool_defs = self._tool_registry.definitions(
+                    allowed=allowed_tool_names,
+                )
+
             system_prompt = self._prompt_builder.build(
                 self._context,
                 tools=tool_defs,
                 native_tools=use_native,
             )
+            if _deferred_hint:
+                system_prompt = system_prompt + "\n\n" + _deferred_hint
 
             # 3. Create request and stream
             request = MessageRequest(
-                model=getattr(self._config, "model", ""),
+                model=self._active_model,
                 messages=self.session.messages,
                 system=system_prompt,
                 tools=tool_defs if use_native else (),
-                max_tokens=self._config.max_tokens,
+                max_tokens=_current_max_tokens,
                 temperature=self._config.temperature,
                 extra_body=build_thinking_extra_body(self._config.thinking) if not use_native else None,
             )
@@ -201,11 +233,11 @@ class ConversationRuntime:
                         self._context, tools=tool_defs, native_tools=False,
                     )
                     request = MessageRequest(
-                        model=getattr(self._config, "model", ""),
+                        model=self._active_model,
                         messages=self.session.messages,
                         system=system_prompt,
                         tools=(),
-                        max_tokens=self._config.max_tokens,
+                        max_tokens=_current_max_tokens,
                         temperature=self._config.temperature,
                         extra_body=build_thinking_extra_body(self._config.thinking),
                     )
@@ -222,8 +254,31 @@ class ConversationRuntime:
                         self._config.compact_after_tokens // 2,
                     )
                     continue  # retry this iteration of the turn loop
-                logger.error("Provider stream error: %s", exc)
-                raise
+                else:
+                    # Layer 3: model fallback — track consecutive provider errors
+                    self._consecutive_failures += 1
+                    _fallback = getattr(
+                        getattr(self._config, "model_routing", None), "fallback", ""
+                    )
+                    if _fallback and self._active_model != _fallback:
+                        # Still have retries remaining before switching — retry same model
+                        if self._consecutive_failures < 3:
+                            logger.warning(
+                                "Provider error (attempt %d/3): %s",
+                                self._consecutive_failures,
+                                exc,
+                            )
+                            continue  # retry this iteration
+                        # 3rd consecutive failure: switch to fallback model
+                        logger.warning(
+                            "3 consecutive provider errors; switching from %s to fallback model %s",
+                            self._active_model,
+                            _fallback,
+                        )
+                        self._active_model = _fallback
+                        continue  # retry with fallback model
+                    logger.error("Provider stream error: %s", exc)
+                    raise
 
             # 4. Collect events and buffers
             text_parts: list[str] = []
@@ -249,12 +304,28 @@ class ConversationRuntime:
                 elif isinstance(event, StreamMessageStop):
                     stop_event = event
 
+            # Reset consecutive failure counter on successful stream
+            self._consecutive_failures = 0
+
             # Accumulate usage
             if stop_event:
                 accumulated_usage = TokenUsage(
                     input_tokens=accumulated_usage.input_tokens + stop_event.usage.input_tokens,
                     output_tokens=accumulated_usage.output_tokens + stop_event.usage.output_tokens,
                 )
+
+            # Layer 2: Token limit auto-upgrade
+            # If the model stopped due to hitting max_tokens, double the limit and retry
+            if stop_event is not None and stop_event.stop_reason in ("max_tokens", "length"):
+                _upgraded = _current_max_tokens * 2 if _TOKEN_UPGRADE_CAP == 0 else min(_current_max_tokens * 2, _TOKEN_UPGRADE_CAP)
+                if _upgraded > _current_max_tokens:
+                    logger.warning(
+                        "Hit max_tokens limit (%d); upgrading to %d and retrying",
+                        _current_max_tokens,
+                        _upgraded,
+                    )
+                    _current_max_tokens = _upgraded
+                    continue  # retry this iteration with higher token limit
 
             # Build native tool call list for parsing
             for call_data in native_tool_calls.values():
@@ -418,12 +489,37 @@ class ConversationRuntime:
             return
 
         if outcome == PermissionOutcome.NEED_PROMPT:
-            # NEED_PROMPT without a UI → deny
-            yield ToolResultBlock(
-                tool_use_id=call.id,
-                content=f"Tool '{call.name}' requires user approval (not available in this context)",
-                is_error=True,
-            )
+            # Attempt speculative pre-execution via overlay so the result is
+            # ready the moment the user approves.  Tools that do not support
+            # the overlay kwarg fall through to a plain deny.
+            try:
+                from llm_code.runtime.speculative import SpeculativeExecutor
+                import uuid as _uuid
+                session_id = f"{call.name}-{_uuid.uuid4().hex[:8]}"
+                spec_executor = SpeculativeExecutor(
+                    tool=tool,
+                    args=validated_args,
+                    base_dir=self._context.cwd,
+                    session_id=session_id,
+                )
+                pre_result = spec_executor.pre_execute()
+                # Deny by default (no UI to prompt user in this context)
+                spec_executor.deny()
+                yield ToolResultBlock(
+                    tool_use_id=call.id,
+                    content=(
+                        f"Tool '{call.name}' requires user approval (not available in this context). "
+                        f"Pre-computed result: {pre_result.output}"
+                    ),
+                    is_error=True,
+                )
+            except Exception:
+                # Fallback: plain deny if speculative execution fails
+                yield ToolResultBlock(
+                    tool_use_id=call.id,
+                    content=f"Tool '{call.name}' requires user approval (not available in this context)",
+                    is_error=True,
+                )
             return
 
         # 4b. Create checkpoint before mutating tools
