@@ -371,7 +371,7 @@ Supports **stdio**, **HTTP**, **SSE**, and **WebSocket** transports with health 
 |---------|-------------|
 | `/help` | Show all commands |
 | `/model <name>` | Switch model |
-| `/config` | View/edit configuration |
+| `/config` | View/set runtime configuration |
 | `/session` | Session management |
 | `/skill` | Browse & install skills |
 | `/plugin` | Browse & install plugins |

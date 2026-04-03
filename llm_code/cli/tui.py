@@ -895,6 +895,11 @@ class LLMCodeCLI:
         elif name == "checkpoint":
             self._handle_checkpoint_command(args)
 
+        elif name == "cancel":
+            if self._runtime and hasattr(self._runtime, '_cancel'):
+                self._runtime._cancel()
+            console.print("[dim](cancelled)[/]")
+
         else:
             console.print(f"[red]Unknown command: /{name} -- type /help for help[/]")
 
