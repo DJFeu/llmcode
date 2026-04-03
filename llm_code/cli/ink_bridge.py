@@ -8,9 +8,12 @@ import sys
 import time
 from pathlib import Path
 
+from llm_code.logging import get_logger
 from llm_code.runtime.config import RuntimeConfig
 from llm_code.runtime.cost_tracker import CostTracker
 from llm_code.runtime.model_aliases import resolve_model
+
+logger = get_logger(__name__)
 
 
 class InkBridge:
@@ -54,6 +57,7 @@ class InkBridge:
 
         # Initialize backend
         self._init_session()
+        await self._init_mcp_servers()
 
         # Start cron scheduler
         self._cron_scheduler_task = None
@@ -1641,7 +1645,43 @@ class InkBridge:
             session=session,
             context=context,
             checkpoint_manager=checkpoint_mgr,
+            skills=self._skills,
+            memory_store=self._memory,
+            task_manager=self._task_manager,
         )
+        self._tool_reg = registry
+
+    async def _init_mcp_servers(self) -> None:
+        """Start MCP servers and register their tools."""
+        if not self._config.mcp_servers:
+            self._mcp_manager = None
+            return
+        try:
+            from llm_code.mcp.manager import McpServerManager
+            from llm_code.mcp.types import McpServerConfig
+
+            manager = McpServerManager()
+            configs: dict[str, McpServerConfig] = {}
+            for name, raw in self._config.mcp_servers.items():
+                if isinstance(raw, dict):
+                    configs[name] = McpServerConfig(
+                        command=raw.get("command"),
+                        args=tuple(raw.get("args", ())),
+                        env=raw.get("env"),
+                        transport_type=raw.get("transport_type", "stdio"),
+                        url=raw.get("url"),
+                        headers=raw.get("headers"),
+                    )
+            await manager.start_all(configs)
+            registered = await manager.register_all_tools(self._tool_reg)
+            self._mcp_manager = manager
+            if self._runtime is not None:
+                self._runtime._mcp_manager = manager
+            if registered:
+                await self._send({"type": "system", "text": f"MCP: {len(configs)} server(s), {registered} tool(s) registered"})
+        except Exception as exc:
+            logger.warning("MCP initialization failed: %s", exc)
+            self._mcp_manager = None
 
     def _detect_git_branch(self) -> str:
         import subprocess

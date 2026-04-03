@@ -102,6 +102,10 @@ class ConversationRuntime:
         telemetry: Telemetry | None = None,
         recovery_checkpoint: Any = None,
         cost_tracker: Any = None,
+        skills: Any = None,
+        mcp_manager: Any = None,
+        memory_store: Any = None,
+        task_manager: Any = None,
     ) -> None:
         self._provider = provider
         self._tool_registry = tool_registry
@@ -118,6 +122,10 @@ class ConversationRuntime:
         self._telemetry: Telemetry = telemetry if telemetry is not None else get_noop_telemetry()
         self._recovery_checkpoint = recovery_checkpoint
         self._cost_tracker = cost_tracker
+        self._skills = skills
+        self._mcp_manager = mcp_manager
+        self._memory_store = memory_store
+        self._task_manager = task_manager
         self._has_attempted_reactive_compact = False
         self._consecutive_failures: int = 0
         self._compressor = ContextCompressor()
@@ -216,10 +224,27 @@ class ConversationRuntime:
                     allowed=allowed_tool_names,
                 )
 
+            # Collect MCP instructions if manager is available
+            _mcp_instructions: dict[str, str] | None = None
+            if self._mcp_manager is not None:
+                _mcp_instructions = self._mcp_manager.get_all_instructions() or None
+
+            # Collect memory entries if store is available
+            _memory_entries: dict | None = None
+            if self._memory_store is not None and hasattr(self._memory_store, "list_entries"):
+                try:
+                    _memory_entries = self._memory_store.list_entries() or None
+                except Exception:
+                    pass
+
             system_prompt = self._prompt_builder.build(
                 self._context,
                 tools=tool_defs,
                 native_tools=use_native,
+                skills=self._skills,
+                mcp_instructions=_mcp_instructions,
+                memory_entries=_memory_entries,
+                task_manager=self._task_manager,
             )
             if _deferred_hint:
                 system_prompt = system_prompt + "\n\n" + _deferred_hint
@@ -252,7 +277,13 @@ class ConversationRuntime:
                     self._force_xml_mode = True
                     # Rebuild request without tools
                     system_prompt = self._prompt_builder.build(
-                        self._context, tools=tool_defs, native_tools=False,
+                        self._context,
+                        tools=tool_defs,
+                        native_tools=False,
+                        skills=self._skills,
+                        mcp_instructions=_mcp_instructions,
+                        memory_entries=_memory_entries,
+                        task_manager=self._task_manager,
                     )
                     request = MessageRequest(
                         model=self._active_model,

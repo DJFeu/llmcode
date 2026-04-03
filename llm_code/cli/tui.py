@@ -22,6 +22,7 @@ from llm_code.api.types import (
     StreamToolProgress,
 )
 from llm_code.cli.commands import parse_slash_command
+from llm_code.logging import get_logger
 from llm_code.runtime.config import RuntimeConfig
 from llm_code.runtime.cost_tracker import CostTracker
 from llm_code.runtime.model_aliases import resolve_model
@@ -54,6 +55,7 @@ from llm_code.tools.write_file import WriteFileTool
 _TRUNCATION_THRESHOLD = 50  # lines before truncation notice
 
 console = Console()
+logger = get_logger(__name__)
 
 
 def _format_tool_call(tool_name: str, args_summary: str) -> str:
@@ -351,20 +353,7 @@ class LLMCodeCLI:
             from llm_code.runtime.token_budget import TokenBudget
             token_budget = TokenBudget(target=self._budget)
 
-        self._runtime = ConversationRuntime(
-            provider=provider,
-            tool_registry=self._tool_reg,
-            permission_policy=permissions,
-            hook_runner=hooks,
-            prompt_builder=prompt_builder,
-            config=self._config,
-            session=session,
-            context=context,
-            checkpoint_manager=checkpoint_mgr,
-            token_budget=token_budget,
-            recovery_checkpoint=recovery_checkpoint,
-        )
-
+        # Skills — load before runtime so we can pass them in
         # Skills
         from llm_code.runtime.skills import SkillLoader
         from llm_code.marketplace.installer import PluginInstaller
@@ -523,6 +512,57 @@ class LLMCodeCLI:
                 self._ide_bridge = None
         else:
             self._ide_bridge = None
+
+        # Create runtime with skills, memory, and task manager references
+        self._runtime = ConversationRuntime(
+            provider=provider,
+            tool_registry=self._tool_reg,
+            permission_policy=permissions,
+            hook_runner=hooks,
+            prompt_builder=prompt_builder,
+            config=self._config,
+            session=session,
+            context=context,
+            checkpoint_manager=checkpoint_mgr,
+            token_budget=token_budget,
+            recovery_checkpoint=recovery_checkpoint,
+            skills=self._skills,
+            memory_store=self._memory,
+            task_manager=self._task_manager,
+        )
+
+    async def _init_mcp_servers(self) -> None:
+        """Start MCP servers and register their tools (async, called after _init_session)."""
+        if not self._config.mcp_servers:
+            self._mcp_manager = None
+            return
+        try:
+            from llm_code.mcp.manager import McpServerManager
+            from llm_code.mcp.types import McpServerConfig
+
+            manager = McpServerManager()
+            # Convert raw config dicts to McpServerConfig
+            configs: dict[str, McpServerConfig] = {}
+            for name, raw in self._config.mcp_servers.items():
+                if isinstance(raw, dict):
+                    configs[name] = McpServerConfig(
+                        command=raw.get("command"),
+                        args=tuple(raw.get("args", ())),
+                        env=raw.get("env"),
+                        transport_type=raw.get("transport_type", "stdio"),
+                        url=raw.get("url"),
+                        headers=raw.get("headers"),
+                    )
+            await manager.start_all(configs)
+            registered = await manager.register_all_tools(self._tool_reg)
+            self._mcp_manager = manager
+            if self._runtime is not None:
+                self._runtime._mcp_manager = manager
+            if registered:
+                console.print(f"[dim]MCP: {len(configs)} server(s), {registered} tool(s) registered[/]")
+        except Exception as exc:
+            logger.warning("MCP initialization failed: %s", exc)
+            self._mcp_manager = None
 
     # ── Display Helpers ─────────────────────────────────────────────
 
@@ -1821,6 +1861,7 @@ class LLMCodeCLI:
 
         self._render_welcome()
         self._init_session()
+        await self._init_mcp_servers()
 
         # Non-blocking version check — fire and forget
         async def _version_check_bg() -> None:
