@@ -69,26 +69,6 @@ export function App() {
         break;
       case 'message':
         addEntry({ type: 'info', text: msg.text, style: msg.style });
-        // TEST: if message contains "Skills", show marketplace
-        if (msg.text && msg.text.startsWith('Skills (')) {
-          // Parse items from the text
-          const testItems: MarketplaceItem[] = [];
-          const lines = msg.text.split('\n');
-          for (const line of lines) {
-            const match = line.match(/^\s+(\d+)\s+([●○])\s+(.+?)\s+·\s+(.+?)(\s+\(installed\))?$/);
-            if (match) {
-              testItems.push({
-                name: match[3].trim(),
-                description: match[4].trim(),
-                installed: match[2] === '●',
-                index: testItems.length,
-              });
-            }
-          }
-          if (testItems.length > 0) {
-            setMarketplace({ title: `Skills (${testItems.length})`, items: testItems });
-          }
-        }
         break;
       case 'error':
         addEntry({ type: 'error', text: msg.message });
