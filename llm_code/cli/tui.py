@@ -43,6 +43,8 @@ from llm_code.tools.git_tools import (
 )
 from llm_code.tools.glob_search import GlobSearchTool
 from llm_code.tools.grep_search import GrepSearchTool
+from llm_code.tools.notebook_edit import NotebookEditTool
+from llm_code.tools.notebook_read import NotebookReadTool
 from llm_code.tools.read_file import ReadFileTool
 from llm_code.tools.registry import ToolRegistry
 from llm_code.tools.write_file import WriteFileTool
@@ -272,6 +274,8 @@ class LLMCodeCLI:
             BashTool(),
             GlobSearchTool(),
             GrepSearchTool(),
+            NotebookReadTool(),
+            NotebookEditTool(),
         ):
             try:
                 self._tool_reg.register(tool)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import pathlib
 
 from pydantic import BaseModel
@@ -13,6 +14,8 @@ class ReadFileInput(BaseModel):
     path: str
     offset: int = 1
     limit: int = 2000
+
+_NOTEBOOK_EXTENSION = ".ipynb"
 
 _IMAGE_EXTENSIONS = {
     ".png": "image/png",
@@ -81,10 +84,38 @@ class ReadFileTool(Tool):
             return ToolResult(output=f"File not found: {path}", is_error=True)
 
         suffix = path.suffix.lower()
+
+        if suffix == _NOTEBOOK_EXTENSION:
+            return self._read_notebook(path)
+
         if suffix in _IMAGE_EXTENSIONS:
             return self._read_image(path, _IMAGE_EXTENSIONS[suffix])
 
         return self._read_text(path, offset, limit)
+
+    def _read_notebook(self, path: pathlib.Path) -> ToolResult:
+        from llm_code.utils.notebook import format_cells, parse_notebook, validate_notebook
+
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            return ToolResult(output=f"Failed to parse notebook JSON: {exc}", is_error=True)
+
+        if not validate_notebook(data):
+            return ToolResult(
+                output="Invalid notebook: requires nbformat >= 4 and a cells list.",
+                is_error=True,
+            )
+
+        cells = parse_notebook(data)
+        output_text = format_cells(cells)
+
+        all_images: list[dict] = []
+        for cell in cells:
+            all_images.extend(cell.images)
+
+        metadata: dict | None = {"images": all_images} if all_images else None
+        return ToolResult(output=output_text, metadata=metadata)
 
     def _read_image(self, path: pathlib.Path, media_type: str) -> ToolResult:
         data = base64.b64encode(path.read_bytes()).decode()

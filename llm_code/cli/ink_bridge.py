@@ -829,9 +829,11 @@ class InkBridge:
         from llm_code.tools.bash import BashTool
         from llm_code.tools.glob_search import GlobSearchTool
         from llm_code.tools.grep_search import GrepSearchTool
+        from llm_code.tools.notebook_read import NotebookReadTool
+        from llm_code.tools.notebook_edit import NotebookEditTool
 
         registry = ToolRegistry()
-        for cls in (ReadFileTool, WriteFileTool, EditFileTool, BashTool, GlobSearchTool, GrepSearchTool):
+        for cls in (ReadFileTool, WriteFileTool, EditFileTool, BashTool, GlobSearchTool, GrepSearchTool, NotebookReadTool, NotebookEditTool):
             registry.register(cls())
 
         # Git tools
