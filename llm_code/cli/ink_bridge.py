@@ -278,12 +278,12 @@ class InkBridge:
             await self._send({"type": "message", "text": f"Command /{name} not recognized. Type /help for available commands."})
 
     async def _show_skill_marketplace(self) -> None:
-        """Build and send the skill marketplace list."""
+        """Build and send the skill marketplace list — local first, then async fetch."""
         all_skills = []
         if self._skills:
             all_skills = list(self._skills.auto_skills) + list(self._skills.command_skills)
 
-        items = []
+        items: list[dict] = []
         for s in all_skills:
             tokens = len(s.content) // 4
             items.append({
@@ -293,9 +293,14 @@ class InkBridge:
                 "index": len(items),
             })
 
-        # Fetch marketplace skills (with 5s timeout)
+        # Send local skills immediately so UI shows something
+        if items:
+            self._current_marketplace = {"type": "skill", "items": list(items)}
+            await self._send({"type": "marketplace_show", "title": f"Skills ({len(items)} installed, loading marketplace...)", "items": items})
+
+        # Fetch marketplace (npm + ClawHub) with timeout
         try:
-            market = await asyncio.wait_for(self._fetch_marketplace_skills(), timeout=5.0)
+            market = await asyncio.wait_for(self._fetch_marketplace_skills(), timeout=8.0)
             installed_names = {s.name for s in all_skills}
             for pkg_name, desc in market:
                 if pkg_name not in installed_names:
@@ -306,10 +311,17 @@ class InkBridge:
                         "index": len(items),
                     })
         except Exception:
-            pass
+            pass  # Show whatever we have
 
+        # Send final list (with marketplace results if any)
         self._current_marketplace = {"type": "skill", "items": items}
-        await self._send({"type": "marketplace_show", "title": f"Skills ({len(items)})", "items": items})
+        installed_count = sum(1 for i in items if i.get("installed"))
+        market_count = len(items) - installed_count
+        title = f"Skills ({installed_count} installed"
+        if market_count > 0:
+            title += f" + {market_count} available"
+        title += ")"
+        await self._send({"type": "marketplace_show", "title": title, "items": items})
 
     async def _show_mcp_marketplace(self) -> None:
         """Build and send the MCP server list."""
