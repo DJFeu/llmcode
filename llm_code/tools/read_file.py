@@ -85,6 +85,12 @@ class ReadFileTool(Tool):
         if not path.exists():
             return ToolResult(output=f"File not found: {path}", is_error=True)
 
+        if path.is_dir():
+            return ToolResult(
+                output=f"Path is a directory, not a file: {path}\nUse glob_search or bash 'ls' to list directory contents.",
+                is_error=True,
+            )
+
         read_check = check_read(str(path))
         read_warning = read_check.reason if read_check.severity == "warn" else ""
 
