@@ -405,7 +405,7 @@ class InkBridge:
         configured = sum(1 for i in items if i.get("installed"))
         available = len(items) - configured
         title = f"MCP Servers ({configured} configured + {available} available)"
-        await self._send({"type": "marketplace_show", "title": title, "items": items})
+        import time as _t2; await self._send({"type": "marketplace_show", "title": title, "items": items, "ts": _t2.time()})
 
     async def _show_plugin_marketplace(self) -> None:
         """Build and send the plugin list."""
@@ -480,7 +480,7 @@ class InkBridge:
         installed_count = sum(1 for i in items if i.get("installed"))
         market_count = len(items) - installed_count
         title = f"Plugins ({installed_count} installed + {market_count} available)"
-        await self._send({"type": "marketplace_show", "title": title, "items": items})
+        import time as _t2; await self._send({"type": "marketplace_show", "title": title, "items": items, "ts": _t2.time()})
         return
         # Legacy text display (kept as fallback)
         installed = [it for it in items if it.get("installed")]
