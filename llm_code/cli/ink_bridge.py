@@ -510,8 +510,60 @@ class InkBridge:
         elif name == "vcr":
             await self._handle_vcr_command(args)
 
+        elif name == "hida":
+            if self._runtime and hasattr(self._runtime, "_last_hida_profile"):
+                profile = self._runtime._last_hida_profile
+                if profile is not None:
+                    from llm_code.hida.engine import HidaEngine
+                    engine = HidaEngine()
+                    summary = engine.build_summary(profile)
+                    await self._send({"type": "system", "text": f"HIDA: {summary}"})
+                else:
+                    hida_enabled = getattr(self._config, "hida", None) and self._config.hida.enabled
+                    status = "enabled" if hida_enabled else "disabled"
+                    await self._send({"type": "system", "text": f"HIDA: {status}, no classification yet"})
+            else:
+                await self._send({"type": "system", "text": "HIDA: not initialized"})
+
+        elif name == "task":
+            await self._handle_task_command(args)
+
         else:
             await self._send({"type": "message", "text": f"Command /{name} not recognized. Type /help for available commands."})
+
+    async def _handle_task_command(self, args: str) -> None:
+        """Handle /task [new|verify <id>|close <id>|list] commands."""
+        parts = args.strip().split(None, 1)
+        sub = parts[0] if parts else ""
+
+        if sub in ("new", ""):
+            await self._send({"type": "message", "text": "Create a new task. Ask the user for the title, plan, and goals, then use the task_plan tool."})
+        elif sub == "list":
+            if self._task_manager:
+                tasks = self._task_manager.list_tasks(exclude_done=False)
+                if not tasks:
+                    await self._send({"type": "message", "text": "No tasks found."})
+                else:
+                    lines = ["Tasks:"]
+                    for t in tasks:
+                        lines.append(f"  {t.id}  [{t.status.value:8s}]  {t.title}")
+                    await self._send({"type": "message", "text": "\n".join(lines)})
+            else:
+                await self._send({"type": "message", "text": "Task manager not available."})
+        elif sub == "verify":
+            task_id = parts[1].strip() if len(parts) > 1 else ""
+            if not task_id:
+                await self._send({"type": "message", "text": "Usage: /task verify <task_id>"})
+            else:
+                await self._send({"type": "message", "text": f"Verify task {task_id} using the task_verify tool."})
+        elif sub == "close":
+            task_id = parts[1].strip() if len(parts) > 1 else ""
+            if not task_id:
+                await self._send({"type": "message", "text": "Usage: /task close <task_id>"})
+            else:
+                await self._send({"type": "message", "text": f"Close task {task_id} using the task_close tool. Collect files modified, git diff summary, and write completion notes."})
+        else:
+            await self._send({"type": "message", "text": "Usage: /task [new|verify <id>|close <id>|list]"})
 
     async def _handle_search_command(self, args: str) -> None:
         """Handle /search <query> — search TextBlock content in conversation history."""
@@ -1296,6 +1348,37 @@ class InkBridge:
                         pass
         except Exception:
             self._swarm_manager = None
+
+        # Register task lifecycle tools
+        self._task_manager = None
+        try:
+            from llm_code.task.manager import TaskLifecycleManager
+            from llm_code.task.verifier import Verifier
+            from llm_code.task.diagnostics import DiagnosticsEngine
+            from llm_code.tools.task_plan import TaskPlanTool
+            from llm_code.tools.task_verify import TaskVerifyTool
+            from llm_code.tools.task_close import TaskCloseTool
+
+            task_dir = self._cwd / ".llm-code" / "tasks"
+            diag_dir = self._cwd / ".llm-code" / "diagnostics"
+            task_mgr = TaskLifecycleManager(task_dir=task_dir)
+            task_verifier = Verifier(cwd=self._cwd)
+            task_diagnostics = DiagnosticsEngine(diagnostics_dir=diag_dir)
+            self._task_manager = task_mgr
+
+            sid = session.id if session else ""
+
+            for tool in (
+                TaskPlanTool(task_mgr, session_id=sid),
+                TaskVerifyTool(task_mgr, task_verifier, task_diagnostics),
+                TaskCloseTool(task_mgr),
+            ):
+                try:
+                    registry.register(tool)
+                except ValueError:
+                    pass
+        except Exception:
+            self._task_manager = None
 
         # Register computer-use tools (only when enabled)
         if self._config.computer_use.enabled:

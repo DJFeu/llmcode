@@ -428,6 +428,37 @@ class LLMCodeCLI:
         except Exception:
             self._swarm_manager = None
 
+        # Register task lifecycle tools
+        self._task_manager = None
+        try:
+            from llm_code.task.manager import TaskLifecycleManager
+            from llm_code.task.verifier import Verifier
+            from llm_code.task.diagnostics import DiagnosticsEngine
+            from llm_code.tools.task_plan import TaskPlanTool
+            from llm_code.tools.task_verify import TaskVerifyTool
+            from llm_code.tools.task_close import TaskCloseTool
+
+            task_dir = self._cwd / ".llm-code" / "tasks"
+            diag_dir = self._cwd / ".llm-code" / "diagnostics"
+            task_mgr = TaskLifecycleManager(task_dir=task_dir)
+            verifier = Verifier(cwd=self._cwd)
+            diagnostics = DiagnosticsEngine(diagnostics_dir=diag_dir)
+            self._task_manager = task_mgr
+
+            sid = session.id if session else ""
+
+            for tool in (
+                TaskPlanTool(task_mgr, session_id=sid),
+                TaskVerifyTool(task_mgr, verifier, diagnostics),
+                TaskCloseTool(task_mgr),
+            ):
+                try:
+                    self._tool_reg.register(tool)
+                except ValueError:
+                    pass
+        except Exception:
+            self._task_manager = None
+
         # Register computer-use tools (only when enabled)
         if self._config.computer_use.enabled:
             try:
@@ -813,8 +844,60 @@ class LLMCodeCLI:
         elif name == "vcr":
             self._handle_vcr_command(args)
 
+        elif name == "hida":
+            if self._runtime and hasattr(self._runtime, "_last_hida_profile"):
+                profile = self._runtime._last_hida_profile
+                if profile is not None:
+                    from llm_code.hida.engine import HidaEngine
+                    engine = HidaEngine()
+                    summary = engine.build_summary(profile)
+                    console.print(f"[dim]HIDA: {summary}[/]")
+                else:
+                    hida_enabled = getattr(self._config, "hida", None) and self._config.hida.enabled
+                    status = "enabled" if hida_enabled else "disabled"
+                    console.print(f"[dim]HIDA: {status}, no classification yet[/]")
+            else:
+                console.print("[dim]HIDA: not initialized[/]")
+
+        elif name == "task":
+            self._handle_task_command(args)
+
         else:
             console.print(f"[red]Unknown command: /{name} -- type /help for help[/]")
+
+    def _handle_task_command(self, args: str) -> None:
+        """Handle /task [new|verify <id>|close <id>|list] commands."""
+        parts = args.strip().split(None, 1)
+        sub = parts[0] if parts else ""
+
+        if sub in ("new", ""):
+            console.print("[dim]Use the task_plan tool or describe what you want to do.[/]")
+        elif sub == "list":
+            if self._task_manager:
+                tasks = self._task_manager.list_tasks(exclude_done=False)
+                if not tasks:
+                    console.print("[dim]No tasks found.[/]")
+                else:
+                    console.print("\n[bold]Tasks:[/]")
+                    for t in tasks:
+                        console.print(f"  [cyan]{t.id}[/]  [{t.status.value:8s}]  {t.title}")
+                    console.print()
+            else:
+                console.print("[dim]Task manager not available.[/]")
+        elif sub == "verify":
+            task_id = parts[1].strip() if len(parts) > 1 else ""
+            if not task_id:
+                console.print("[red]Usage: /task verify <task_id>[/]")
+            else:
+                console.print(f"[dim]Verify task {task_id} using the task_verify tool.[/]")
+        elif sub == "close":
+            task_id = parts[1].strip() if len(parts) > 1 else ""
+            if not task_id:
+                console.print("[red]Usage: /task close <task_id>[/]")
+            else:
+                console.print(f"[dim]Close task {task_id} using the task_close tool.[/]")
+        else:
+            console.print("[dim]Usage: /task [new|verify <id>|close <id>|list][/]")
 
     def _handle_search_command(self, args: str) -> None:
         """Handle /search <query> — search TextBlock content in conversation history."""

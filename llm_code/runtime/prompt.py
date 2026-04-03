@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import platform
 from datetime import date
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from llm_code.api.types import ToolDefinition
@@ -11,7 +12,9 @@ from llm_code.runtime.context import ProjectContext
 
 if TYPE_CHECKING:
     from llm_code.runtime.indexer import ProjectIndex
+    from llm_code.runtime.memory_layers import GovernanceRule
     from llm_code.runtime.skills import SkillSet
+    from llm_code.task.manager import TaskLifecycleManager
 
 _INTRO = """\
 You are a coding assistant running inside a terminal. \
@@ -57,11 +60,30 @@ class SystemPromptBuilder:
         memory_entries: dict | None = None,
         memory_summaries: list[str] | None = None,
         mcp_instructions: dict[str, str] | None = None,
+        governance_rules: "tuple[GovernanceRule, ...] | None" = None,
+        task_manager: "TaskLifecycleManager | None" = None,
     ) -> str:
         # ------------------------------------------------------------------ #
         # STATIC / CACHE-SAFE section (above the cache boundary)
         # ------------------------------------------------------------------ #
-        static_parts: list[str] = [_INTRO, _BEHAVIOR_RULES]
+        static_parts: list[str] = [_INTRO]
+
+        # Governance rules (L0) — injected at the very start, before behavior rules
+        if governance_rules:
+            gov_lines = ["## Governance Rules\n"]
+            # Group by category
+            categories: dict[str, list] = {}
+            for rule in governance_rules:
+                categories.setdefault(rule.category, []).append(rule)
+            for cat, cat_rules in categories.items():
+                gov_lines.append(f"### {cat.title()}")
+                for r in cat_rules:
+                    source_name = Path(r.source).name if r.source else "unknown"
+                    gov_lines.append(f"- {r.content} _(from {source_name})_")
+                gov_lines.append("")
+            static_parts.append("\n".join(gov_lines))
+
+        static_parts.append(_BEHAVIOR_RULES)
 
         # XML tool-calling instructions (only when provider does not support native tools)
         if not native_tools and tools:
@@ -126,6 +148,13 @@ class SystemPromptBuilder:
         if memory_entries:
             lines = [f"- **{k}**: {v[:200]}" for k, v in memory_entries.items()]
             dynamic_parts.append("## Project Memory\n\n" + "\n".join(lines))
+
+        # Incomplete tasks from prior sessions (cross-session persistence)
+        if task_manager is not None:
+            from llm_code.task.manager import build_incomplete_tasks_prompt
+            task_section = build_incomplete_tasks_prompt(task_manager)
+            if task_section:
+                dynamic_parts.append(task_section)
 
         # Combine: static parts joined by \n\n, then dynamic parts joined by \n\n
         all_parts = static_parts + dynamic_parts

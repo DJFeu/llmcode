@@ -80,6 +80,13 @@ class VCRConfig:
 
 
 @dataclass(frozen=True)
+class HidaConfig:
+    enabled: bool = False
+    confidence_threshold: float = 0.6
+    custom_profiles: tuple[dict, ...] = ()
+
+
+@dataclass(frozen=True)
 class RuntimeConfig:
     model: str = ""
     provider_base_url: str | None = None
@@ -112,6 +119,7 @@ class RuntimeConfig:
     ide: IDEConfig = field(default_factory=IDEConfig)
     swarm: SwarmConfig = field(default_factory=SwarmConfig)
     vcr: VCRConfig = field(default_factory=VCRConfig)
+    hida: HidaConfig = field(default_factory=HidaConfig)
 
 
 class ConfigSchema(BaseModel):
@@ -258,6 +266,13 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         auto_record=vcr_raw.get("auto_record", False),
     )
 
+    hida_raw = data.get("hida", {})
+    hida = HidaConfig(
+        enabled=hida_raw.get("enabled", False),
+        confidence_threshold=hida_raw.get("confidence_threshold", 0.6),
+        custom_profiles=tuple(hida_raw.get("custom_profiles", [])),
+    )
+
     return RuntimeConfig(
         model=data.get("model", ""),
         provider_base_url=provider.get("base_url", None),
@@ -290,6 +305,7 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         ide=ide,
         swarm=swarm,
         vcr=vcr,
+        hida=hida,
     )
 
 

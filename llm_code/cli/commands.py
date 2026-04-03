@@ -30,6 +30,8 @@ KNOWN_COMMANDS = frozenset({
     "swarm",
     "search",
     "vcr",
+    "hida",
+    "task",
 })
 
 

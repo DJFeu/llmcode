@@ -173,6 +173,45 @@ class TestDreamTask:
         provider.send_message.assert_not_called()
 
 
+class TestDreamTaskWithLayeredMemory:
+    @pytest.mark.asyncio
+    async def test_dream_writes_via_project_memory(self, tmp_path):
+        """DreamTask should work with ProjectMemory's underlying MemoryStore."""
+        from llm_code.runtime.memory_layers import ProjectMemory
+
+        pm = ProjectMemory(memory_dir=tmp_path / "mem", project_path=Path("/proj"))
+        session = _make_session(6, Path("/proj"))
+        provider = _make_provider("# Dream summary")
+        config = RuntimeConfig()
+
+        task = DreamTask()
+        # DreamTask accepts MemoryStore — ProjectMemory exposes it
+        result = await task.consolidate(
+            session, pm.memory_store, provider, config
+        )
+        assert "Dream summary" in result
+        # Consolidated file exists
+        files = list(pm.memory_store.consolidated_dir.glob("*.md"))
+        assert len(files) == 1
+
+    @pytest.mark.asyncio
+    async def test_dream_last_run_readable_from_project_memory(self, tmp_path):
+        """_dream_last_run stored by DreamTask is accessible via ProjectMemory."""
+        from llm_code.runtime.memory_layers import ProjectMemory
+
+        pm = ProjectMemory(memory_dir=tmp_path / "mem", project_path=Path("/proj"))
+        session = _make_session(6, Path("/proj"))
+        provider = _make_provider("summary")
+        config = RuntimeConfig()
+
+        task = DreamTask()
+        await task.consolidate(session, pm.memory_store, provider, config)
+
+        entry = pm.recall("_dream_last_run")
+        assert entry is not None
+        assert entry.value  # non-empty ISO timestamp
+
+
 class TestDreamSlashCommands:
     """Tests for /memory consolidate and /memory history integration points."""
 

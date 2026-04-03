@@ -107,6 +107,20 @@ class ConversationRuntime:
         self._token_budget = token_budget
         self._vcr_recorder = vcr_recorder
         self._has_attempted_reactive_compact = False
+        self._hida_classifier: Any | None = None
+        self._hida_engine: Any | None = None
+        self._last_hida_profile: Any | None = None
+
+        # Initialize HIDA if enabled in config
+        if getattr(config, "hida", None) is not None and config.hida.enabled:
+            try:
+                from llm_code.hida.classifier import TaskClassifier
+                from llm_code.hida.engine import HidaEngine
+                from llm_code.hida.profiles import DEFAULT_PROFILES
+                self._hida_classifier = TaskClassifier(profiles=DEFAULT_PROFILES)
+                self._hida_engine = HidaEngine()
+            except ImportError:
+                pass
 
     async def run_turn(self, user_input: str, images: list | None = None) -> AsyncIterator[StreamEvent]:
         """Run one user turn (may involve multiple LLM calls for tool use)."""
@@ -125,9 +139,31 @@ class ConversationRuntime:
         force_xml = getattr(self, "_force_xml_mode", False)
 
         for _iteration in range(self._config.max_turn_iterations):
+            # HIDA dynamic context filtering
+            allowed_tool_names: set[str] | None = None
+
+            if (
+                self._hida_classifier is not None
+                and self._hida_engine is not None
+                and getattr(self._config, "hida", None) is not None
+                and self._config.hida.enabled
+            ):
+                hida_profile = await self._hida_classifier.classify(
+                    user_input,
+                    provider=self._provider if hasattr(self._provider, "complete") else None,
+                    confidence_threshold=self._config.hida.confidence_threshold,
+                )
+                self._last_hida_profile = hida_profile
+
+                if not hida_profile.load_full_prompt:
+                    all_tool_names = {t.name for t in self._tool_registry.all_tools()}
+                    allowed_tool_names = self._hida_engine.filter_tools(hida_profile, all_tool_names)
+
             # 2. Build system prompt
             use_native = getattr(self._provider, "supports_native_tools", lambda: True)() and not force_xml
-            tool_defs = self._tool_registry.definitions()
+            tool_defs = self._tool_registry.definitions(
+                allowed=allowed_tool_names,
+            )
             system_prompt = self._prompt_builder.build(
                 self._context,
                 tools=tool_defs,
