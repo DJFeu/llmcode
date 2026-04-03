@@ -4,11 +4,13 @@ import { Banner } from './components/Banner.js';
 import { ChatLog, ChatEntry } from './components/ChatLog.js';
 import { InputBar } from './components/InputBar.js';
 import { ThinkingSpinner } from './components/ThinkingSpinner.js';
+import { ThinkingPanel } from './components/ThinkingPanel.js';
 import { PermissionDialog } from './components/PermissionDialog.js';
 import { MarketplaceSelect } from './components/MarketplaceSelect.js';
 import { ActionSelect } from './components/ActionSelect.js';
 import { StatusBar } from './components/StatusBar.js';
-import type { BackendMessage, FrontendMessage, MarketplaceItem } from './protocol.js';
+import { CronPanel } from './components/CronPanel.js';
+import type { BackendMessage, FrontendMessage, MarketplaceItem, CronTaskInfo } from './protocol.js';
 import * as readline from 'readline';
 
 function sendToBackend(msg: FrontendMessage) {
@@ -19,12 +21,16 @@ export function App() {
   const { exit } = useApp();
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [isThinking, setIsThinking] = useState(false);
+  const [thinkingContent, setThinkingContent] = useState('');
+  const [thinkingElapsed, setThinkingElapsed] = useState(0);
+  const [thinkingTokens, setThinkingTokens] = useState(0);
   const [currentText, setCurrentText] = useState('');
   const [totalTokens, setTotalTokens] = useState(0);
   const [welcomeData, setWelcomeData] = useState<any>(null);
   const [permissionRequest, setPermissionRequest] = useState<any>(null);
   const [marketplace, setMarketplace] = useState<{title: string; items: MarketplaceItem[]} | null>(null);
   const [actionPicker, setActionPicker] = useState<{name: string; actions: Array<{id: string; label: string}>} | null>(null);
+  const [cronTasks, setCronTasks] = useState<CronTaskInfo[] | null>(null);
 
   const addEntry = useCallback((entry: ChatEntry) => {
     setEntries(prev => [...prev, entry]);
@@ -43,9 +49,17 @@ export function App() {
         break;
       case 'thinking_start':
         setIsThinking(true);
+        setThinkingContent('');
+        setThinkingElapsed(0);
+        setThinkingTokens(0);
+        break;
+      case 'thinking_delta':
+        setThinkingContent(prev => prev + msg.text);
         break;
       case 'thinking_stop':
         setIsThinking(false);
+        setThinkingElapsed(msg.elapsed);
+        setThinkingTokens(msg.tokens);
         break;
       case 'text_delta':
         setCurrentText(prev => prev + msg.text);
@@ -58,7 +72,7 @@ export function App() {
         addEntry({ type: 'tool_start', name: msg.name, detail: msg.detail });
         break;
       case 'tool_result':
-        addEntry({ type: 'tool_result', name: msg.name, output: msg.output, isError: msg.isError });
+        addEntry({ type: 'tool_result', name: msg.name, output: msg.output, isError: msg.isError, diff: msg.diff });
         break;
       case 'turn_done':
         addEntry({ type: 'status', text: `✓ Done (${msg.elapsed.toFixed(1)}s)  ↓${msg.tokens} tok` });
@@ -85,6 +99,9 @@ export function App() {
         break;
       case 'action_show':
         setActionPicker({ name: msg.name, actions: msg.actions });
+        break;
+      case 'cron_list':
+        setCronTasks(msg.tasks);
         break;
     }
   };
@@ -124,6 +141,12 @@ export function App() {
       {welcomeData && <Banner data={welcomeData} />}
       <ChatLog entries={entries} currentText={currentText} />
       {isThinking && <ThinkingSpinner />}
+      <ThinkingPanel
+        content={thinkingContent}
+        isThinking={isThinking}
+        elapsed={thinkingElapsed}
+        tokens={thinkingTokens}
+      />
       {marketplace && (
         <MarketplaceSelect
           key={marketplace.title}
@@ -151,6 +174,9 @@ export function App() {
             setActionPicker(null);
           }}
         />
+      )}
+      {cronTasks !== null && (
+        <CronPanel tasks={cronTasks} />
       )}
       {permissionRequest ? (
         <PermissionDialog
