@@ -33,6 +33,7 @@ Thumbs.db
 
 # llm-code runtime
 .llm-code/config.local.json
+.llm-code/cron.lock
 .llm-code/result_cache/
 .llm-code/recordings/
 .llm-code/checkpoints/

@@ -126,6 +126,7 @@ pip install llm-code[telemetry]      # OpenTelemetry tracing
 | **Local (LM Studio)** | Any supported model | Free |
 | **OpenAI** | GPT-4o, GPT-4o-mini, o3 | Pay-per-use |
 | **Anthropic** | Claude Opus, Sonnet, Haiku | Pay-per-use |
+| **Google** | Gemini 2.5 Pro, Gemini 2.5 Flash | Pay-per-use |
 | **xAI** | Grok | Pay-per-use |
 | **DeepSeek** | DeepSeek V3, R1 | Pay-per-use |
 
@@ -372,6 +373,8 @@ Supports **stdio**, **HTTP**, **SSE**, and **WebSocket** transports with health 
 |---------|-------------|
 | `/help` | Show all commands |
 | `/model <name>` | Switch model |
+| `/config` | View/edit configuration |
+| `/session` | Session management |
 | `/skill` | Browse & install skills |
 | `/plugin` | Browse & install plugins |
 | `/mcp` | Browse & install MCP servers |
@@ -384,16 +387,21 @@ Supports **stdio**, **HTTP**, **SSE**, and **WebSocket** transports with health 
 | `/thinking` | Toggle thinking mode |
 | `/vim` | Toggle vim keybindings |
 | `/voice` | Toggle voice input |
+| `/image` | Paste/load an image |
 | `/cron` | Scheduled tasks |
 | `/vcr` | Session recording |
 | `/checkpoint` | Session checkpoints |
 | `/ide` | IDE connection status |
+| `/lsp` | Language Server Protocol status |
+| `/index` | Codebase indexing |
 | `/hida` | HIDA classification info |
+| `/cd <path>` | Change working directory |
 | `/undo` | Undo last file change |
+| `/cancel` | Cancel running operation |
 | `/cost` | Token usage + cost |
 | `/budget <n>` | Set token budget |
 | `/clear` | Clear conversation |
-| `/exit` | Quit |
+| `/exit`, `/quit` | Quit |
 
 ---
 
