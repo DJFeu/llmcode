@@ -334,12 +334,19 @@ class InkBridge:
             except Exception:
                 pass
 
-            # Send via marketplace_show (React component renders it)
-            self._current_marketplace = {"type": "skill", "items": items}
+            # Use message type (reliable IPC) — Ink renders with colors
+            self._skill_items = items
             installed_count = sum(1 for i in items if i.get("installed"))
             market_count = len(items) - installed_count
-            title = f"Skills ({installed_count} installed + {market_count} available)"
-            await self._send({"type": "marketplace_show", "title": title, "items": items})
+
+            lines = [f"Skills ({installed_count} installed + {market_count} available)", ""]
+            for i, it in enumerate(items, 1):
+                icon = "●" if it.get("installed") else "○"
+                tag = " (installed)" if it.get("installed") else ""
+                lines.append(f"  {i:>3} {icon} {it['name']}  · {it['description']}{tag}")
+            lines.append("")
+            lines.append("Type number to select · /skill install <name> · /skill search <keyword>")
+            await self._send({"type": "message", "text": "\n".join(lines)})
         except Exception as exc:
             await self._send({"type": "error", "message": f"Error: {exc}"})
 
