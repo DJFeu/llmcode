@@ -23,6 +23,7 @@ _PERMISSION_CHOICES = ["prompt", "auto_accept", "read_only", "workspace_write", 
 @click.option("--budget", type=int, default=None, help="Token budget target")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
 @click.option("--lite", is_flag=True, help="Use lightweight print-based CLI (no Node.js required)")
+@click.option("--ink", is_flag=True, help="Use React+Ink luxury UI (requires Node.js)")
 @click.option("--serve", is_flag=True, help="Start as remote server")
 @click.option("--port", type=int, default=8765, help="Server port (for --serve)")
 @click.option("--connect", default=None, help="Connect to remote server (host:port)")
@@ -39,6 +40,7 @@ def main(
     budget: int | None,
     verbose: bool = False,
     lite: bool = False,
+    ink: bool = False,
     serve: bool = False,
     port: int = 8765,
     connect: str | None = None,
@@ -125,8 +127,13 @@ def main(
         if resume_session is not None:
             cli._init_session(existing_session=resume_session)
         asyncio.run(cli.run())
-    else:
-        # Default: React+Ink UI
+    elif ink:
+        # React+Ink luxury UI (requires Node.js)
         from llm_code.cli.ink_bridge import InkBridge
         bridge = InkBridge(config=config, cwd=cwd, budget=budget)
         asyncio.run(bridge.start())
+    else:
+        # Default: Textual fullscreen TUI
+        from llm_code.tui.app import LLMCodeTUI
+        app = LLMCodeTUI(config=config, cwd=cwd, budget=budget)
+        app.run()

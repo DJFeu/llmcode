@@ -24,3 +24,14 @@ class TestAppCreation:
         assert "ChatScrollView" in type_names
         assert "InputBar" in type_names
         assert "StatusBar" in type_names
+
+
+class TestEntryPointFlags:
+    def test_tui_main_has_ink_flag(self):
+        """Verify tui_main accepts --ink flag."""
+        from click.testing import CliRunner
+        from llm_code.cli.tui_main import main
+        runner = CliRunner()
+        result = runner.invoke(main, ["--help"])
+        assert "--ink" in result.output
+        assert "--lite" in result.output
