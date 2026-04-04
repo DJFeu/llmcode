@@ -43,6 +43,7 @@ class InputBar(Widget):
     value: reactive[str] = reactive("")
     disabled: reactive[bool] = reactive(False)
     vim_mode: reactive[str] = reactive("")  # "" | "NORMAL" | "INSERT"
+    pending_image_count: reactive[int] = reactive(0)
 
     def __init__(self) -> None:
         super().__init__()
@@ -73,6 +74,11 @@ class InputBar(Widget):
             text.append("[N] ", style="yellow bold")
         elif self.vim_mode == "INSERT":
             text.append("[I] ", style="green bold")
+        # Pending image indicator
+        if self.pending_image_count > 0:
+            n = self.pending_image_count
+            label = f"{n} image{'s' if n > 1 else ''}"
+            text.append(f"[{label}] ", style="bold magenta")
         text.append(self.PROMPT, style="bold cyan")
         if self.disabled:
             text.append("generating…", style="dim italic")

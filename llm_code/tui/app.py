@@ -611,16 +611,17 @@ class LLMCodeTUI(App):
     def _paste_clipboard_image(self) -> None:
         """Try to capture an image from the system clipboard."""
         chat = self.query_one(ChatScrollView)
+        input_bar = self.query_one(InputBar)
         try:
             from llm_code.cli.image import capture_clipboard_image
             img = capture_clipboard_image()
             if img is not None:
                 self._pending_images.append(img)
-                chat.add_entry(AssistantText("Image attached from clipboard"))
+                input_bar.pending_image_count = len(self._pending_images)
             else:
                 chat.add_entry(AssistantText("No image found in clipboard."))
         except (ImportError, FileNotFoundError, OSError):
-            chat.add_entry(AssistantText("Clipboard image capture not available (install pngpaste)."))
+            chat.add_entry(AssistantText("Clipboard not available (install pngpaste: brew install pngpaste)."))
         except Exception as exc:
             chat.add_entry(AssistantText(f"Clipboard error: {exc}"))
 
@@ -637,13 +638,25 @@ class LLMCodeTUI(App):
             return
 
         chat = self.query_one(ChatScrollView)
-        chat.resume_auto_scroll()  # Resume on new input
-        chat.add_entry(UserMessage(text))
+        input_bar = self.query_one(InputBar)
+        chat.resume_auto_scroll()
+
+        # Show image indicator in user message if images are pending
+        if self._pending_images:
+            n = len(self._pending_images)
+            label = f"{n} image{'s' if n > 1 else ''}"
+            chat.add_entry(UserMessage(f"{text}  [{label}]"))
+        else:
+            chat.add_entry(UserMessage(text))
 
         if text.startswith("/"):
             self._handle_slash_command(text)
         else:
-            self.run_worker(self._run_turn(text), name="run_turn")
+            # Pass pending images to runtime and reset
+            images = list(self._pending_images)
+            self._pending_images.clear()
+            input_bar.pending_image_count = 0
+            self.run_worker(self._run_turn(text, images=images), name="run_turn")
 
     def on_input_bar_cancelled(self, event: InputBar.Cancelled) -> None:
         """Handle Escape — cancel running generation."""
@@ -687,7 +700,7 @@ class LLMCodeTUI(App):
             event.prevent_default()
             event.stop()
 
-    async def _run_turn(self, user_input: str) -> None:
+    async def _run_turn(self, user_input: str, images: list | None = None) -> None:
         """Run a conversation turn with full streaming event handling."""
         import asyncio
         import time
@@ -747,7 +760,7 @@ class LLMCodeTUI(App):
         perm_widget = None
 
         try:
-            async for event in self._runtime.run_turn(user_input):
+            async for event in self._runtime.run_turn(user_input, images=images):
                 # Clean up permission widget from previous iteration
                 if self._permission_pending and not isinstance(event, StreamPermissionRequest):
                     self._permission_pending = False
@@ -1076,6 +1089,7 @@ class LLMCodeTUI(App):
 
     def _cmd_image(self, args: str) -> None:
         chat = self.query_one(ChatScrollView)
+        input_bar = self.query_one(InputBar)
         if not args:
             chat.add_entry(AssistantText("Usage: /image <path>"))
             return
@@ -1084,7 +1098,7 @@ class LLMCodeTUI(App):
             img_path = Path(args).expanduser().resolve()
             img = load_image_from_path(str(img_path))
             self._pending_images.append(img)
-            chat.add_entry(AssistantText(f"Image attached: {args}"))
+            input_bar.pending_image_count = len(self._pending_images)
         except FileNotFoundError:
             chat.add_entry(AssistantText(f"Image not found: {args}"))
 
