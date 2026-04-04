@@ -43,3 +43,4 @@ Thumbs.db
 node_modules/
 ink-ui/node_modules/
 ink-ui/dist/
+.superpowers/
