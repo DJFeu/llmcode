@@ -74,10 +74,55 @@ class LLMCodeTUI(App):
             header.model = getattr(self._config, "model", "")
         header.project = self._cwd.name
         header.branch = self._detect_branch()
+        self._render_welcome()
         # Focus input bar so it receives key events
         self.query_one(InputBar).focus()
         # Start MCP servers async
         self.run_worker(self._init_mcp(), name="init_mcp")
+
+    def _render_welcome(self) -> None:
+        """Show welcome banner in chat area."""
+        import sys
+        chat = self.query_one(ChatScrollView)
+
+        logo = (
+            "  ██╗     ██╗     ███╗   ███╗\n"
+            "  ██║     ██║     ████╗ ████║\n"
+            "  ██║     ██║     ██╔████╔██║\n"
+            "  ██║     ██║     ██║╚██╔╝██║\n"
+            "  ███████╗███████╗██║ ╚═╝ ██║\n"
+            "  ╚══════╝╚══════╝╚═╝     ╚═╝\n"
+            "   ██████╗ ██████╗ ██████╗ ███████╗\n"
+            "  ██╔════╝██╔═══██╗██╔══██╗██╔════╝\n"
+            "  ██║     ██║   ██║██║  ██║█████╗\n"
+            "  ██║     ██║   ██║██║  ██║██╔══╝\n"
+            "  ╚██████╗╚██████╔╝██████╔╝███████╗\n"
+            "   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝"
+        )
+
+        model = self._config.model if self._config else "(not set)"
+        branch = self._detect_branch()
+        workspace = self._cwd.name
+        if branch:
+            workspace += f" · {branch}"
+        perm = self._config.permission_mode if self._config else "prompt"
+        paste_key = "Cmd+V" if sys.platform == "darwin" else "Ctrl+V"
+
+        info = (
+            f"\n"
+            f"  Model         {model}\n"
+            f"  Workspace     {workspace}\n"
+            f"  Directory     {self._cwd}\n"
+            f"  Permissions   {perm}\n"
+            f"\n"
+            f"  Quick start   /help · /skill · /mcp\n"
+            f"  Multiline     Shift+Enter\n"
+            f"  Images        {paste_key} pastes\n"
+            f"\n"
+            f"  Ready"
+        )
+
+        chat.add_entry(AssistantText(logo + info))
 
     @staticmethod
     def _is_safe_name(name: str) -> bool:
@@ -570,6 +615,11 @@ class LLMCodeTUI(App):
 
     def on_key(self, event: "events.Key") -> None:
         """Handle single-key permission responses (y/n/a), image paste, and scroll."""
+        # Ctrl+D — quit
+        if event.key == "ctrl+d":
+            self.exit()
+            return
+
         # Ctrl+V — paste image from clipboard
         if event.key == "ctrl+v":
             try:

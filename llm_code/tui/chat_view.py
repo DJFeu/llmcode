@@ -5,6 +5,7 @@ from __future__ import annotations
 from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.app import RenderResult
+from rich.markdown import Markdown
 from rich.text import Text
 
 
@@ -38,6 +39,12 @@ class AssistantText(Widget):
         self.refresh()
 
     def render(self) -> RenderResult:
+        # Use Rich Markdown for rendering if content has markdown indicators
+        if any(marker in self._text for marker in ("```", "**", "##", "- ")):
+            try:
+                return Markdown(self._text)
+            except Exception:
+                return Text(self._text)
         return Text(self._text)
 
 
