@@ -1371,22 +1371,44 @@ class LLMCodeTUI(App):
             else:
                 chat.add_entry(AssistantText(f"Not found: {subargs}"))
         else:
-            # List installed skills
+            # Open interactive marketplace browser
+            from llm_code.tui.marketplace import MarketplaceBrowser, MarketplaceItem
+            from llm_code.marketplace.builtin_registry import get_all_known_plugins
+
+            items: list[MarketplaceItem] = []
+
+            # Installed skills first
             all_skills: list = []
             if self._skills:
                 all_skills = list(self._skills.auto_skills) + list(self._skills.command_skills)
-            if not all_skills:
-                chat.add_entry(AssistantText(
-                    "No skills installed.\n"
-                    "Usage: /skill install owner/repo | /skill enable/disable/remove <name>"
+            installed_names = {s.name for s in all_skills}
+            for s in all_skills:
+                tokens = len(s.content) // 4
+                mode = "auto" if s.auto else f"/{s.trigger}"
+                items.append(MarketplaceItem(
+                    name=s.name,
+                    description=f"{mode}  ~{tokens} tokens",
+                    source="installed",
+                    installed=True,
+                    enabled=not (Path.home() / ".llm-code" / "skills" / s.name / ".disabled").exists(),
+                    repo="",
+                    extra=mode,
                 ))
-            else:
-                lines = [f"Skills ({len(all_skills)} installed):"]
-                for s in all_skills:
-                    mode = "auto" if s.auto else f"/{s.trigger}"
-                    tokens = len(s.content) // 4
-                    lines.append(f"  {s.name}  {mode}  ~{tokens} tokens")
-                chat.add_entry(AssistantText("\n".join(lines)))
+
+            # Marketplace plugins with skills that are not installed
+            for p in get_all_known_plugins():
+                if p.get("skills", 0) > 0 and p["name"] not in installed_names:
+                    items.append(MarketplaceItem(
+                        name=p["name"],
+                        description=p.get("desc", ""),
+                        source=p.get("source", "official"),
+                        installed=False,
+                        repo=p.get("repo", ""),
+                        extra=f"{p['skills']} skills",
+                    ))
+
+            browser = MarketplaceBrowser("Skills Marketplace", items)
+            self.push_screen(browser)
 
     # ── Plugin ────────────────────────────────────────────────────────
 
@@ -1454,18 +1476,82 @@ class LLMCodeTUI(App):
             except Exception as exc:
                 chat.add_entry(AssistantText(f"Remove failed: {exc}"))
         else:
+            # Open interactive marketplace browser
+            from llm_code.tui.marketplace import MarketplaceBrowser, MarketplaceItem
+            from llm_code.marketplace.builtin_registry import get_all_known_plugins
+
+            items: list[MarketplaceItem] = []
+
+            # Installed plugins first
+            installed_names: set[str] = set()
             try:
                 installed = installer.list_installed()
-                if not installed:
-                    chat.add_entry(AssistantText(
-                        "No plugins installed.\n"
-                        "Usage: /plugin install owner/repo | /plugin enable/disable/remove <name>"
+                for p in installed:
+                    installed_names.add(p.manifest.name)
+                    items.append(MarketplaceItem(
+                        name=p.manifest.name,
+                        description=getattr(p.manifest, "description", ""),
+                        source="installed",
+                        installed=True,
+                        enabled=p.enabled,
+                        repo="",
+                        extra=f"v{p.manifest.version}",
                     ))
+            except Exception:
+                pass
+
+            # Known marketplace plugins not yet installed
+            for p in get_all_known_plugins():
+                if p["name"] not in installed_names:
+                    skills_count = p.get("skills", 0)
+                    extra = f"{skills_count} skills" if skills_count else ""
+                    items.append(MarketplaceItem(
+                        name=p["name"],
+                        description=p.get("desc", ""),
+                        source=p.get("source", "official"),
+                        installed=False,
+                        repo=p.get("repo", ""),
+                        extra=extra,
+                    ))
+
+            browser = MarketplaceBrowser("Plugin Marketplace", items)
+            self.push_screen(browser)
+
+    # ── Marketplace ItemAction handler ────────────────────────────────
+
+    def on_marketplace_browser_item_action(
+        self, event: "MarketplaceBrowser.ItemAction"
+    ) -> None:
+        """Handle marketplace item selection (install/enable/disable/remove)."""
+        from llm_code.tui.marketplace import MarketplaceBrowser
+        from llm_code.tui.chat_view import AssistantText
+
+        chat = self.query_one(ChatScrollView)
+        item = event.item
+        action = event.action
+
+        if action == "install":
+            if item.repo:
+                if item.source in ("official", "community"):
+                    self._cmd_plugin(f"install {item.repo}")
                 else:
-                    lines = [f"Plugins ({len(installed)} installed):"]
-                    for p in installed:
-                        status = "enabled" if p.enabled else "disabled"
-                        lines.append(f"  {p.manifest.name}  v{p.manifest.version}  [{status}]")
-                    chat.add_entry(AssistantText("\n".join(lines)))
-            except Exception as exc:
-                chat.add_entry(AssistantText(f"Plugin list failed: {exc}"))
+                    self._cmd_skill(f"install {item.repo}")
+            else:
+                chat.add_entry(AssistantText(
+                    f"No repo URL available for {item.name}. Install manually."
+                ))
+        elif action == "enable":
+            if item.source in ("official", "community", "installed"):
+                self._cmd_plugin(f"enable {item.name}")
+            else:
+                self._cmd_skill(f"enable {item.name}")
+        elif action == "disable":
+            if item.source in ("official", "community", "installed"):
+                self._cmd_plugin(f"disable {item.name}")
+            else:
+                self._cmd_skill(f"disable {item.name}")
+        elif action == "remove":
+            if item.source in ("official", "community", "installed"):
+                self._cmd_plugin(f"remove {item.name}")
+            else:
+                self._cmd_skill(f"remove {item.name}")
