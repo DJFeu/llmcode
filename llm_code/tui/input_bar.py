@@ -42,9 +42,11 @@ class InputBar(Widget):
         text = Text()
         if self.vim_mode == "NORMAL":
             text.append("[N] ", style="yellow bold")
+        elif self.vim_mode == "INSERT":
+            text.append("[I] ", style="green bold")
         text.append(self.PROMPT, style="bold cyan")
         if self.disabled:
-            text.append("", style="dim")
+            text.append("generating…", style="dim italic")
         else:
             text.append(self.value)
             text.append("█", style="dim")  # cursor
@@ -65,6 +67,7 @@ class InputBar(Widget):
         elif event.key == "backspace":
             self.value = self.value[:-1]
         elif event.key == "escape":
+            self.value = ""
             self.post_message(self.Cancelled())
         elif event.character and len(event.character) == 1:
             self.value += event.character

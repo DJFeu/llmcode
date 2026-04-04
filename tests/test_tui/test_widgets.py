@@ -148,6 +148,24 @@ class TestSpinnerLine:
         assert "Processing" in s.render_text()
 
 
+def _simulate_key(bar: "InputBar", key: str) -> None:
+    """Simulate a key press on InputBar without a running Textual App.
+
+    Creates a minimal Key-like object and calls the on_key handler directly.
+    """
+    from unittest.mock import MagicMock
+    event = MagicMock()
+    event.key = key
+    # For single printable characters, set event.character
+    if len(key) == 1 and key.isprintable():
+        event.character = key
+    else:
+        event.character = None
+    # Stub out post_message to prevent Textual runtime errors
+    bar.post_message = MagicMock()
+    bar.on_key(event)
+
+
 class TestInputBar:
     def test_creates(self):
         bar = InputBar()
@@ -156,3 +174,75 @@ class TestInputBar:
     def test_prompt_symbol(self):
         bar = InputBar()
         assert bar.PROMPT == "❯ "
+
+    def test_render_default(self):
+        bar = InputBar()
+        rendered = str(bar.render())
+        assert "❯" in rendered
+        assert "█" in rendered
+
+    def test_render_vim_normal(self):
+        bar = InputBar()
+        bar.vim_mode = "NORMAL"
+        rendered = str(bar.render())
+        assert "[N]" in rendered
+
+    def test_render_vim_insert(self):
+        bar = InputBar()
+        bar.vim_mode = "INSERT"
+        rendered = str(bar.render())
+        assert "[I]" in rendered
+
+    def test_render_disabled(self):
+        bar = InputBar()
+        bar.disabled = True
+        rendered = str(bar.render())
+        assert "generating" in rendered
+        assert "█" not in rendered
+
+    def test_on_key_character(self):
+        bar = InputBar()
+        _simulate_key(bar, "a")
+        _simulate_key(bar, "b")
+        assert bar.value == "ab"
+
+    def test_on_key_backspace(self):
+        bar = InputBar()
+        bar.value = "hello"
+        _simulate_key(bar, "backspace")
+        assert bar.value == "hell"
+
+    def test_on_key_backspace_empty(self):
+        bar = InputBar()
+        _simulate_key(bar, "backspace")
+        assert bar.value == ""
+
+    def test_on_key_shift_enter_multiline(self):
+        bar = InputBar()
+        bar.value = "line1"
+        _simulate_key(bar, "shift+enter")
+        assert bar.value == "line1\n"
+
+    def test_on_key_enter_submits_and_clears(self):
+        bar = InputBar()
+        bar.value = "hello"
+        _simulate_key(bar, "enter")
+        assert bar.value == ""
+
+    def test_on_key_enter_ignores_whitespace_only(self):
+        bar = InputBar()
+        bar.value = "   "
+        _simulate_key(bar, "enter")
+        assert bar.value == "   "
+
+    def test_on_key_escape_clears_and_cancels(self):
+        bar = InputBar()
+        bar.value = "draft"
+        _simulate_key(bar, "escape")
+        assert bar.value == ""
+
+    def test_on_key_disabled_blocks_input(self):
+        bar = InputBar()
+        bar.disabled = True
+        _simulate_key(bar, "a")
+        assert bar.value == ""
