@@ -1032,7 +1032,7 @@ class LLMCodeTUI(App):
                 yield Static("← → tabs · ↑↓ navigate · Enter execute · Esc close", id="help-footer")
 
             def on_mount(self):
-                self.call_later(self._render)
+                self._refresh_content()
 
             def on_key(self, event) -> None:
                 key = event.key
