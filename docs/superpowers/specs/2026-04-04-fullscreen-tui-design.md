@@ -117,6 +117,20 @@ All three layers share the same `ConversationRuntime`. Only the rendering layer 
   - Escape: cancel current generation (when model is running)
 - When model is running: input disabled, shows spinner in ChatScrollView
 
+### MarketplaceSelect (Scrollable List)
+- Used for `/skill`, `/plugin`, `/mcp` marketplace browsing
+- Fullscreen overlay or inline scrollable list in ChatScrollView
+- Arrow keys navigate, Enter selects, Escape closes
+- Shows: `❯ ● name  description (installed)` format
+- Max 15 visible items, scrolls with arrows
+- Supports search/filter as user types
+
+### Mouse & Clipboard Behavior
+- **Mouse text selection + copy MUST work** — Textual intercepts mouse by default; use `ENABLE_MOUSE_SUPPORT = False` on the App or enable terminal passthrough mode so users can select and copy text normally
+- **Image paste**: Ctrl+V / Cmd+V detects clipboard image (via `llm_code/cli/image.py:capture_clipboard_image()`) and attaches it
+- **Text paste**: Standard terminal paste must work alongside image paste (try image first, fall back to text)
+- These are non-negotiable interaction requirements
+
 ### StatusBar
 - Single line, docked to bottom (below InputBar)
 - Content: `{model} │ ↓{tokens} tok │ ${cost} │ streaming… │ /help │ Ctrl+D quit`
