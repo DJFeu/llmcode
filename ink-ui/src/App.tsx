@@ -167,7 +167,7 @@ export function App() {
     <Box flexDirection="column">
       {welcomeData && <Banner data={welcomeData} />}
       <ChatLog entries={entries} currentText={currentText} />
-      {isThinking && <ThinkingSpinner />}
+      {isThinking && <ThinkingSpinner hasContent={thinkingContent.length > 0} />}
       <ThinkingPanel
         content={thinkingContent}
         isThinking={isThinking}

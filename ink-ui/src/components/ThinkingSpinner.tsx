@@ -2,7 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { Text } from 'ink';
 import Spinner from 'ink-spinner';
 
-export function ThinkingSpinner() {
+interface ThinkingSpinnerProps {
+  hasContent?: boolean;
+}
+
+export function ThinkingSpinner({ hasContent }: ThinkingSpinnerProps) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -12,10 +16,12 @@ export function ThinkingSpinner() {
     return () => clearInterval(interval);
   }, []);
 
+  const label = hasContent ? 'Thinking…' : 'Waiting for model…';
+
   return (
     <Text>
       <Text color="blue"><Spinner type="dots" /></Text>
-      <Text color="blue"> Thinking… </Text>
+      <Text color="blue"> {label} </Text>
       <Text dimColor>({elapsed.toFixed(1)}s)</Text>
     </Text>
   );

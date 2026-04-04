@@ -1791,9 +1791,30 @@ class LLMCodeCLI:
         thinking_buffer = ""
 
         _thinking_start = time.monotonic()
-        status = console.status("[blue]⠋ Thinking…[/]", spinner="dots")
+        _status_phase = "waiting"  # Track current phase for display
+        _iteration_count = 0
+        status = console.status("[blue]⠋ Waiting for model…[/]", spinner="dots")
         status.start()
         _input_tokens = 0
+
+        # Background timer: update spinner with elapsed time every 0.5s
+        _status_active = True
+
+        async def _update_status_timer():
+            while _status_active:
+                await asyncio.sleep(0.5)
+                if not _status_active:
+                    break
+                _elapsed = time.monotonic() - _thinking_start
+                _time_str = f"{_elapsed:.1f}s"
+                if _status_phase == "waiting":
+                    status.update(f"[blue]⠋ Waiting for model… ({_time_str})[/]")
+                elif _status_phase == "thinking":
+                    status.update(f"[blue]⠋ Thinking… ({_time_str})[/]")
+                elif _status_phase == "processing":
+                    status.update(f"[blue]⠋ Processing tool results… ({_time_str})[/]")
+
+        _timer_task = asyncio.ensure_future(_update_status_timer())
 
         try:
             async for event in self._runtime.run_turn(user_input, images=images):
@@ -1802,6 +1823,7 @@ class LLMCodeCLI:
 
                     if not first_token:
                         first_token = True
+                        _status_phase = "streaming"
                         status.stop()
 
                     # Filter <tool_call>...</tool_call> and <think>...</think> tags
@@ -1857,8 +1879,7 @@ class LLMCodeCLI:
 
                 elif isinstance(event, StreamThinkingDelta):
                     thinking_buffer += event.text
-                    _elapsed = time.monotonic() - _thinking_start
-                    status.update(f"[blue]⠋ Thinking… ({_elapsed:.1f}s)[/]")
+                    _status_phase = "thinking"
 
                 elif isinstance(event, StreamToolExecStart):
                     if not first_token:
@@ -1881,6 +1902,12 @@ class LLMCodeCLI:
                         else:
                             console.print(f"[green]✓ Agent complete ({_agent_elapsed:.1f}s)[/]")
                     self._show_tool_result(event.tool_name, event.output, event.is_error)
+                    # Restart spinner — model may need to think again after tool result
+                    _status_phase = "processing"
+                    _thinking_start = time.monotonic()
+                    first_token = False
+                    status.update(f"[blue]⠋ Processing tool results…[/]")
+                    status.start()
 
                 elif isinstance(event, StreamToolProgress):
                     status.update(f"[blue]{event.tool_name}: {event.message}[/]")
@@ -1894,17 +1921,24 @@ class LLMCodeCLI:
                         self._cost_tracker.add_usage(
                             event.usage.input_tokens, event.usage.output_tokens
                         )
+                    _iteration_count += 1
 
         except KeyboardInterrupt:
+            _status_active = False
+            _timer_task.cancel()
             status.stop()
             self._flush_text()
             console.print("[dim](cancelled)[/]")
             return
         except Exception as exc:
+            _status_active = False
+            _timer_task.cancel()
             status.stop()
             console.print(f"[bold red]Error: {exc}[/]")
             return
 
+        _status_active = False
+        _timer_task.cancel()
         status.stop()
 
         # Flush remaining text

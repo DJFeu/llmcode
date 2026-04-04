@@ -251,14 +251,18 @@ class InkBridge:
         text_buffer = ""
         output_tokens = 0
         input_tokens = 0
+        _phase = "waiting"  # waiting → thinking → streaming → processing
         in_tool_call = False
         in_think = False
         tag_buffer = ""
 
         try:
+            await self._send({"type": "thinking_start"})
             async for event in self._runtime.run_turn(user_input, images=images):
                 if isinstance(event, StreamTextDelta):
                     output_tokens += len(event.text) // 4
+                    if _phase != "streaming":
+                        _phase = "streaming"
 
                     # Filter <tool_call> and <think> tags — route think to thinking_delta
                     for char in event.text:
@@ -309,6 +313,7 @@ class InkBridge:
                             text_buffer = ""
 
                 elif isinstance(event, StreamThinkingDelta):
+                    _phase = "thinking"
                     await self._send({"type": "thinking_delta", "text": event.text})
 
                 elif isinstance(event, StreamToolExecStart):
@@ -341,6 +346,9 @@ class InkBridge:
                             "deletions": event.metadata.get("deletions", 0),
                         }
                     await self._send(msg)
+                    # Restart thinking indicator — model may think again after tool result
+                    _phase = "processing"
+                    await self._send({"type": "thinking_start"})
 
                 elif isinstance(event, StreamToolProgress):
                     await self._send({"type": "tool_progress", "name": event.tool_name, "message": event.message})
