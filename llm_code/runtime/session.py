@@ -124,6 +124,8 @@ class Session:
                     char_count += len(block.text)
                 elif isinstance(block, ToolResultBlock):
                     char_count += len(block.content)
+                elif isinstance(block, ToolUseBlock):
+                    char_count += len(block.name) + len(str(block.input))
         return char_count // 4
 
     def to_dict(self) -> dict:
