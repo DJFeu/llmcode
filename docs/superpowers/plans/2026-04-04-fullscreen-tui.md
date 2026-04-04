@@ -778,7 +778,83 @@ class TestInputBar:
     def test_prompt_symbol(self):
         bar = InputBar()
         assert bar.PROMPT == "❯ "
+
+    def test_render_default(self):
+        bar = InputBar()
+        text = bar.render()
+        rendered = str(text)
+        assert "❯" in rendered
+        assert "█" in rendered
+
+    def test_render_vim_normal(self):
+        bar = InputBar()
+        bar.vim_mode = "NORMAL"
+        rendered = str(bar.render())
+        assert "[N]" in rendered
+
+    def test_render_vim_insert(self):
+        bar = InputBar()
+        bar.vim_mode = "INSERT"
+        rendered = str(bar.render())
+        assert "[I]" in rendered
+
+    def test_render_disabled(self):
+        bar = InputBar()
+        bar.disabled = True
+        rendered = str(bar.render())
+        assert "generating" in rendered
+        assert "█" not in rendered
+
+    def test_on_key_character(self):
+        bar = InputBar()
+        bar._on_key_sim("a")
+        bar._on_key_sim("b")
+        assert bar.value == "ab"
+
+    def test_on_key_backspace(self):
+        bar = InputBar()
+        bar.value = "hello"
+        bar._on_key_sim("backspace")
+        assert bar.value == "hell"
+
+    def test_on_key_backspace_empty(self):
+        bar = InputBar()
+        bar._on_key_sim("backspace")
+        assert bar.value == ""
+
+    def test_on_key_shift_enter_multiline(self):
+        bar = InputBar()
+        bar.value = "line1"
+        bar._on_key_sim("shift+enter")
+        assert bar.value == "line1\n"
+
+    def test_on_key_enter_submits_and_clears(self):
+        bar = InputBar()
+        bar.value = "hello"
+        bar._on_key_sim("enter")
+        assert bar.value == ""
+
+    def test_on_key_enter_ignores_whitespace_only(self):
+        bar = InputBar()
+        bar.value = "   "
+        bar._on_key_sim("enter")
+        assert bar.value == "   "
+
+    def test_on_key_escape_clears_and_cancels(self):
+        bar = InputBar()
+        bar.value = "draft"
+        bar._on_key_sim("escape")
+        assert bar.value == ""
+
+    def test_on_key_disabled_blocks_input(self):
+        bar = InputBar()
+        bar.disabled = True
+        bar._on_key_sim("a")
+        assert bar.value == ""
 ```
+
+> **Note:** `_on_key_sim(key)` is a test helper that simulates key events without a running Textual App.
+> It should be added as a method on InputBar or as a standalone helper in the test file.
 
 - [ ] **Step 2: Run test — FAIL**
 
@@ -830,9 +906,11 @@ class InputBar(Widget):
         text = Text()
         if self.vim_mode == "NORMAL":
             text.append("[N] ", style="yellow bold")
+        elif self.vim_mode == "INSERT":
+            text.append("[I] ", style="green bold")
         text.append(self.PROMPT, style="bold cyan")
         if self.disabled:
-            text.append("", style="dim")
+            text.append("generating…", style="dim italic")
         else:
             text.append(self.value)
             text.append("█", style="dim")  # cursor
@@ -853,6 +931,7 @@ class InputBar(Widget):
         elif event.key == "backspace":
             self.value = self.value[:-1]
         elif event.key == "escape":
+            self.value = ""
             self.post_message(self.Cancelled())
         elif event.character and len(event.character) == 1:
             self.value += event.character
