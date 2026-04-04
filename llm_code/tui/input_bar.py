@@ -68,24 +68,42 @@ class InputBar(Widget):
             self._vim_engine = None
         self.refresh()
 
+    # Pink color matching Claude Code's image indicator
+    _IMAGE_STYLE = "bold #e05880"
+    _IMAGE_MARKER = "\x00IMG\x00"  # sentinel in value text
+
+    def insert_image_marker(self) -> None:
+        """Insert an [image] marker at current cursor position."""
+        self.value += self._IMAGE_MARKER
+        self.pending_image_count += 1
+
     def render(self) -> RenderResult:
         text = Text()
         if self.vim_mode == "NORMAL":
             text.append("[N] ", style="yellow bold")
         elif self.vim_mode == "INSERT":
             text.append("[I] ", style="green bold")
-        # Pending image indicator
-        if self.pending_image_count > 0:
+        # Leading image count (for images added before any text)
+        if self.pending_image_count > 0 and self._IMAGE_MARKER not in self.value:
             n = self.pending_image_count
             label = f"{n} image{'s' if n > 1 else ''}"
-            text.append(f"[{label}] ", style="bold magenta")
+            text.append(f"[{label}] ", style=self._IMAGE_STYLE)
         text.append(self.PROMPT, style="bold cyan")
         if self.disabled:
             text.append("generating…", style="dim italic")
         else:
-            text.append(self.value)
+            # Render value with inline [image] markers styled in pink
+            parts = self.value.split(self._IMAGE_MARKER)
+            for i, part in enumerate(parts):
+                if i > 0:
+                    text.append("[image] ", style=self._IMAGE_STYLE)
+                text.append(part)
             text.append("█", style="dim")  # cursor
         return text
+
+    def get_clean_value(self) -> str:
+        """Return value with image markers stripped (for display in chat)."""
+        return self.value.replace(self._IMAGE_MARKER, "").strip()
 
     def on_key(self, event: events.Key) -> None:
         if self.disabled:

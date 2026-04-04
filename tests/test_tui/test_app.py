@@ -89,7 +89,10 @@ async def test_slash_clear():
         input_bar.post_message(InputBar.Submitted("/clear"))
         await pilot.pause()
 
-        assert len(chat.children) == 0
+        # /clear should remove the entries added by /cost
+        # (welcome banner from on_mount may persist as Static)
+        cost_entries = chat.query("AssistantText")
+        assert len(cost_entries) == 0
 
 
 @pytest.mark.asyncio

@@ -617,7 +617,7 @@ class LLMCodeTUI(App):
             img = capture_clipboard_image()
             if img is not None:
                 self._pending_images.append(img)
-                input_bar.pending_image_count = len(self._pending_images)
+                input_bar.insert_image_marker()
             else:
                 chat.add_entry(AssistantText("No image found in clipboard."))
         except (ImportError, FileNotFoundError, OSError):
@@ -651,21 +651,25 @@ class LLMCodeTUI(App):
 
     def on_input_bar_submitted(self, event: InputBar.Submitted) -> None:
         """Handle user input submission."""
-        text = event.value.strip()
-        if not text:
+        input_bar = self.query_one(InputBar)
+        # Strip image markers from submitted value
+        marker = InputBar._IMAGE_MARKER
+        clean_text = event.value.replace(marker, "").strip()
+        if not clean_text and not self._pending_images:
             return
 
         chat = self.query_one(ChatScrollView)
-        input_bar = self.query_one(InputBar)
         chat.resume_auto_scroll()
 
-        # Show image indicator in user message if images are pending
+        # Show user message with inline image markers rendered
         if self._pending_images:
             n = len(self._pending_images)
             label = f"{n} image{'s' if n > 1 else ''}"
-            chat.add_entry(UserMessage(f"{text}  [{label}]"))
+            display = f"[{label}] {clean_text}" if clean_text else f"[{label}]"
+            chat.add_entry(UserMessage(display))
         else:
-            chat.add_entry(UserMessage(text))
+            chat.add_entry(UserMessage(clean_text))
+        text = clean_text
 
         if text.startswith("/"):
             self._handle_slash_command(text)
@@ -687,8 +691,8 @@ class LLMCodeTUI(App):
             self.exit()
             return
 
-        # Ctrl+I — paste image from clipboard (Ctrl+V is captured by terminal)
-        if event.key == "ctrl+i":
+        # Ctrl+V / Ctrl+I — paste image from clipboard
+        if event.key in ("ctrl+v", "ctrl+i"):
             self._paste_clipboard_image()
             event.prevent_default()
             event.stop()
@@ -1256,7 +1260,7 @@ class LLMCodeTUI(App):
             img_path = Path(args).expanduser().resolve()
             img = load_image_from_path(str(img_path))
             self._pending_images.append(img)
-            input_bar.pending_image_count = len(self._pending_images)
+            input_bar.insert_image_marker()
         except FileNotFoundError:
             chat.add_entry(AssistantText(f"Image not found: {args}"))
 
