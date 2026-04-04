@@ -109,7 +109,7 @@ class LLMCodeTUI(App):
         if branch:
             workspace += f" · {branch}"
         perm = self._config.permission_mode if self._config else "prompt"
-        paste_key = "Ctrl+V to paste"
+        paste_key = "Cmd+V to paste" if sys.platform == "darwin" else "Ctrl+V to paste"
 
         text = RichText()
         for line in logo_lines:
