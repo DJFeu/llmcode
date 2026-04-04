@@ -1805,6 +1805,8 @@ class LLMCodeCLI:
                         status.stop()
 
                     # Filter <tool_call>...</tool_call> and <think>...</think> tags
+                    # Robust streaming parser: buffers potential tag prefixes,
+                    # routes <think> content to thinking_buffer, hides <tool_call>.
                     for char in event.text:
                         if in_tool_call_tag:
                             tool_tag_buffer += char
@@ -1814,17 +1816,30 @@ class LLMCodeCLI:
                         elif in_think_tag:
                             tool_tag_buffer += char
                             if tool_tag_buffer.endswith("</think>"):
+                                # Capture thinking content (strip the closing tag)
+                                _think_content = tool_tag_buffer[:-len("</think>")]
+                                thinking_buffer += _think_content
                                 in_think_tag = False
+                                tool_tag_buffer = ""
+                            elif len(tool_tag_buffer) > 100000:
+                                # Safety: if think block is very long, flush to thinking_buffer
+                                thinking_buffer += tool_tag_buffer
                                 tool_tag_buffer = ""
                         elif tool_tag_buffer:
                             tool_tag_buffer += char
                             if tool_tag_buffer == "<tool_call>":
                                 in_tool_call_tag = True
+                                tool_tag_buffer = ""  # Don't accumulate tool_call content in buffer start
                             elif tool_tag_buffer == "<think>":
                                 in_think_tag = True
+                                tool_tag_buffer = ""  # Content starts fresh after opening tag
+                            elif tool_tag_buffer == "</think>":
+                                # Orphan close tag — discard silently
+                                tool_tag_buffer = ""
                             elif (
                                 not "<tool_call>".startswith(tool_tag_buffer)
                                 and not "<think>".startswith(tool_tag_buffer)
+                                and not "</think>".startswith(tool_tag_buffer)
                             ):
                                 self._text_buffer += tool_tag_buffer
                                 tool_tag_buffer = ""
