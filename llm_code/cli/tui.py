@@ -1912,15 +1912,22 @@ class LLMCodeCLI:
             self._text_buffer += tool_tag_buffer
         self._flush_text()
 
-        # Render thinking content as dim panel (if any)
+        # Render thinking content as collapsible dim panel (if any)
         if thinking_buffer:
             from rich.panel import Panel
+            _think_elapsed = time.monotonic() - _thinking_start
+            _think_time_str = f"{_think_elapsed:.1f}s" if _think_elapsed < 60 else f"{_think_elapsed / 60:.1f}m"
+            _think_tokens = len(thinking_buffer) // 4
+            _truncated = thinking_buffer[:3000]
+            if len(thinking_buffer) > 3000:
+                _truncated += f"\n\n… [{len(thinking_buffer):,} chars total]"
             console.print(Panel(
-                thinking_buffer[:2000] + ("…" if len(thinking_buffer) > 2000 else ""),
-                title="[dim italic]∴ Thinking[/]",
-                border_style="dim",
-                style="dim italic",
+                _truncated,
+                title=f"[dim italic]💭 Thinking ({_think_time_str} · ~{_think_tokens:,} tok)[/]",
+                border_style="dim blue",
+                style="dim",
                 expand=False,
+                padding=(0, 1),
             ))
 
         # Turn summary — Claude Code style: elapsed + input/output tokens + cost

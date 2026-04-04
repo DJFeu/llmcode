@@ -260,7 +260,7 @@ class InkBridge:
                 if isinstance(event, StreamTextDelta):
                     output_tokens += len(event.text) // 4
 
-                    # Filter <tool_call> and <think> tags
+                    # Filter <tool_call> and <think> tags — route think to thinking_delta
                     for char in event.text:
                         if in_tool_call:
                             tag_buffer += char
@@ -270,15 +270,30 @@ class InkBridge:
                         elif in_think:
                             tag_buffer += char
                             if tag_buffer.endswith("</think>"):
+                                _think_content = tag_buffer[:-len("</think>")]
+                                if _think_content:
+                                    await self._send({"type": "thinking_delta", "text": _think_content})
                                 in_think = False
+                                tag_buffer = ""
+                            elif len(tag_buffer) > 5000:
+                                # Flush long think content in chunks
+                                await self._send({"type": "thinking_delta", "text": tag_buffer})
                                 tag_buffer = ""
                         elif tag_buffer:
                             tag_buffer += char
                             if tag_buffer == "<tool_call>":
                                 in_tool_call = True
+                                tag_buffer = ""
                             elif tag_buffer == "<think>":
                                 in_think = True
-                            elif not "<tool_call>".startswith(tag_buffer) and not "<think>".startswith(tag_buffer):
+                                tag_buffer = ""
+                            elif tag_buffer == "</think>":
+                                tag_buffer = ""
+                            elif (
+                                not "<tool_call>".startswith(tag_buffer)
+                                and not "<think>".startswith(tag_buffer)
+                                and not "</think>".startswith(tag_buffer)
+                            ):
                                 text_buffer += tag_buffer
                                 tag_buffer = ""
                         elif char == "<":
