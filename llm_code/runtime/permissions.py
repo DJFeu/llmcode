@@ -175,3 +175,7 @@ class PermissionPolicy:
         if level_rank <= mode_max:
             return PermissionOutcome.ALLOW
         return PermissionOutcome.DENY
+
+    def allow_tool(self, tool_name: str) -> None:
+        """Dynamically add a tool to the allow list (e.g. after user approves 'always')."""
+        self._allow_tools = self._allow_tools | frozenset({tool_name})

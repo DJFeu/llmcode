@@ -16,6 +16,7 @@ from llm_code.api.types import (
     MessageRequest,
     StreamEvent,
     StreamMessageStop,
+    StreamPermissionRequest,
     StreamTextDelta,
     StreamToolExecResult,
     StreamToolExecStart,
@@ -142,6 +143,7 @@ class ConversationRuntime:
         self._memory_store = memory_store
         self._task_manager = task_manager
         self._project_index = project_index
+        self._permission_future: asyncio.Future[str] | None = None
         self._has_attempted_reactive_compact = False
         self._consecutive_failures: int = 0
         self._compressor = ContextCompressor()
@@ -165,6 +167,19 @@ class ConversationRuntime:
         """Fire a hook event if the hook runner supports the generic fire() method."""
         if hasattr(self._hooks, "fire"):
             self._hooks.fire(event, context or {})
+
+    def send_permission_response(self, response: str) -> None:
+        """Resolve the pending permission prompt with 'allow', 'deny', or 'always'.
+
+        Called by the TUI when the user presses y/n/a on a permission inline widget.
+
+        IMPORTANT: Must be called from the same event loop thread that owns
+        ``_permission_future``. In Textual, this is guaranteed when called from
+        an ``on_key`` handler since both the app and ``run_worker`` share the
+        same asyncio event loop.
+        """
+        if self._permission_future is not None and not self._permission_future.done():
+            self._permission_future.set_result(response)
 
     async def run_turn(self, user_input: str, images: list | None = None) -> AsyncIterator[StreamEvent]:
         """Run one user turn (may involve multiple LLM calls for tool use)."""
@@ -646,9 +661,12 @@ class ConversationRuntime:
             return
 
         if outcome == PermissionOutcome.NEED_PROMPT:
+            # Build a short preview of tool arguments for the permission prompt
+            args_preview = json.dumps(validated_args, default=str)[:120]
+
             # Attempt speculative pre-execution via overlay so the result is
-            # ready the moment the user approves.  Tools that do not support
-            # the overlay kwarg fall through to a plain deny.
+            # ready the moment the user approves.
+            spec_executor = None
             try:
                 from llm_code.runtime.speculative import SpeculativeExecutor
                 import uuid as _uuid
@@ -659,25 +677,51 @@ class ConversationRuntime:
                     base_dir=self._context.cwd,
                     session_id=session_id,
                 )
-                pre_result = spec_executor.pre_execute()
-                # Deny by default (no UI to prompt user in this context)
-                spec_executor.deny()
-                yield ToolResultBlock(
-                    tool_use_id=call.id,
-                    content=(
-                        f"Tool '{call.name}' requires user approval (not available in this context). "
-                        f"Pre-computed result: {pre_result.output}"
-                    ),
-                    is_error=True,
-                )
+                spec_executor.pre_execute()
             except Exception:
-                # Fallback: plain deny if speculative execution fails
+                spec_executor = None
+
+            # Yield permission request and wait for user response
+            yield StreamPermissionRequest(
+                tool_name=call.name,
+                args_preview=args_preview,
+            )
+
+            loop = asyncio.get_running_loop()
+            self._permission_future = loop.create_future()
+            try:
+                response = await asyncio.wait_for(self._permission_future, timeout=300)
+            except asyncio.TimeoutError:
+                response = "deny"
+                logger.warning("Permission prompt for '%s' timed out (300s), auto-denying", call.name)
+            finally:
+                self._permission_future = None
+
+            if response in ("allow", "always"):
+                if response == "always":
+                    # Add to allow list so future calls skip prompting
+                    if hasattr(self._permissions, "allow_tool"):
+                        self._permissions.allow_tool(call.name)
+                if spec_executor is not None:
+                    try:
+                        spec_executor.confirm()
+                    except Exception:
+                        pass
+                # Fall through to execute the tool normally below
+            else:
+                # Denied by user
+                if spec_executor is not None:
+                    try:
+                        spec_executor.deny()
+                    except Exception:
+                        pass
+                self._fire_hook("tool_denied", {"tool_name": call.name})
                 yield ToolResultBlock(
                     tool_use_id=call.id,
-                    content=f"Tool '{call.name}' requires user approval (not available in this context)",
+                    content=f"Tool '{call.name}' denied by user",
                     is_error=True,
                 )
-            return
+                return
 
         # 4b. Create checkpoint before mutating tools
         if self._checkpoint_mgr is not None and not tool.is_read_only(validated_args):

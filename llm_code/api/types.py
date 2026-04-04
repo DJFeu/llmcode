@@ -131,3 +131,10 @@ class StreamToolExecResult(StreamEvent):
 class StreamThinkingDelta(StreamEvent):
     """Emitted when the model produces a thinking/reasoning token."""
     text: str
+
+
+@dataclasses.dataclass(frozen=True)
+class StreamPermissionRequest(StreamEvent):
+    """Emitted when a tool requires user permission before execution."""
+    tool_name: str
+    args_preview: str

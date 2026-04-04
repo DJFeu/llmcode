@@ -54,6 +54,7 @@ class LLMCodeTUI(App):
         self._project_index = None
         self._coordinator_class = None
         self._coordinator_tool_class = None
+        self._permission_pending = False
 
     def compose(self) -> ComposeResult:
         yield HeaderBar(id="header-bar")
@@ -514,15 +515,34 @@ class LLMCodeTUI(App):
         """Handle Escape — cancel running generation."""
         pass  # Phase 2: cancel runtime
 
+    def on_key(self, event: "events.Key") -> None:
+        """Handle single-key permission responses (y/n/a).
+
+        When ``_permission_pending`` is True, y/n/a keys are intercepted at the
+        App level before reaching any widget.  The key press resolves the
+        runtime's ``_permission_future`` which unblocks ``_run_turn``.
+        """
+        if not self._permission_pending or self._runtime is None:
+            return
+        response_map = {"y": "allow", "n": "deny", "a": "always"}
+        response = response_map.get(event.key)
+        if response is not None:
+            self._runtime.send_permission_response(response)
+            event.prevent_default()
+            event.stop()
+
     async def _run_turn(self, user_input: str) -> None:
         """Run a conversation turn with full streaming event handling."""
         import asyncio
         import time
         from llm_code.api.types import (
-            StreamTextDelta, StreamThinkingDelta, StreamToolExecStart,
-            StreamToolExecResult, StreamToolProgress, StreamMessageStop,
+            StreamPermissionRequest, StreamTextDelta, StreamThinkingDelta,
+            StreamToolExecStart, StreamToolExecResult, StreamToolProgress,
+            StreamMessageStop,
         )
-        from llm_code.tui.chat_widgets import SpinnerLine, ThinkingBlock, ToolBlock, TurnSummary
+        from llm_code.tui.chat_widgets import (
+            PermissionInline, SpinnerLine, ThinkingBlock, ToolBlock, TurnSummary,
+        )
 
         if self._runtime is None:
             chat = self.query_one(ChatScrollView)
@@ -563,8 +583,20 @@ class LLMCodeTUI(App):
             if spinner.is_mounted:
                 await spinner.remove()
 
+        perm_widget = None
+
         try:
             async for event in self._runtime.run_turn(user_input):
+                # Clean up permission widget from previous iteration
+                if self._permission_pending and not isinstance(event, StreamPermissionRequest):
+                    self._permission_pending = False
+                    if perm_widget is not None and perm_widget.is_mounted:
+                        await perm_widget.remove()
+                        perm_widget = None
+                    # Re-add spinner while tool executes
+                    spinner.phase = "running"
+                    chat.add_entry(spinner)
+
                 if isinstance(event, StreamTextDelta):
                     if not assistant_added:
                         await remove_spinner()
@@ -601,6 +633,18 @@ class LLMCodeTUI(App):
                     spinner.phase = "running"
                     spinner._tool_name = event.tool_name
 
+                elif isinstance(event, StreamPermissionRequest):
+                    await remove_spinner()
+                    perm_widget = PermissionInline(
+                        event.tool_name, event.args_preview,
+                    )
+                    chat.add_entry(perm_widget)
+                    self._permission_pending = True
+                    # No explicit wait — the runtime generator is suspended
+                    # on its own asyncio.Future. The async for loop blocks on
+                    # __anext__ until y/n/a resolves the Future via on_key →
+                    # send_permission_response. Cleanup at top of loop.
+
                 elif isinstance(event, StreamMessageStop):
                     if event.usage:
                         turn_input_tokens += event.usage.input_tokens
@@ -616,10 +660,16 @@ class LLMCodeTUI(App):
             chat.add_entry(AssistantText(f"Error: {exc}"))
         finally:
             timer_task.cancel()
+            self._permission_pending = False
             try:
                 await remove_spinner()
             except Exception:
                 pass
+            if perm_widget is not None and perm_widget.is_mounted:
+                try:
+                    await perm_widget.remove()
+                except Exception:
+                    pass
             input_bar.disabled = False
             status.is_streaming = False
 
