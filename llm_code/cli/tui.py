@@ -522,11 +522,52 @@ class LLMCodeCLI:
         else:
             self._ide_bridge = None
 
+        # M5: Register LSP tools if configured
+        self._lsp_manager = None
+        if self._config.lsp_servers or self._config.lsp_auto_detect:
+            try:
+                from llm_code.lsp.manager import LspServerManager
+                from llm_code.lsp.tools import LspGotoDefinitionTool, LspFindReferencesTool, LspDiagnosticsTool
+                self._lsp_manager = LspServerManager()
+                for tool in (
+                    LspGotoDefinitionTool(self._lsp_manager),
+                    LspFindReferencesTool(self._lsp_manager),
+                    LspDiagnosticsTool(self._lsp_manager),
+                ):
+                    try:
+                        self._tool_reg.register(tool)
+                    except ValueError:
+                        pass
+            except ImportError:
+                pass
+
         # Build project index
         self._project_index = None
         try:
             from llm_code.runtime.indexer import ProjectIndexer
             self._project_index = ProjectIndexer(self._cwd).build_index()
+        except Exception:
+            pass
+
+        # M4: Initialize telemetry
+        telemetry = None
+        if getattr(self._config, "telemetry", None) and self._config.telemetry.enabled:
+            try:
+                from llm_code.runtime.telemetry import Telemetry, TelemetryConfig
+                telemetry = Telemetry(TelemetryConfig(
+                    enabled=True,
+                    endpoint=self._config.telemetry.endpoint,
+                    service_name=self._config.telemetry.service_name,
+                ))
+            except Exception:
+                pass
+
+        # M6: Sandbox detection — inject info into context
+        try:
+            from llm_code.runtime.sandbox import get_sandbox_info
+            sandbox = get_sandbox_info()
+            if sandbox["sandboxed"]:
+                logger.info("Sandbox detected: %s", sandbox["type"])
         except Exception:
             pass
 
@@ -545,6 +586,7 @@ class LLMCodeCLI:
             recovery_checkpoint=recovery_checkpoint,
             cost_tracker=self._cost_tracker,
             deferred_tool_manager=self._deferred_tool_manager,
+            telemetry=telemetry,
             skills=self._skills,
             memory_store=self._memory,
             task_manager=self._task_manager,
@@ -585,6 +627,14 @@ class LLMCodeCLI:
             self._mcp_manager = None
 
     # ── Display Helpers ─────────────────────────────────────────────
+
+    def _fire_hook(self, event: str, context: dict | None = None) -> None:
+        """Fire a hook event via the runtime's hook runner."""
+        if self._runtime is not None and hasattr(self._runtime, "_hooks") and hasattr(self._runtime._hooks, "fire"):
+            try:
+                self._runtime._hooks.fire(event, context or {})
+            except Exception:
+                pass
 
     def _flush_text(self) -> None:
         """Flush accumulated text buffer as Markdown."""
@@ -745,8 +795,10 @@ class LLMCodeCLI:
 
         name = cmd.name
         args = cmd.args.strip()
+        self._fire_hook("pre_command", {"command": name, "args": args})
 
         if name in ("exit", "quit"):
+            self._fire_hook("session_end", {})
             console.print("[dim]Goodbye![/]")
             raise SystemExit(0)
 
@@ -962,6 +1014,10 @@ class LLMCodeCLI:
 
         else:
             console.print(f"[red]Unknown command: /{name} -- type /help for help[/]")
+            self._fire_hook("command_error", {"command": name, "error": "unknown command"})
+            return
+
+        self._fire_hook("post_command", {"command": name})
 
     def _handle_config_command(self, args: str) -> None:
         """Handle /config [set <key> <value> | get <key>] commands."""
@@ -1882,6 +1938,28 @@ class LLMCodeCLI:
         self._render_welcome()
         self._init_session()
         await self._init_mcp_servers()
+        # M5: Start LSP servers if configured
+        if getattr(self, "_lsp_manager", None) and self._config.lsp_servers:
+            try:
+                from llm_code.lsp.client import LspServerConfig
+                lsp_configs = {}
+                for name, raw in self._config.lsp_servers.items():
+                    if isinstance(raw, dict):
+                        lsp_configs[name] = LspServerConfig(
+                            command=raw.get("command", ""),
+                            args=tuple(raw.get("args", ())),
+                        )
+                await self._lsp_manager.start_all(lsp_configs, self._cwd)
+            except Exception as exc:
+                logger.warning("LSP startup failed: %s", exc)
+
+        # M2: Auto-start IDE bridge if enabled
+        if self._config.ide.enabled and getattr(self, "_ide_bridge", None) is not None:
+            try:
+                await self._ide_bridge.start()
+            except Exception:
+                pass
+        self._fire_hook("session_start", {})
 
         # Non-blocking version check — fire and forget
         async def _version_check_bg() -> None:
@@ -1955,11 +2033,35 @@ class LLMCodeCLI:
             editing_mode=editing_mode,
         )
 
+        # M1: Voice recording helper
+        async def _voice_record() -> str:
+            """Record audio and transcribe via configured STT backend."""
+            try:
+                from llm_code.voice.recorder import AudioRecorder
+                from llm_code.voice.stt import create_stt_engine
+                recorder = AudioRecorder()
+                console.print("[yellow]🎤 Recording... press Enter to stop[/]")
+                audio_data = await asyncio.to_thread(recorder.record_until_keypress)
+                engine = create_stt_engine(self._config.voice)
+                text = await asyncio.to_thread(engine.transcribe, audio_data)
+                console.print(f"[dim]Transcribed: {text}[/]")
+                return text
+            except Exception as exc:
+                console.print(f"[red]Voice error: {exc}[/]")
+                return ""
+
         while True:
             try:
                 user_input = await session.prompt_async("❯ ")
             except (EOFError, KeyboardInterrupt):
                 await self._dream_on_exit()
+                # M3: Auto-save session on exit
+                if self._runtime is not None:
+                    try:
+                        self._session_manager.save(self._runtime.session)
+                    except Exception:
+                        pass
+                self._fire_hook("session_end", {})
                 # Stop all swarm members on exit
                 if getattr(self, "_swarm_manager", None) is not None:
                     try:
@@ -1971,7 +2073,13 @@ class LLMCodeCLI:
 
             user_input = user_input.strip()
             if not user_input:
-                continue
+                # M1: If voice is active and empty input, try voice recording
+                if getattr(self, "_voice_active", False):
+                    user_input = await _voice_record()
+                    if not user_input:
+                        continue
+                else:
+                    continue
 
             # Collect images
             images = list(self._pending_images)

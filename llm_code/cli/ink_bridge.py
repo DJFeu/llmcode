@@ -1668,6 +1668,38 @@ class InkBridge:
         except Exception:
             pass
 
+        # M5: LSP tools
+        self._lsp_manager = None
+        if self._config.lsp_servers or self._config.lsp_auto_detect:
+            try:
+                from llm_code.lsp.manager import LspServerManager
+                from llm_code.lsp.tools import LspGotoDefinitionTool, LspFindReferencesTool, LspDiagnosticsTool
+                self._lsp_manager = LspServerManager()
+                for tool in (
+                    LspGotoDefinitionTool(self._lsp_manager),
+                    LspFindReferencesTool(self._lsp_manager),
+                    LspDiagnosticsTool(self._lsp_manager),
+                ):
+                    try:
+                        registry.register(tool)
+                    except ValueError:
+                        pass
+            except ImportError:
+                pass
+
+        # M4: Telemetry
+        telemetry = None
+        if getattr(self._config, "telemetry", None) and self._config.telemetry.enabled:
+            try:
+                from llm_code.runtime.telemetry import Telemetry, TelemetryConfig
+                telemetry = Telemetry(TelemetryConfig(
+                    enabled=True,
+                    endpoint=self._config.telemetry.endpoint,
+                    service_name=self._config.telemetry.service_name,
+                ))
+            except Exception:
+                pass
+
         prompt_builder = SystemPromptBuilder()
 
         self._runtime = ConversationRuntime(
@@ -1683,6 +1715,7 @@ class InkBridge:
             recovery_checkpoint=recovery_checkpoint,
             cost_tracker=self._cost_tracker,
             deferred_tool_manager=self._deferred_tool_manager,
+            telemetry=telemetry,
             skills=self._skills,
             memory_store=self._memory,
             task_manager=self._task_manager,

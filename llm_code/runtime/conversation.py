@@ -313,6 +313,7 @@ class ConversationRuntime:
                     and not self._has_attempted_reactive_compact
                 ):
                     logger.warning("Prompt too long; compacting context and retrying")
+                    self._fire_hook("session_compact", {"reason": "prompt_too_long"})
                     self._has_attempted_reactive_compact = True
                     _compressor = ContextCompressor()
                     self.session = _compressor.compress(
@@ -329,6 +330,7 @@ class ConversationRuntime:
                     if _fallback and self._active_model != _fallback:
                         # Still have retries remaining before switching — retry same model
                         if self._consecutive_failures < 3:
+                            self._fire_hook("http_retry", {"attempt": self._consecutive_failures, "model": self._active_model})
                             logger.warning(
                                 "Provider error (attempt %d/3): %s",
                                 self._consecutive_failures,
@@ -336,6 +338,7 @@ class ConversationRuntime:
                             )
                             continue  # retry this iteration
                         # 3rd consecutive failure: switch to fallback model
+                        self._fire_hook("http_fallback", {"reason": "consecutive_failures", "from": self._active_model, "to": _fallback})
                         logger.warning(
                             "3 consecutive provider errors; switching from %s to fallback model %s",
                             self._active_model,
@@ -466,6 +469,8 @@ class ConversationRuntime:
             # Split agent calls from non-agent calls so agents can run in parallel
             agent_calls = [c for c in parsed_calls if c.name == "agent"]
             non_agent_calls = [c for c in parsed_calls if c.name != "agent"]
+            for ac in agent_calls:
+                self._fire_hook("agent_spawn", {"agent_id": ac.id, "args": str(ac.args)[:200]})
 
             tool_result_blocks: list[ToolResultBlock] = []
 
@@ -506,6 +511,8 @@ class ConversationRuntime:
                             tool_result_blocks.append(event)
                         else:
                             yield event
+                for ac in agent_calls:
+                    self._fire_hook("agent_complete", {"agent_id": ac.id})
             elif agent_calls:
                 # Single agent call — sequential
                 for call in agent_calls:
@@ -514,6 +521,7 @@ class ConversationRuntime:
                             tool_result_blocks.append(event)
                         else:
                             yield event
+                    self._fire_hook("agent_complete", {"agent_id": call.id})
 
             # Add tool results as user message
             if tool_result_blocks:
