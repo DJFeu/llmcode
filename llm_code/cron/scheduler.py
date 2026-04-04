@@ -113,6 +113,12 @@ class CronScheduler:
         """Acquire a file lock; return True if successful."""
         try:
             self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+            # Close previous FD if exists to prevent leak
+            if hasattr(self, "_lock_fd") and self._lock_fd:
+                try:
+                    self._lock_fd.close()
+                except Exception:
+                    pass
             self._lock_fd = open(self._lock_path, "w")
             fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             return True
