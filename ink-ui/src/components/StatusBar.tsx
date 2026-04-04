@@ -9,9 +9,10 @@ interface StatusBarProps {
   isThinking: boolean;
   vimEnabled?: boolean;
   vimMode?: VimMode;
+  cost?: string;
 }
 
-export function StatusBar({ model, tokens, isThinking, vimEnabled, vimMode }: StatusBarProps) {
+export function StatusBar({ model, tokens, isThinking, vimEnabled, vimMode, cost }: StatusBarProps) {
   return (
     <Box>
       {vimEnabled && vimMode && (
@@ -22,7 +23,8 @@ export function StatusBar({ model, tokens, isThinking, vimEnabled, vimMode }: St
       )}
       <Text dimColor>
         {model ? `${model}` : ''}
-        {tokens > 0 ? ` │ ↓${tokens} tok` : ''}
+        {tokens > 0 ? ` │ ↓${tokens.toLocaleString()} tok` : ''}
+        {cost ? ` │ ${cost}` : ''}
         {isThinking ? ' │ streaming…' : ''}
         {' │ /help │ Ctrl+D quit'}
       </Text>

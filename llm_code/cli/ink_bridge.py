@@ -250,6 +250,7 @@ class InkBridge:
         start = time.monotonic()
         text_buffer = ""
         output_tokens = 0
+        input_tokens = 0
         in_tool_call = False
         in_think = False
         tag_buffer = ""
@@ -302,8 +303,16 @@ class InkBridge:
                         text_buffer = ""
                     await self._send({"type": "thinking_stop", "elapsed": time.monotonic() - start, "tokens": 0})
                     await self._send({"type": "tool_start", "name": event.tool_name, "detail": event.args_summary})
+                    # Agent status: spawn
+                    if event.tool_name == "agent":
+                        _task_preview = event.args_summary[:100] if event.args_summary else ""
+                        await self._send({"type": "agent_status", "status": "spawn", "agentId": "", "task": _task_preview})
 
                 elif isinstance(event, StreamToolExecResult):
+                    # Agent status: complete/error
+                    if event.tool_name == "agent":
+                        _agent_status = "error" if event.is_error else "complete"
+                        await self._send({"type": "agent_status", "status": _agent_status, "agentId": "", "elapsed": time.monotonic() - start})
                     msg = {
                         "type": "tool_result",
                         "name": event.tool_name,
@@ -322,7 +331,8 @@ class InkBridge:
                     await self._send({"type": "tool_progress", "name": event.tool_name, "message": event.message})
 
                 elif isinstance(event, StreamMessageStop):
-                    if event.usage and event.usage.output_tokens > 0:
+                    if event.usage:
+                        input_tokens += event.usage.input_tokens
                         output_tokens = event.usage.output_tokens
                         self._cost_tracker.add_usage(
                             event.usage.input_tokens, event.usage.output_tokens
@@ -342,7 +352,15 @@ class InkBridge:
 
         elapsed = time.monotonic() - start
         await self._send({"type": "thinking_stop", "elapsed": elapsed, "tokens": output_tokens})
-        await self._send({"type": "turn_done", "elapsed": elapsed, "tokens": output_tokens})
+        # Enhanced turn_done with input tokens and cost
+        _cost_str = self._cost_tracker.format_cost() if hasattr(self._cost_tracker, "format_cost") else ""
+        await self._send({
+            "type": "turn_done",
+            "elapsed": elapsed,
+            "tokens": output_tokens,
+            "inputTokens": input_tokens,
+            "cost": _cost_str,
+        })
 
     async def _handle_slash_command(self, text: str) -> None:
         """Handle slash commands by delegating to the print-based CLI handler."""

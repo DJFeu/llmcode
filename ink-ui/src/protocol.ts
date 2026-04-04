@@ -25,7 +25,8 @@ export type BackendMessage =
   | { type: 'tool_start'; name: string; detail: string }
   | { type: 'tool_result'; name: string; output: string; isError: boolean; diff?: DiffData }
   | { type: 'tool_progress'; name: string; message: string }
-  | { type: 'turn_done'; elapsed: number; tokens: number }
+  | { type: 'turn_done'; elapsed: number; tokens: number; inputTokens?: number; cost?: string }
+  | { type: 'agent_status'; status: 'spawn' | 'working' | 'complete' | 'error'; agentId: string; task?: string; elapsed?: number }
   | { type: 'permission_request'; toolName: string; args: string }
   | { type: 'marketplace_show'; title: string; items: MarketplaceItem[] }
   | { type: 'action_show'; name: string; actions: Array<{id: string; label: string}> }

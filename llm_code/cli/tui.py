@@ -1790,8 +1790,10 @@ class LLMCodeCLI:
         tool_tag_buffer = ""
         thinking_buffer = ""
 
+        _thinking_start = time.monotonic()
         status = console.status("[blue]⠋ Thinking…[/]", spinner="dots")
         status.start()
+        _input_tokens = 0
 
         try:
             async for event in self._runtime.run_turn(user_input, images=images):
@@ -1840,6 +1842,8 @@ class LLMCodeCLI:
 
                 elif isinstance(event, StreamThinkingDelta):
                     thinking_buffer += event.text
+                    _elapsed = time.monotonic() - _thinking_start
+                    status.update(f"[blue]⠋ Thinking… ({_elapsed:.1f}s)[/]")
 
                 elif isinstance(event, StreamToolExecStart):
                     if not first_token:
@@ -1847,11 +1851,20 @@ class LLMCodeCLI:
                     status.stop()
                     self._flush_text()
                     self._show_tool_start(event.tool_name, event.args_summary)
+                    if event.tool_name == "agent":
+                        _task = event.args_summary[:80] if event.args_summary else ""
+                        console.print(f"[bold cyan]🤖 Agent spawned[/][dim]: {_task}[/]")
                     status.update(f"[blue]Running {event.tool_name}…[/]")
                     status.start()
 
                 elif isinstance(event, StreamToolExecResult):
                     status.stop()
+                    if event.tool_name == "agent":
+                        _agent_elapsed = time.monotonic() - start
+                        if event.is_error:
+                            console.print(f"[red]✗ Agent error ({_agent_elapsed:.1f}s)[/]")
+                        else:
+                            console.print(f"[green]✓ Agent complete ({_agent_elapsed:.1f}s)[/]")
                     self._show_tool_result(event.tool_name, event.output, event.is_error)
 
                 elif isinstance(event, StreamToolProgress):
@@ -1860,9 +1873,8 @@ class LLMCodeCLI:
                 elif isinstance(event, StreamMessageStop):
                     status.stop()
                     self._flush_text()
-                    if event.usage and (
-                        event.usage.input_tokens > 0 or event.usage.output_tokens > 0
-                    ):
+                    if event.usage:
+                        _input_tokens += event.usage.input_tokens
                         self._output_tokens = event.usage.output_tokens
                         self._cost_tracker.add_usage(
                             event.usage.input_tokens, event.usage.output_tokens
@@ -1896,11 +1908,17 @@ class LLMCodeCLI:
                 expand=False,
             ))
 
-        # Turn summary
+        # Turn summary — Claude Code style: elapsed + input/output tokens + cost
         elapsed = time.monotonic() - start
         time_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{elapsed / 60:.1f}m"
-        tokens_str = f"  ↓{self._output_tokens:,} tok" if self._output_tokens > 0 else ""
-        console.print(f"[bold green]✓[/] [green]Done ({time_str})[/][dim]{tokens_str}[/]")
+        parts = []
+        if _input_tokens > 0:
+            parts.append(f"↑{_input_tokens:,}")
+        if self._output_tokens > 0:
+            parts.append(f"↓{self._output_tokens:,}")
+        tokens_str = f"  {' · '.join(parts)} tok" if parts else ""
+        cost_str = f" · {self._cost_tracker.format_cost()}" if hasattr(self._cost_tracker, "format_cost") else ""
+        console.print(f"[bold green]✓[/] [green]Done ({time_str})[/][dim]{tokens_str}{cost_str}[/]")
         console.print()
 
     async def _dream_on_exit(self) -> None:

@@ -77,9 +77,28 @@ export function App() {
       case 'tool_result':
         addEntry({ type: 'tool_result', name: msg.name, output: msg.output, isError: msg.isError, diff: msg.diff });
         break;
-      case 'turn_done':
-        addEntry({ type: 'status', text: `✓ Done (${msg.elapsed.toFixed(1)}s)  ↓${msg.tokens} tok` });
+      case 'turn_done': {
+        const inputStr = msg.inputTokens ? `↑${msg.inputTokens.toLocaleString()}` : '';
+        const outputStr = msg.tokens ? `↓${msg.tokens.toLocaleString()}` : '';
+        const tokStr = [inputStr, outputStr].filter(Boolean).join(' · ');
+        const costStr = msg.cost ? ` · ${msg.cost}` : '';
+        addEntry({ type: 'status', text: `✓ Done (${msg.elapsed.toFixed(1)}s)  ${tokStr}${costStr}` });
         setTotalTokens(prev => prev + (msg.tokens || 0));
+        break;
+      }
+      case 'agent_status':
+        if (msg.status === 'spawn') {
+          addEntry({ type: 'info', text: `🤖 Agent spawned${msg.task ? ': ' + msg.task : ''}` });
+        } else if (msg.status === 'complete') {
+          const elapsed = msg.elapsed ? ` (${msg.elapsed.toFixed(1)}s)` : '';
+          addEntry({ type: 'status', text: `✓ Agent complete${elapsed}` });
+        } else if (msg.status === 'error') {
+          addEntry({ type: 'error', text: `✗ Agent error` });
+        }
+        break;
+      case 'tool_progress':
+        // Update last tool entry with progress or show as status
+        addEntry({ type: 'info', text: `  ⟳ ${msg.name}: ${msg.message}` });
         break;
       case 'permission_request':
         setPermissionRequest(msg);
