@@ -100,7 +100,15 @@ class LspGotoDefinitionTool(Tool):
 
     def execute(self, args: dict) -> ToolResult:
         import asyncio
-        return asyncio.get_event_loop().run_until_complete(self.execute_async(args))
+        import concurrent.futures
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(asyncio.run, self.execute_async(args)).result()
+        return asyncio.run(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
         file_path = args["file"]
@@ -172,7 +180,15 @@ class LspFindReferencesTool(Tool):
 
     def execute(self, args: dict) -> ToolResult:
         import asyncio
-        return asyncio.get_event_loop().run_until_complete(self.execute_async(args))
+        import concurrent.futures
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(asyncio.run, self.execute_async(args)).result()
+        return asyncio.run(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
         file_path = args["file"]
@@ -239,7 +255,15 @@ class LspDiagnosticsTool(Tool):
 
     def execute(self, args: dict) -> ToolResult:
         import asyncio
-        return asyncio.get_event_loop().run_until_complete(self.execute_async(args))
+        import concurrent.futures
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(asyncio.run, self.execute_async(args)).result()
+        return asyncio.run(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
         file_path = args["file"]

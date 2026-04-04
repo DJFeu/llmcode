@@ -46,14 +46,18 @@ class SubprocessBackend:
 
         prompt = f"You are a swarm worker with role '{role}'. Your task: {task}"
 
-        log_file = open(log_path, "w", encoding="utf-8")
+        log_fh = open(log_path, "w", encoding="utf-8")
         proc = await asyncio.create_subprocess_exec(
             *cmd_args,
             stdin=asyncio.subprocess.PIPE,
-            stdout=log_file,
+            stdout=log_fh,
             stderr=asyncio.subprocess.STDOUT,
         )
         self._procs[member_id] = proc
+        # Track open file handles for cleanup
+        if not hasattr(self, "_log_files"):
+            self._log_files: dict[str, object] = {}
+        self._log_files[member_id] = log_fh
 
         # Send initial prompt
         if proc.stdin:
@@ -76,6 +80,14 @@ class SubprocessBackend:
             except ProcessLookupError:
                 pass
         self._procs.pop(member_id, None)
+        # Close log file handle
+        if hasattr(self, "_log_files"):
+            fh = self._log_files.pop(member_id, None)
+            if fh is not None:
+                try:
+                    fh.close()
+                except Exception:
+                    pass
 
     async def stop_all(self) -> None:
         """Terminate all spawned processes."""

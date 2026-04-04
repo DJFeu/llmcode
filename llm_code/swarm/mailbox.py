@@ -1,6 +1,7 @@
 """File-based JSONL mailbox for inter-agent communication."""
 from __future__ import annotations
 
+import fcntl
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,7 @@ class Mailbox:
     """JSONL-based message passing between swarm members.
 
     Messages stored at: <base_dir>/<sender>_to_<receiver>.jsonl
+    Uses file locking to prevent concurrent write corruption.
     """
 
     def __init__(self, base_dir: Path) -> None:
@@ -19,17 +21,21 @@ class Mailbox:
         self._dir.mkdir(parents=True, exist_ok=True)
 
     def send(self, from_id: str, to_id: str, text: str) -> SwarmMessage:
-        """Append a message to the sender->receiver JSONL file."""
+        """Append a message to the sender->receiver JSONL file (with file lock)."""
         ts = datetime.now(timezone.utc).isoformat()
         msg = SwarmMessage(from_id=from_id, to_id=to_id, text=text, timestamp=ts)
         path = self._msg_path(from_id, to_id)
         with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "from_id": msg.from_id,
-                "to_id": msg.to_id,
-                "text": msg.text,
-                "timestamp": msg.timestamp,
-            }) + "\n")
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                f.write(json.dumps({
+                    "from_id": msg.from_id,
+                    "to_id": msg.to_id,
+                    "text": msg.text,
+                    "timestamp": msg.timestamp,
+                }) + "\n")
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
         return msg
 
     def receive(self, from_id: str, to_id: str) -> list[SwarmMessage]:

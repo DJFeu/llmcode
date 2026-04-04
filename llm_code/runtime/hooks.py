@@ -196,9 +196,11 @@ class HookRunner:
             )
         except subprocess.TimeoutExpired:
             msg = f"Hook timed out after {timeout}s: {hook.command}"
-            return HookOutcome(denied=False, messages=[msg])
+            denied = hook.on_error == "deny"
+            return HookOutcome(denied=denied, messages=[msg])
         except Exception as exc:
-            return HookOutcome(denied=False, messages=[f"Hook error: {exc}"])
+            denied = hook.on_error == "deny"
+            return HookOutcome(denied=denied, messages=[f"Hook error: {exc}"])
 
         if proc.returncode == 0:
             return HookOutcome(denied=False)

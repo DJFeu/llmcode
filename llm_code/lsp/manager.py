@@ -30,9 +30,16 @@ class LspServerManager:
     async def start_all(
         self, configs: dict[str, LspServerConfig], root_path: Path
     ) -> None:
-        """Start all servers from a language -> config mapping."""
+        """Start all servers from a language -> config mapping.
+
+        Failures are logged and skipped so one broken server does not block others.
+        """
         for name, config in configs.items():
-            await self.start_server(name, config, root_path)
+            try:
+                await self.start_server(name, config, root_path)
+            except Exception as exc:
+                import warnings
+                warnings.warn(f"Failed to start LSP server '{name}': {exc}", stacklevel=2)
 
     async def stop_all(self) -> None:
         """Shutdown all running servers gracefully."""
