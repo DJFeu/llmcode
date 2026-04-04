@@ -81,24 +81,27 @@ class LLMCodeTUI(App):
         self.run_worker(self._init_mcp(), name="init_mcp")
 
     def _render_welcome(self) -> None:
-        """Show welcome banner in chat area."""
+        """Show styled welcome banner in chat area."""
         import sys
+        from textual.widgets import Static
+        from rich.text import Text as RichText
+
         chat = self.query_one(ChatScrollView)
 
-        logo = (
-            "  ██╗     ██╗     ███╗   ███╗\n"
-            "  ██║     ██║     ████╗ ████║\n"
-            "  ██║     ██║     ██╔████╔██║\n"
-            "  ██║     ██║     ██║╚██╔╝██║\n"
-            "  ███████╗███████╗██║ ╚═╝ ██║\n"
-            "  ╚══════╝╚══════╝╚═╝     ╚═╝\n"
-            "   ██████╗ ██████╗ ██████╗ ███████╗\n"
-            "  ██╔════╝██╔═══██╗██╔══██╗██╔════╝\n"
-            "  ██║     ██║   ██║██║  ██║█████╗\n"
-            "  ██║     ██║   ██║██║  ██║██╔══╝\n"
-            "  ╚██████╗╚██████╔╝██████╔╝███████╗\n"
-            "   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝"
-        )
+        logo_lines = [
+            "  ██╗     ██╗     ███╗   ███╗",
+            "  ██║     ██║     ████╗ ████║",
+            "  ██║     ██║     ██╔████╔██║",
+            "  ██║     ██║     ██║╚██╔╝██║",
+            "  ███████╗███████╗██║ ╚═╝ ██║",
+            "  ╚══════╝╚══════╝╚═╝     ╚═╝",
+            "   ██████╗ ██████╗ ██████╗ ███████╗",
+            "  ██╔════╝██╔═══██╗██╔══██╗██╔════╝",
+            "  ██║     ██║   ██║██║  ██║█████╗",
+            "  ██║     ██║   ██║██║  ██║██╔══╝",
+            "  ╚██████╗╚██████╔╝██████╔╝███████╗",
+            "   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝",
+        ]
 
         model = self._config.model if self._config else "(not set)"
         branch = self._detect_branch()
@@ -108,21 +111,32 @@ class LLMCodeTUI(App):
         perm = self._config.permission_mode if self._config else "prompt"
         paste_key = "Cmd+V" if sys.platform == "darwin" else "Ctrl+V"
 
-        info = (
-            f"\n"
-            f"  Model         {model}\n"
-            f"  Workspace     {workspace}\n"
-            f"  Directory     {self._cwd}\n"
-            f"  Permissions   {perm}\n"
-            f"\n"
-            f"  Quick start   /help · /skill · /mcp\n"
-            f"  Multiline     Shift+Enter\n"
-            f"  Images        {paste_key} pastes\n"
-            f"\n"
-            f"  Ready"
-        )
+        text = RichText()
+        for line in logo_lines:
+            text.append(line + "\n", style="bold cyan")
+        text.append("\n")
+        for label, value in [
+            ("Model", model),
+            ("Workspace", workspace),
+            ("Directory", str(self._cwd)),
+            ("Permissions", perm),
+        ]:
+            text.append(f"  {label:<14}", style="yellow")
+            text.append(f" {value}\n", style="bold white")
+        text.append("\n")
+        for label, value in [
+            ("Quick start", "/help · /skill · /mcp"),
+            ("Multiline", "Shift+Enter"),
+            ("Images", f"{paste_key} pastes"),
+        ]:
+            text.append(f"  {label:<14}", style="dim")
+            text.append(f" {value}\n", style="white")
+        text.append("\n")
+        text.append("  Ready\n", style="bold green")
 
-        chat.add_entry(AssistantText(logo + info))
+        banner = Static(text)
+        banner.styles.height = "auto"
+        chat.add_entry(banner)
 
     @staticmethod
     def _is_safe_name(name: str) -> bool:
