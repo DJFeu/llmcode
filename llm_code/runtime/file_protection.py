@@ -82,17 +82,23 @@ def _is_under_blocked_prefix(path: str) -> bool:
 
 
 def is_sensitive(path: str) -> bool:
-    """Return True if *path* matches any sensitive pattern."""
-    basename = Path(path).name
+    """Return True if *path* matches any sensitive pattern.
+
+    Resolves symlinks before checking to prevent bypass via symlink indirection.
+    """
+    resolved = str(Path(path).resolve())
+    basename = Path(resolved).name
     if _matches_any(basename, SENSITIVE_PATTERNS):
         return True
-    if _is_under_blocked_prefix(path):
+    if _is_under_blocked_prefix(resolved):
         return True
     return False
 
 
 def check_write(path: str) -> FileProtectionResult:
     """Check whether writing to *path* should be allowed, warned about, or blocked.
+
+    Resolves symlinks before checking to prevent bypass via symlink indirection.
 
     Rules
     -----
@@ -101,10 +107,11 @@ def check_write(path: str) -> FileProtectionResult:
       → **warn** (needs user confirmation)
     - Everything else → **allow**
     """
-    basename = Path(path).name
+    resolved = str(Path(path).resolve())
+    basename = Path(resolved).name
 
     # Blocked: critical credential / key files
-    if _matches_any(basename, _BLOCK_PATTERNS) or _is_under_blocked_prefix(path):
+    if _matches_any(basename, _BLOCK_PATTERNS) or _is_under_blocked_prefix(resolved):
         return FileProtectionResult(
             allowed=False,
             reason=f"Writing to '{path}' is blocked: file matches a sensitive credential pattern.",
