@@ -518,6 +518,37 @@ class LLMCodeTUI(App):
             logger.warning("MCP initialization failed: %s", exc)
             self._mcp_manager = None
 
+    def _hot_start_mcp(self, name: str, raw_config: dict) -> None:
+        """Start a single MCP server without restart."""
+        async def _start():
+            try:
+                from llm_code.mcp.manager import McpServerManager
+                from llm_code.mcp.types import McpServerConfig
+
+                cfg = McpServerConfig(
+                    command=raw_config.get("command"),
+                    args=tuple(raw_config.get("args", ())),
+                    env=raw_config.get("env"),
+                    transport_type=raw_config.get("transport_type", "stdio"),
+                    url=raw_config.get("url"),
+                    headers=raw_config.get("headers"),
+                )
+                if self._mcp_manager is None:
+                    self._mcp_manager = McpServerManager()
+                await self._mcp_manager.start_all({name: cfg})
+                registered = await self._mcp_manager.register_all_tools(self._tool_reg)
+                if self._runtime is not None:
+                    self._runtime._mcp_manager = self._mcp_manager
+                chat = self.query_one(ChatScrollView)
+                chat.add_entry(AssistantText(
+                    f"MCP server '{name}' started ({registered} tools registered)."
+                ))
+            except Exception as exc:
+                chat = self.query_one(ChatScrollView)
+                chat.add_entry(AssistantText(f"MCP start failed: {exc}"))
+
+        self.run_worker(_start(), name=f"mcp_start_{name}")
+
     def on_input_bar_submitted(self, event: InputBar.Submitted) -> None:
         """Handle user input submission."""
         text = event.value.strip()
@@ -1231,18 +1262,42 @@ class LLMCodeTUI(App):
         sub = parts[0] if parts else ""
         subargs = parts[1] if len(parts) > 1 else ""
         if sub == "install" and subargs:
-            chat.add_entry(AssistantText(
-                f"To install {subargs}:\n"
-                "Add to ~/.llm-code/config.json under mcp_servers section,\n"
-                f"e.g.: \"{subargs}\": {{\"command\": \"npx\", \"args\": [\"-y\", \"{subargs}\"]}}\n"
-                "Then restart llm-code to activate."
-            ))
+            pkg = subargs.strip()
+            short_name = pkg.split("/")[-1] if "/" in pkg else pkg
+            # Write to config.json
+            config_path = Path.home() / ".llm-code" / "config.json"
+            try:
+                import json
+                config_data: dict = {}
+                if config_path.exists():
+                    config_data = json.loads(config_path.read_text())
+                mcp_servers = config_data.setdefault("mcp_servers", {})
+                mcp_servers[short_name] = {"command": "npx", "args": ["-y", pkg]}
+                config_path.parent.mkdir(parents=True, exist_ok=True)
+                config_path.write_text(json.dumps(config_data, indent=2) + "\n")
+                chat.add_entry(AssistantText(f"Added {short_name} to config. Starting server..."))
+                # Hot-start the MCP server without restart
+                self._hot_start_mcp(short_name, {"command": "npx", "args": ["-y", pkg]})
+            except Exception as exc:
+                chat.add_entry(AssistantText(f"Install failed: {exc}"))
         elif sub == "remove" and subargs:
-            chat.add_entry(AssistantText(
-                f"To remove {subargs}:\n"
-                "Edit ~/.llm-code/config.json and delete the entry from mcp_servers,\n"
-                "then restart llm-code."
-            ))
+            name = subargs.strip()
+            config_path = Path.home() / ".llm-code" / "config.json"
+            try:
+                import json
+                if config_path.exists():
+                    config_data = json.loads(config_path.read_text())
+                    mcp_servers = config_data.get("mcp_servers", {})
+                    if name in mcp_servers:
+                        del mcp_servers[name]
+                        config_path.write_text(json.dumps(config_data, indent=2) + "\n")
+                        chat.add_entry(AssistantText(f"Removed {name} from config."))
+                    else:
+                        chat.add_entry(AssistantText(f"MCP server '{name}' not found in config."))
+                else:
+                    chat.add_entry(AssistantText("No config file found."))
+            except Exception as exc:
+                chat.add_entry(AssistantText(f"Remove failed: {exc}"))
         else:
             # Open interactive MCP marketplace browser
             from llm_code.tui.marketplace import MarketplaceBrowser, MarketplaceItem
