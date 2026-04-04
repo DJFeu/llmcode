@@ -955,10 +955,22 @@ class LLMCodeTUI(App):
         from textual.screen import ModalScreen
         from textual.containers import VerticalScroll
         from textual.widgets import Static
+        from textual.reactive import reactive
         from rich.text import Text as RichText
 
+        skills = self._skills
+
         class HelpScreen(ModalScreen):
-            BINDINGS = [("escape", "dismiss", "Close")]
+            BINDINGS = [
+                ("escape", "dismiss", "Close"),
+                ("left", "prev_tab", "Previous tab"),
+                ("right", "next_tab", "Next tab"),
+                ("1", "tab_1", "General"),
+                ("2", "tab_2", "Commands"),
+                ("3", "tab_3", "Custom commands"),
+            ]
+            _tab: reactive[int] = reactive(0)
+            _TAB_NAMES = ["general", "commands", "custom-commands"]
 
             DEFAULT_CSS = """
             HelpScreen { align: center middle; }
@@ -969,6 +981,7 @@ class LLMCodeTUI(App):
                 border: round $accent;
                 padding: 1 2;
             }
+            #help-content { height: 1fr; }
             #help-footer {
                 dock: bottom;
                 height: 1;
@@ -978,40 +991,61 @@ class LLMCodeTUI(App):
             """
 
             def compose(self):
+                with VerticalScroll(id="help-box"):
+                    yield Static(id="help-content")
+                yield Static("← → switch tabs · Esc to close", id="help-footer")
+
+            def on_mount(self):
+                self._render_tab()
+
+            def watch__tab(self) -> None:
+                self._render_tab()
+
+            def _render_tab_header(self) -> RichText:
                 text = RichText()
-
-                # Title
                 text.append("llm-code", style="bold cyan")
-                text.append("  local LLM agent\n\n", style="dim")
+                text.append("  ", style="dim")
+                for i, name in enumerate(self._TAB_NAMES):
+                    if i == self._tab:
+                        text.append(f" {name} ", style="bold white on #3a3a5a")
+                    else:
+                        text.append(f"  {name}  ", style="dim")
+                text.append("\n\n")
+                return text
 
-                # Description
+            def _render_tab(self) -> None:
+                content = self.query_one("#help-content", Static)
+                if self._tab == 0:
+                    content.update(self._build_general())
+                elif self._tab == 1:
+                    content.update(self._build_commands())
+                else:
+                    content.update(self._build_custom_commands())
+
+            def _build_general(self) -> RichText:
+                text = self._render_tab_header()
                 text.append(
                     "llm-code understands your codebase, makes edits with your "
                     "permission, and executes commands — right from your terminal.\n\n",
                     style="white",
                 )
-
-                # Shortcuts section
                 text.append("Shortcuts\n", style="bold white")
-
                 shortcuts = [
-                    ("! for bash mode", "double tap esc to clear input", "Ctrl+D to quit"),
+                    ("! for bash mode", "double tap esc to clear", "Ctrl+D to quit"),
                     ("/ for commands", "Shift+Enter for multiline", "Ctrl+I to paste images"),
-                    ("/skill to browse skills", "Ctrl+O for verbose output", "/vim to toggle vim"),
-                    ("/plugin to browse plugins", "Page Up/Down to scroll", "/model to switch model"),
-                    ("/mcp for MCP servers", "Tab to autocomplete", "/undo to revert changes"),
+                    ("/skill browse skills", "Page Up/Down to scroll", "/vim toggle vim"),
+                    ("/plugin browse plugins", "Tab to autocomplete", "/model switch model"),
+                    ("/mcp MCP servers", "Ctrl+O verbose output", "/undo revert changes"),
                 ]
                 for row in shortcuts:
                     for i, col in enumerate(row):
-                        style = "white" if i == 0 else "dim"
-                        text.append(f"{col:<35s}", style=style)
+                        text.append(f"{col:<32s}", style="white" if i == 0 else "dim")
                     text.append("\n")
+                return text
 
-                text.append("\n")
-
-                # Commands section
-                text.append("Commands\n", style="bold white")
-
+            def _build_commands(self) -> RichText:
+                text = self._render_tab_header()
+                text.append("Built-in commands:\n\n", style="white")
                 commands = [
                     ("/help", "Show this help"),
                     ("/clear", "Clear conversation"),
@@ -1040,12 +1074,40 @@ class LLMCodeTUI(App):
                 for cmd_name, desc in commands:
                     text.append(f"  {cmd_name:<35s}", style="cyan")
                     text.append(f"{desc}\n", style="dim")
+                return text
 
-                with VerticalScroll(id="help-box"):
-                    yield Static(text)
-                yield Static("Esc to close", id="help-footer")
+            def _build_custom_commands(self) -> RichText:
+                text = self._render_tab_header()
+                text.append("Browse custom commands:\n\n", style="white")
+                if skills:
+                    all_skills = list(skills.auto_skills) + list(skills.command_skills)
+                    for s in sorted(all_skills, key=lambda x: x.name):
+                        trigger = f"/{s.trigger}" if s.trigger else "(auto)"
+                        source = "user" if not getattr(s, "plugin", None) else f"({s.plugin})"
+                        text.append(f"  {trigger}\n", style="bold white")
+                        desc = s.description if hasattr(s, "description") and s.description else s.name
+                        text.append(f"    {desc} {source}\n", style="dim")
+                else:
+                    text.append("  No custom commands installed.\n", style="dim")
+                    text.append("  Use /skill to browse and install skills.\n", style="dim")
+                return text
 
-            def action_dismiss(self):
+            def action_prev_tab(self) -> None:
+                self._tab = max(0, self._tab - 1)
+
+            def action_next_tab(self) -> None:
+                self._tab = min(2, self._tab + 1)
+
+            def action_tab_1(self) -> None:
+                self._tab = 0
+
+            def action_tab_2(self) -> None:
+                self._tab = 1
+
+            def action_tab_3(self) -> None:
+                self._tab = 2
+
+            def action_dismiss(self) -> None:
                 self.dismiss()
 
         self.push_screen(HelpScreen())
