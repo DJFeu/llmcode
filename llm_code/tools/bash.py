@@ -412,7 +412,8 @@ class BashTool(Tool):
 
     def execute(self, args: dict) -> ToolResult:
         command: str = args["command"]
-        timeout: int = int(args.get("timeout", self._default_timeout))
+        _raw_timeout = int(args.get("timeout", self._default_timeout))
+        timeout: int | None = None if _raw_timeout <= 0 else _raw_timeout
 
         result = classify_command(command)
         if result.is_blocked:
@@ -430,7 +431,8 @@ class BashTool(Tool):
         on_progress: Callable[[ToolProgress], None],
     ) -> ToolResult:
         command: str = args["command"]
-        timeout: int = int(args.get("timeout", self._default_timeout))
+        _raw_timeout = int(args.get("timeout", self._default_timeout))
+        timeout: int | None = None if _raw_timeout <= 0 else _raw_timeout
 
         try:
             proc = subprocess.Popen(

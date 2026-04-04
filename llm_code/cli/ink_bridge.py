@@ -1426,7 +1426,7 @@ class InkBridge:
         # Local models get longer bash timeout (120s vs 30s)
         _base_url = self._config.provider_base_url or ""
         _is_local = any(h in _base_url for h in ("localhost", "127.0.0.1", "0.0.0.0", "192.168.", "10.", "172."))
-        _bash_timeout = 120 if _is_local else 30
+        _bash_timeout = 0 if _is_local else 30  # 0 = no timeout for local models
         for tool in (ReadFileTool(), WriteFileTool(), EditFileTool(), BashTool(default_timeout=_bash_timeout), GlobSearchTool(), GrepSearchTool(), NotebookReadTool(), NotebookEditTool()):
             registry.register(tool)
 
