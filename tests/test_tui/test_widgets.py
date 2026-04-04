@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from llm_code.tui.header_bar import HeaderBar
 from llm_code.tui.status_bar import StatusBar
+from llm_code.tui.chat_widgets import ToolBlock, ThinkingBlock, TurnSummary, SpinnerLine
+from llm_code.tui.chat_view import ChatScrollView
 
 
 class TestHeaderBar:
@@ -89,3 +91,57 @@ class TestStatusBar:
         content = bar._format_content()
         assert "/help" in content
         assert "Ctrl+D quit" in content
+
+
+class TestToolBlock:
+    def test_format_standard(self):
+        block = ToolBlock.create("read_file", "{'path': '/src/main.py'}", "Read 45 lines", is_error=False)
+        rendered = block.render_text()
+        assert "┌ read_file" in rendered
+        assert "Read 45 lines" in rendered
+        assert "✓" in rendered
+
+    def test_format_error(self):
+        block = ToolBlock.create("bash", "$ rm -rf /", "Permission denied", is_error=True)
+        rendered = block.render_text()
+        assert "✗" in rendered
+
+    def test_format_bash(self):
+        block = ToolBlock.create("bash", "ls -la", "total 42", is_error=False)
+        rendered = block.render_text()
+        assert "$ ls -la" in rendered
+
+
+class TestThinkingBlock:
+    def test_collapsed_format(self):
+        block = ThinkingBlock(content="deep thoughts", elapsed=3.2, tokens=500)
+        collapsed = block.collapsed_text()
+        assert "3.2s" in collapsed
+        assert "500" in collapsed
+
+    def test_toggle(self):
+        block = ThinkingBlock(content="deep thoughts", elapsed=3.2, tokens=500)
+        assert not block.expanded
+        block.toggle()
+        assert block.expanded
+
+
+class TestTurnSummary:
+    def test_format(self):
+        summary = TurnSummary.create(elapsed=3.2, input_tokens=2400, output_tokens=890, cost="$0.03")
+        text = summary.render_text()
+        assert "3.2s" in text
+        assert "2,400" in text
+        assert "890" in text
+        assert "$0.03" in text
+
+
+class TestSpinnerLine:
+    def test_phases(self):
+        s = SpinnerLine()
+        s.phase = "waiting"
+        assert "Waiting" in s.render_text()
+        s.phase = "thinking"
+        assert "Thinking" in s.render_text()
+        s.phase = "processing"
+        assert "Processing" in s.render_text()
