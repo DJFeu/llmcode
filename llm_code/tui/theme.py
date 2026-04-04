@@ -11,7 +11,7 @@ COLORS: dict[str, str] = {
     "error": "bold red",
     "diff_add": "green",
     "diff_del": "red",
-    "thinking": "dim blue",
+    "thinking": "#cc7a00",
     "warning": "yellow",
     "spinner": "blue",
     "dim": "dim",

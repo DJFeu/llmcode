@@ -121,9 +121,9 @@ class ThinkingBlock(Widget):
     def render(self) -> RenderResult:
         text = Text()
         if not self.expanded:
-            text.append(self.collapsed_text(), style="dim blue")
+            text.append(self.collapsed_text(), style="#cc7a00")
         else:
-            text.append(self.collapsed_text(), style="dim blue")
+            text.append(self.collapsed_text(), style="#cc7a00")
             text.append("\n")
             truncated = self._content[:3000]
             if len(self._content) > 3000:
