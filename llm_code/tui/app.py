@@ -109,7 +109,7 @@ class LLMCodeTUI(App):
         if branch:
             workspace += f" · {branch}"
         perm = self._config.permission_mode if self._config else "prompt"
-        paste_key = "Cmd+V" if sys.platform == "darwin" else "Ctrl+V"
+        paste_key = "Ctrl+I or /image <path>"
 
         text = RichText()
         for line in logo_lines:
@@ -127,7 +127,7 @@ class LLMCodeTUI(App):
         for label, value in [
             ("Quick start", "/help · /skill · /mcp"),
             ("Multiline", "Shift+Enter"),
-            ("Images", f"{paste_key} pastes"),
+            ("Images", paste_key),
         ]:
             text.append(f"  {label:<14}", style="dim")
             text.append(f" {value}\n", style="white")
@@ -608,6 +608,28 @@ class LLMCodeTUI(App):
 
         self.run_worker(_start(), name=f"mcp_start_{name}")
 
+    def _paste_clipboard_image(self) -> None:
+        """Try to capture an image from the system clipboard."""
+        chat = self.query_one(ChatScrollView)
+        try:
+            from llm_code.cli.image import capture_clipboard_image
+            img = capture_clipboard_image()
+            if img is not None:
+                self._pending_images.append(img)
+                chat.add_entry(AssistantText("Image attached from clipboard"))
+            else:
+                chat.add_entry(AssistantText("No image found in clipboard."))
+        except (ImportError, FileNotFoundError, OSError):
+            chat.add_entry(AssistantText("Clipboard image capture not available (install pngpaste)."))
+        except Exception as exc:
+            chat.add_entry(AssistantText(f"Clipboard error: {exc}"))
+
+    def on_paste(self, event) -> None:
+        """Handle terminal paste events — check for image data."""
+        # Textual fires on_paste when bracket paste mode delivers content.
+        # We check if clipboard has an image; if so, attach it.
+        self._paste_clipboard_image()
+
     def on_input_bar_submitted(self, event: InputBar.Submitted) -> None:
         """Handle user input submission."""
         text = event.value.strip()
@@ -634,22 +656,12 @@ class LLMCodeTUI(App):
             self.exit()
             return
 
-        # Ctrl+V — paste image from clipboard
-        if event.key == "ctrl+v":
-            try:
-                from llm_code.cli.image import capture_clipboard_image
-                img = capture_clipboard_image()
-                if img is not None:
-                    self._pending_images.append(img)
-                    chat = self.query_one(ChatScrollView)
-                    chat.add_entry(AssistantText("Image attached from clipboard"))
-                    event.prevent_default()
-                    event.stop()
-                    return
-            except (ImportError, FileNotFoundError, OSError):
-                pass  # No clipboard tool available
-            except Exception as exc:
-                logger.warning("Clipboard paste error: %s", exc)
+        # Ctrl+I — paste image from clipboard (Ctrl+V is captured by terminal)
+        if event.key == "ctrl+i":
+            self._paste_clipboard_image()
+            event.prevent_default()
+            event.stop()
+            return
 
         # Page Up / Page Down for chat scrolling
         if event.key == "pageup":
@@ -925,7 +937,7 @@ class LLMCodeTUI(App):
             ("/config", "Show runtime config"),
             ("/thinking [on|off|adaptive]", "Toggle thinking"),
             ("/vim", "Toggle vim mode"),
-            ("/image <path>", "Attach image"),
+            ("/image <path> or Ctrl+I", "Attach image"),
             ("/search <query>", "Search history"),
             ("/index [rebuild]", "Project index"),
             ("/session list|save", "Manage sessions"),
