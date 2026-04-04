@@ -106,6 +106,7 @@ class ConversationRuntime:
         mcp_manager: Any = None,
         memory_store: Any = None,
         task_manager: Any = None,
+        project_index: Any = None,
     ) -> None:
         self._provider = provider
         self._tool_registry = tool_registry
@@ -126,6 +127,7 @@ class ConversationRuntime:
         self._mcp_manager = mcp_manager
         self._memory_store = memory_store
         self._task_manager = task_manager
+        self._project_index = project_index
         self._has_attempted_reactive_compact = False
         self._consecutive_failures: int = 0
         self._compressor = ContextCompressor()
@@ -145,10 +147,16 @@ class ConversationRuntime:
             except ImportError:
                 pass
 
+    def _fire_hook(self, event: str, context: dict | None = None) -> None:
+        """Fire a hook event if the hook runner supports the generic fire() method."""
+        if hasattr(self._hooks, "fire"):
+            self._hooks.fire(event, context or {})
+
     async def run_turn(self, user_input: str, images: list | None = None) -> AsyncIterator[StreamEvent]:
         """Run one user turn (may involve multiple LLM calls for tool use)."""
         logger.debug("Starting turn: %s", user_input[:80])
         _turn_start = time.monotonic()
+        self._fire_hook("prompt_submit", {"text": user_input[:200]})
         if self._vcr_recorder is not None:
             self._vcr_recorder.record("user_input", {"text": user_input})
         # 1. Add user message to session (with optional images)
@@ -245,6 +253,7 @@ class ConversationRuntime:
                 mcp_instructions=_mcp_instructions,
                 memory_entries=_memory_entries,
                 task_manager=self._task_manager,
+                project_index=self._project_index,
             )
             if _deferred_hint:
                 system_prompt = system_prompt + "\n\n" + _deferred_hint
@@ -267,13 +276,16 @@ class ConversationRuntime:
                 })
 
             # Error recovery: tool choice fallback + reactive compact
+            self._fire_hook("http_request", {"model": self._active_model, "url": getattr(self._config, "provider_base_url", "")})
             try:
                 stream = await self._provider.stream_message(request)
             except Exception as exc:
                 _exc_str = str(exc)
+                self._fire_hook("http_error", {"error": _exc_str[:200], "model": self._active_model})
                 # Auto-fallback: if native tool calling is not supported by server
                 if "tool-call-parser" in _exc_str or "tool choice" in _exc_str.lower():
                     logger.warning("Server does not support native tool calling; falling back to XML tag mode")
+                    self._fire_hook("http_fallback", {"reason": "xml_mode", "model": self._active_model})
                     self._force_xml_mode = True
                     # Rebuild request without tools
                     system_prompt = self._prompt_builder.build(
@@ -284,6 +296,7 @@ class ConversationRuntime:
                         mcp_instructions=_mcp_instructions,
                         memory_entries=_memory_entries,
                         task_manager=self._task_manager,
+                        project_index=self._project_index,
                     )
                     request = MessageRequest(
                         model=self._active_model,
@@ -373,6 +386,7 @@ class ConversationRuntime:
 
             # Reset consecutive failure counter on successful stream
             self._consecutive_failures = 0
+            self._fire_hook("http_response", {"model": self._active_model, "status": "ok"})
 
             # Mark all messages sent in this request as cached (API has seen them)
             self._compressor.mark_as_cached(set(range(len(self.session.messages))))
@@ -543,6 +557,7 @@ class ConversationRuntime:
         tool = self._tool_registry.get(call.name)
         if tool is None:
             logger.warning("Unknown tool requested: %s", call.name)
+            self._fire_hook("tool_error", {"tool_name": call.name, "error": "unknown tool"})
             yield ToolResultBlock(
                 tool_use_id=call.id,
                 content=f"Unknown tool '{call.name}'",
@@ -583,6 +598,7 @@ class ConversationRuntime:
         )
 
         if outcome == PermissionOutcome.DENY:
+            self._fire_hook("tool_denied", {"tool_name": call.name})
             yield ToolResultBlock(
                 tool_use_id=call.id,
                 content=f"Permission denied for tool '{call.name}'",

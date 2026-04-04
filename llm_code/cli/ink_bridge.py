@@ -1440,6 +1440,25 @@ class InkBridge:
         except ImportError:
             pass
 
+        # AgentTool
+        try:
+            from llm_code.tools.agent import AgentTool
+            if registry.get("agent") is None:
+                registry.register(AgentTool(
+                    runtime_factory=None, max_depth=3, current_depth=0,
+                ))
+        except (ImportError, ValueError):
+            pass
+
+        # Deferred tool manager + ToolSearchTool
+        from llm_code.tools.deferred import DeferredToolManager
+        from llm_code.tools.tool_search import ToolSearchTool
+        self._deferred_tool_manager = DeferredToolManager()
+        try:
+            registry.register(ToolSearchTool(self._deferred_tool_manager))
+        except ValueError:
+            pass
+
         # Permissions
         mode_map = {
             "read_only": PermissionMode.READ_ONLY,
@@ -1633,6 +1652,22 @@ class InkBridge:
         # Store checkpoint manager
         self._checkpoint_mgr = checkpoint_mgr
 
+        # Recovery checkpoint (session state persistence)
+        recovery_checkpoint = None
+        try:
+            from llm_code.runtime.checkpoint_recovery import CheckpointRecovery
+            recovery_checkpoint = CheckpointRecovery(Path.home() / ".llm-code" / "checkpoints")
+        except Exception:
+            pass
+
+        # Build project index
+        self._project_index = None
+        try:
+            from llm_code.runtime.indexer import ProjectIndexer
+            self._project_index = ProjectIndexer(self._cwd).build_index()
+        except Exception:
+            pass
+
         prompt_builder = SystemPromptBuilder()
 
         self._runtime = ConversationRuntime(
@@ -1645,9 +1680,13 @@ class InkBridge:
             session=session,
             context=context,
             checkpoint_manager=checkpoint_mgr,
+            recovery_checkpoint=recovery_checkpoint,
+            cost_tracker=self._cost_tracker,
+            deferred_tool_manager=self._deferred_tool_manager,
             skills=self._skills,
             memory_store=self._memory,
             task_manager=self._task_manager,
+            project_index=self._project_index,
         )
         self._tool_reg = registry
 

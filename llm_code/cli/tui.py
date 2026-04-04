@@ -316,6 +316,15 @@ class LLMCodeCLI:
         except (ImportError, ValueError):
             pass
 
+        # Deferred tool manager + ToolSearchTool
+        from llm_code.tools.deferred import DeferredToolManager
+        from llm_code.tools.tool_search import ToolSearchTool
+        self._deferred_tool_manager = DeferredToolManager()
+        try:
+            self._tool_reg.register(ToolSearchTool(self._deferred_tool_manager))
+        except ValueError:
+            pass
+
         context = ProjectContext.discover(self._cwd)
         session = existing_session if existing_session is not None else Session.create(self._cwd)
 
@@ -513,7 +522,15 @@ class LLMCodeCLI:
         else:
             self._ide_bridge = None
 
-        # Create runtime with skills, memory, and task manager references
+        # Build project index
+        self._project_index = None
+        try:
+            from llm_code.runtime.indexer import ProjectIndexer
+            self._project_index = ProjectIndexer(self._cwd).build_index()
+        except Exception:
+            pass
+
+        # Create runtime with all subsystem references
         self._runtime = ConversationRuntime(
             provider=provider,
             tool_registry=self._tool_reg,
@@ -526,9 +543,12 @@ class LLMCodeCLI:
             checkpoint_manager=checkpoint_mgr,
             token_budget=token_budget,
             recovery_checkpoint=recovery_checkpoint,
+            cost_tracker=self._cost_tracker,
+            deferred_tool_manager=self._deferred_tool_manager,
             skills=self._skills,
             memory_store=self._memory,
             task_manager=self._task_manager,
+            project_index=self._project_index,
         )
 
     async def _init_mcp_servers(self) -> None:
