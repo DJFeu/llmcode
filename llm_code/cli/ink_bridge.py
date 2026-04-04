@@ -1769,6 +1769,14 @@ class InkBridge:
         except Exception:
             return ""
 
+    def _fire_hook(self, event: str, context: dict | None = None) -> None:
+        """Fire a hook event via the runtime's hook runner."""
+        if self._runtime is not None and hasattr(self._runtime, "_hooks") and hasattr(self._runtime._hooks, "fire"):
+            try:
+                self._runtime._hooks.fire(event, context or {})
+            except Exception:
+                pass
+
     async def _auto_save_on_exit(self) -> None:
         """Auto-save session + generate summary on exit."""
         if not self._runtime or not self._runtime.session:
@@ -1781,6 +1789,7 @@ class InkBridge:
             from llm_code.runtime.session import SessionManager
             sm = SessionManager(Path.home() / ".llm-code" / "sessions")
             sm.save(self._runtime.session)
+            self._fire_hook("session_save", {})
         except Exception:
             pass
 
@@ -1805,6 +1814,8 @@ class InkBridge:
                 pass
 
         # 3. Fire DreamTask consolidation (non-blocking)
+        self._fire_hook("session_dream", {})
+        self._fire_hook("session_end", {})
         if self._memory and self._runtime and self._runtime.session:
             try:
                 import asyncio as _asyncio

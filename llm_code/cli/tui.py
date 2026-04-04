@@ -931,6 +931,7 @@ class LLMCodeCLI:
                     console.print(f"  [dim]{s.id}  {s.project_path}  ({s.message_count} msgs)[/]")
             elif subcmd == "save" and self._runtime:
                 path = self._session_manager.save(self._runtime.session)
+                self._fire_hook("session_save", {})
                 console.print(f"[dim]Session saved: {path}[/]")
 
         elif name == "image":
@@ -1903,6 +1904,7 @@ class LLMCodeCLI:
         """Fire DreamTask consolidation on session exit (non-blocking, best-effort)."""
         if not self._memory or not self._runtime:
             return
+        self._fire_hook("session_dream", {})
         try:
             from llm_code.runtime.dream import DreamTask
 
@@ -2059,6 +2061,7 @@ class LLMCodeCLI:
                 if self._runtime is not None:
                     try:
                         self._session_manager.save(self._runtime.session)
+                        self._fire_hook("session_save", {})
                     except Exception:
                         pass
                 self._fire_hook("session_end", {})

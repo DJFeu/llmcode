@@ -257,6 +257,7 @@ class ConversationRuntime:
             )
             if _deferred_hint:
                 system_prompt = system_prompt + "\n\n" + _deferred_hint
+            self._fire_hook("prompt_compile", {"prompt_length": len(system_prompt), "tool_count": len(tool_defs)})
 
             # 3. Create request and stream
             request = MessageRequest(
@@ -391,6 +392,14 @@ class ConversationRuntime:
             self._consecutive_failures = 0
             self._fire_hook("http_response", {"model": self._active_model, "status": "ok"})
 
+            # Prompt cache hit/miss events based on compressor state
+            _n_messages = len(self.session.messages)
+            _n_cached = sum(1 for i in range(_n_messages) if self._compressor._is_cached(i))
+            if _n_cached > 0:
+                self._fire_hook("prompt_cache_hit", {"cached_messages": _n_cached, "total_messages": _n_messages})
+            else:
+                self._fire_hook("prompt_cache_miss", {"total_messages": _n_messages})
+
             # Mark all messages sent in this request as cached (API has seen them)
             self._compressor.mark_as_cached(set(range(len(self.session.messages))))
 
@@ -505,13 +514,17 @@ class ConversationRuntime:
                 all_agent_results = await asyncio.gather(
                     *[_run_agent(c) for c in agent_calls]
                 )
-                for result_events in all_agent_results:
+                for idx, result_events in enumerate(all_agent_results):
+                    ac = agent_calls[idx]
                     for event in result_events:
                         if isinstance(event, ToolResultBlock):
                             tool_result_blocks.append(event)
+                            if event.is_error:
+                                self._fire_hook("agent_error", {"agent_id": ac.id, "error": event.content[:200]})
+                            else:
+                                self._fire_hook("agent_message", {"agent_id": ac.id, "text": event.content[:200]})
                         else:
                             yield event
-                for ac in agent_calls:
                     self._fire_hook("agent_complete", {"agent_id": ac.id})
             elif agent_calls:
                 # Single agent call — sequential
@@ -519,6 +532,10 @@ class ConversationRuntime:
                     async for event in self._execute_tool_with_streaming(call):
                         if isinstance(event, ToolResultBlock):
                             tool_result_blocks.append(event)
+                            if event.is_error:
+                                self._fire_hook("agent_error", {"agent_id": call.id, "error": event.content[:200]})
+                            else:
+                                self._fire_hook("agent_message", {"agent_id": call.id, "text": event.content[:200]})
                         else:
                             yield event
                     self._fire_hook("agent_complete", {"agent_id": call.id})
