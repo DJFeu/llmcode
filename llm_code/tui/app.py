@@ -70,6 +70,8 @@ class LLMCodeTUI(App):
             header.model = getattr(self._config, "model", "")
         header.project = self._cwd.name
         header.branch = self._detect_branch()
+        # Focus input bar so it receives key events
+        self.query_one(InputBar).focus()
         # Start MCP servers async
         self.run_worker(self._init_mcp(), name="init_mcp")
 

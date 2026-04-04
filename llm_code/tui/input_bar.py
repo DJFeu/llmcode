@@ -19,7 +19,7 @@ SLASH_COMMANDS = sorted([
 ])
 
 
-class InputBar(Widget):
+class InputBar(Widget, can_focus=True):
     """Bottom input bar: ❯ {text}"""
 
     PROMPT = "❯ "
@@ -31,6 +31,9 @@ class InputBar(Widget):
         min-height: 1;
         max-height: 8;
         padding: 0 1;
+    }
+    InputBar:focus {
+        border-top: solid $accent;
     }
     """
 
