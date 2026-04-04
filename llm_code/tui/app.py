@@ -55,6 +55,7 @@ class LLMCodeTUI(App):
         self._coordinator_class = None
         self._coordinator_tool_class = None
         self._permission_pending = False
+        self._pending_images: list = []
 
     def compose(self) -> ComposeResult:
         yield HeaderBar(id="header-bar")
@@ -687,13 +688,223 @@ class LLMCodeTUI(App):
         chat.resume_auto_scroll()
 
     def _handle_slash_command(self, text: str) -> None:
-        """Handle slash commands."""
-        chat = self.query_one(ChatScrollView)
-        if text.strip() in ("/exit", "/quit"):
-            self.exit()
-        elif text.strip() == "/help":
-            chat.add_entry(AssistantText("Available: /help /exit /quit /model /clear"))
-        elif text.strip() == "/clear":
-            chat.remove_children()
+        """Handle slash commands — dispatches to _cmd_* methods."""
+        from llm_code.cli.commands import parse_slash_command
+
+        cmd = parse_slash_command(text)
+        if cmd is None:
+            return
+
+        name = cmd.name
+        args = cmd.args.strip()
+
+        handler = getattr(self, f"_cmd_{name}", None)
+        if handler is not None:
+            handler(args)
+        elif name in ("skill", "plugin", "mcp", "memory", "cron", "task",
+                       "swarm", "voice", "ide", "vcr", "hida", "checkpoint"):
+            chat = self.query_one(ChatScrollView)
+            chat.add_entry(AssistantText(f"/{name}: use --lite mode for full sub-command support"))
         else:
-            chat.add_entry(AssistantText(f"Unknown command: {text}"))
+            chat = self.query_one(ChatScrollView)
+            chat.add_entry(AssistantText(f"Unknown command: /{name} — type /help for help"))
+
+    def _cmd_exit(self, args: str) -> None:
+        self.exit()
+
+    _cmd_quit = _cmd_exit
+
+    def _cmd_help(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        lines = ["Available commands:"]
+        for cmd_name, desc in [
+            ("/help", "Show this help"),
+            ("/clear", "Clear conversation"),
+            ("/model <name>", "Switch model"),
+            ("/cost", "Token usage"),
+            ("/budget <n>", "Set token budget"),
+            ("/undo", "Undo last file change"),
+            ("/cd <dir>", "Change directory"),
+            ("/config", "Show runtime config"),
+            ("/thinking [on|off|adaptive]", "Toggle thinking"),
+            ("/vim", "Toggle vim mode"),
+            ("/image <path>", "Attach image"),
+            ("/search <query>", "Search history"),
+            ("/index [rebuild]", "Project index"),
+            ("/session list|save", "Manage sessions"),
+            ("/skill", "Browse skills"),
+            ("/plugin", "Browse plugins"),
+            ("/mcp", "MCP servers"),
+            ("/memory", "Project memory"),
+            ("/lsp", "LSP status"),
+            ("/cancel", "Cancel generation"),
+            ("/exit", "Quit"),
+        ]:
+            lines.append(f"  {cmd_name:<35s} {desc}")
+        chat.add_entry(AssistantText("\n".join(lines)))
+
+    def _cmd_clear(self, args: str) -> None:
+        self.query_one(ChatScrollView).remove_children()
+
+    def _cmd_model(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        if args:
+            import dataclasses
+            self._config = dataclasses.replace(self._config, model=args)
+            self._init_runtime()
+            self.query_one(HeaderBar).model = args
+            chat.add_entry(AssistantText(f"Model switched to: {args}"))
+        else:
+            model = self._config.model if self._config else "(not set)"
+            chat.add_entry(AssistantText(f"Current model: {model}"))
+
+    def _cmd_cost(self, args: str) -> None:
+        cost = self._cost_tracker.format_cost() if self._cost_tracker else "No cost data"
+        self.query_one(ChatScrollView).add_entry(AssistantText(cost))
+
+    def _cmd_cd(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        if args:
+            new_path = Path(args).expanduser()
+            if not new_path.is_absolute():
+                new_path = self._cwd / new_path
+            new_path = new_path.resolve()
+            if new_path.is_dir():
+                self._cwd = new_path
+                os.chdir(new_path)
+                chat.add_entry(AssistantText(f"Working directory: {new_path}"))
+            else:
+                chat.add_entry(AssistantText(f"Directory not found: {new_path}"))
+        else:
+            chat.add_entry(AssistantText(f"Current directory: {self._cwd}"))
+
+    def _cmd_budget(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        if args:
+            try:
+                self._budget = int(args)
+                chat.add_entry(AssistantText(f"Token budget set: {self._budget:,}"))
+            except ValueError:
+                chat.add_entry(AssistantText("Usage: /budget <number>"))
+        elif self._budget is not None:
+            chat.add_entry(AssistantText(f"Current token budget: {self._budget:,}"))
+        else:
+            chat.add_entry(AssistantText("No budget set."))
+
+    def _cmd_undo(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        if not self._checkpoint_mgr:
+            chat.add_entry(AssistantText("Not in a git repository — undo not available."))
+            return
+        if args.strip() == "list":
+            cps = self._checkpoint_mgr.list_checkpoints()
+            if cps:
+                lines = [f"  {cp.id}  {cp.tool_name}  {cp.timestamp[:19]}" for cp in cps]
+                chat.add_entry(AssistantText("\n".join(lines)))
+            else:
+                chat.add_entry(AssistantText("No checkpoints."))
+        elif self._checkpoint_mgr.can_undo():
+            cp = self._checkpoint_mgr.undo()
+            if cp:
+                chat.add_entry(AssistantText(f"Undone: {cp.tool_name} ({cp.tool_args_summary[:50]})"))
+        else:
+            chat.add_entry(AssistantText("Nothing to undo."))
+
+    def _cmd_index(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        if args.strip() == "rebuild":
+            try:
+                from llm_code.runtime.indexer import ProjectIndexer
+                self._project_index = ProjectIndexer(self._cwd).build_index()
+                idx = self._project_index
+                chat.add_entry(AssistantText(f"Index rebuilt: {len(idx.files)} files, {len(idx.symbols)} symbols"))
+            except Exception as exc:
+                chat.add_entry(AssistantText(f"Index rebuild failed: {exc}"))
+        elif self._project_index:
+            lines = [f"Files: {len(self._project_index.files)}, Symbols: {len(self._project_index.symbols)}"]
+            for s in self._project_index.symbols[:20]:
+                lines.append(f"  {s.kind} {s.name} — {s.file}:{s.line}")
+            chat.add_entry(AssistantText("\n".join(lines)))
+        else:
+            chat.add_entry(AssistantText("No index available."))
+
+    def _cmd_thinking(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        if args in ("on", "off", "adaptive"):
+            import dataclasses
+            mode_map = {"on": "enabled", "off": "disabled", "adaptive": "adaptive"}
+            new_mode = mode_map[args]
+            from llm_code.runtime.config import ThinkingConfig
+            new_thinking = ThinkingConfig(mode=new_mode, budget_tokens=self._config.thinking.budget_tokens)
+            self._config = dataclasses.replace(self._config, thinking=new_thinking)
+            if self._runtime:
+                self._runtime._config = self._config
+            chat.add_entry(AssistantText(f"Thinking mode: {new_mode}"))
+        else:
+            current = self._config.thinking.mode if self._config else "unknown"
+            chat.add_entry(AssistantText(f"Thinking: {current}\nUsage: /thinking [adaptive|on|off]"))
+
+    def _cmd_vim(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        input_bar = self.query_one(InputBar)
+        status_bar = self.query_one(StatusBar)
+        if input_bar.vim_mode:
+            input_bar.vim_mode = ""
+            status_bar.vim_mode = ""
+            chat.add_entry(AssistantText("Vim mode disabled"))
+        else:
+            input_bar.vim_mode = "NORMAL"
+            status_bar.vim_mode = "NORMAL"
+            chat.add_entry(AssistantText("Vim mode enabled"))
+
+    def _cmd_image(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        if not args:
+            chat.add_entry(AssistantText("Usage: /image <path>"))
+            return
+        try:
+            from llm_code.cli.image import load_image_from_path
+            img_path = Path(args).expanduser().resolve()
+            img = load_image_from_path(str(img_path))
+            self._pending_images.append(img)
+            chat.add_entry(AssistantText(f"Image attached: {args}"))
+        except FileNotFoundError:
+            chat.add_entry(AssistantText(f"Image not found: {args}"))
+
+    def _cmd_lsp(self, args: str) -> None:
+        self.query_one(ChatScrollView).add_entry(AssistantText("LSP: not started in this session."))
+
+    def _cmd_cancel(self, args: str) -> None:
+        if self._runtime and hasattr(self._runtime, '_cancel'):
+            self._runtime._cancel()
+        self.query_one(ChatScrollView).add_entry(AssistantText("(cancelled)"))
+
+    def _cmd_search(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        if not args or not self._runtime:
+            chat.add_entry(AssistantText("Usage: /search <query>"))
+            return
+        results = []
+        for msg in self._runtime.session.messages:
+            if args.lower() in str(msg.content).lower():
+                results.append(f"  [{msg.role}] {str(msg.content)[:100]}")
+        if results:
+            chat.add_entry(AssistantText(f"Found {len(results)} matches:\n" + "\n".join(results[:20])))
+        else:
+            chat.add_entry(AssistantText(f"No matches for: {args}"))
+
+    def _cmd_config(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        if not self._config:
+            chat.add_entry(AssistantText("No config loaded."))
+            return
+        lines = [
+            f"model: {self._config.model}",
+            f"provider: {self._config.provider_base_url or 'default'}",
+            f"permission: {self._config.permission_mode}",
+            f"thinking: {self._config.thinking.mode}",
+        ]
+        chat.add_entry(AssistantText("\n".join(lines)))
+
+    def _cmd_session(self, args: str) -> None:
+        self.query_one(ChatScrollView).add_entry(AssistantText("Session management: use /session list|save"))

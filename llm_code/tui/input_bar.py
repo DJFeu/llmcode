@@ -1,12 +1,22 @@
 """InputBar — fixed bottom input with prompt, multiline, slash autocomplete."""
 from __future__ import annotations
 
+import os
+
 from textual import events
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.app import RenderResult
 from rich.text import Text
+
+SLASH_COMMANDS = sorted([
+    "/help", "/clear", "/exit", "/quit", "/model", "/cost", "/budget",
+    "/undo", "/cd", "/config", "/thinking", "/vim", "/image", "/search",
+    "/index", "/session", "/skill", "/plugin", "/mcp", "/memory",
+    "/lsp", "/cancel", "/cron", "/task", "/swarm", "/voice", "/ide",
+    "/vcr", "/hida", "/checkpoint",
+])
 
 
 class InputBar(Widget):
@@ -57,6 +67,17 @@ class InputBar(Widget):
             if event.key == "escape":
                 self.post_message(self.Cancelled())
             return
+
+        if event.key == "tab" and self.value.startswith("/"):
+            matches = [c for c in SLASH_COMMANDS if c.startswith(self.value)]
+            if len(matches) == 1:
+                self.value = matches[0] + " "
+            elif matches:
+                # Find common prefix
+                prefix = os.path.commonprefix(matches)
+                if len(prefix) > len(self.value):
+                    self.value = prefix
+            return  # Don't add tab character
 
         if event.key == "enter":
             if self.value.strip():
