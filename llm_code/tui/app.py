@@ -640,11 +640,14 @@ class LLMCodeTUI(App):
 
     def _on_idle(self) -> None:
         """Ensure InputBar stays focused during normal operation."""
-        input_bar = self.query_one(InputBar)
-        # Only refocus if no modal screen is active and InputBar lost focus
-        if not self.screen.is_modal and self.focused is not input_bar:
-            if not input_bar.disabled:
-                input_bar.focus()
+        try:
+            input_bar = self.query_one(InputBar)
+            # Only refocus on the default screen (not during modals)
+            if self.screen is self.screen_stack[0] and self.focused is not input_bar:
+                if not input_bar.disabled:
+                    input_bar.focus()
+        except Exception:
+            pass
 
     def on_input_bar_submitted(self, event: InputBar.Submitted) -> None:
         """Handle user input submission."""
@@ -959,19 +962,46 @@ class LLMCodeTUI(App):
         from rich.text import Text as RichText
 
         skills = self._skills
+        app_ref = self
+
+        _COMMANDS = [
+            ("/help", "Show this help"),
+            ("/clear", "Clear conversation"),
+            ("/model", "Switch model"),
+            ("/cost", "Token usage & costs"),
+            ("/budget", "Set token budget"),
+            ("/undo", "Undo last file change"),
+            ("/cd", "Change directory"),
+            ("/config", "Show runtime config"),
+            ("/thinking", "Toggle extended thinking"),
+            ("/vim", "Toggle vim mode"),
+            ("/image", "Attach image"),
+            ("/search", "Search conversation"),
+            ("/index", "Project index"),
+            ("/session", "Session management"),
+            ("/skill", "Browse & manage skills"),
+            ("/plugin", "Browse & manage plugins"),
+            ("/mcp", "Browse & manage MCP servers"),
+            ("/memory", "Project memory"),
+            ("/cron", "Scheduled tasks"),
+            ("/checkpoint", "Session checkpoints"),
+            ("/vcr", "VCR recording"),
+            ("/cancel", "Cancel generation"),
+            ("/exit", "Quit"),
+        ]
+
+        _custom_cmds: list[tuple[str, str]] = []
+        if skills:
+            for s in sorted(
+                list(skills.auto_skills) + list(skills.command_skills),
+                key=lambda x: x.name,
+            ):
+                trigger = f"/{s.trigger}" if s.trigger else f"(auto: {s.name})"
+                desc = s.description if hasattr(s, "description") and s.description else s.name
+                source = "user" if not getattr(s, "plugin", None) else f"({s.plugin})"
+                _custom_cmds.append((trigger, f"{desc} {source}"))
 
         class HelpScreen(ModalScreen):
-            BINDINGS = [
-                ("escape", "dismiss", "Close"),
-                ("left", "prev_tab", "Previous tab"),
-                ("right", "next_tab", "Next tab"),
-                ("1", "tab_1", "General"),
-                ("2", "tab_2", "Commands"),
-                ("3", "tab_3", "Custom commands"),
-            ]
-            _tab: reactive[int] = reactive(0)
-            _TAB_NAMES = ["general", "commands", "custom-commands"]
-
             DEFAULT_CSS = """
             HelpScreen { align: center middle; }
             #help-box {
@@ -990,22 +1020,55 @@ class LLMCodeTUI(App):
             }
             """
 
+            def __init__(self) -> None:
+                super().__init__()
+                self._tab = 0
+                self._cursor = 0
+                self._tab_names = ["general", "commands", "custom-commands"]
+
             def compose(self):
                 with VerticalScroll(id="help-box"):
-                    yield Static(id="help-content")
-                yield Static("← → switch tabs · Esc to close", id="help-footer")
+                    yield Static("Loading...", id="help-content")
+                yield Static("← → tabs · ↑↓ navigate · Enter execute · Esc close", id="help-footer")
 
             def on_mount(self):
-                self._render_tab()
+                self.call_later(self._render)
 
-            def watch__tab(self) -> None:
-                self._render_tab()
+            def on_key(self, event) -> None:
+                key = event.key
+                if key == "escape":
+                    self.dismiss()
+                elif key == "left":
+                    self._tab = max(0, self._tab - 1)
+                    self._cursor = 0
+                    self._render()
+                elif key == "right":
+                    self._tab = min(2, self._tab + 1)
+                    self._cursor = 0
+                    self._render()
+                elif key == "up" and self._tab > 0:
+                    self._cursor = max(0, self._cursor - 1)
+                    self._render()
+                elif key == "down" and self._tab > 0:
+                    items = _COMMANDS if self._tab == 1 else _custom_cmds
+                    self._cursor = min(len(items) - 1, self._cursor + 1)
+                    self._render()
+                elif key == "enter" and self._tab > 0:
+                    items = _COMMANDS if self._tab == 1 else _custom_cmds
+                    if 0 <= self._cursor < len(items):
+                        cmd = items[self._cursor][0]
+                        self.dismiss()
+                        # Execute the command after dismiss
+                        app_ref.query_one(InputBar).value = ""
+                        app_ref._handle_slash_command(cmd)
+                event.prevent_default()
+                event.stop()
 
-            def _render_tab_header(self) -> RichText:
+            def _render_header(self) -> RichText:
                 text = RichText()
                 text.append("llm-code", style="bold cyan")
                 text.append("  ", style="dim")
-                for i, name in enumerate(self._TAB_NAMES):
+                for i, name in enumerate(self._tab_names):
                     if i == self._tab:
                         text.append(f" {name} ", style="bold white on #3a3a5a")
                     else:
@@ -1013,17 +1076,24 @@ class LLMCodeTUI(App):
                 text.append("\n\n")
                 return text
 
-            def _render_tab(self) -> None:
+            def _render(self) -> None:
                 content = self.query_one("#help-content", Static)
+                from rich.console import Console
+                from io import StringIO
                 if self._tab == 0:
-                    content.update(self._build_general())
+                    rt = self._build_general()
                 elif self._tab == 1:
-                    content.update(self._build_commands())
+                    rt = self._build_list("Browse default commands:", _COMMANDS)
                 else:
-                    content.update(self._build_custom_commands())
+                    rt = self._build_list("Browse custom commands:", _custom_cmds)
+                # Render Rich Text to ANSI string for Static.update()
+                buf = StringIO()
+                console = Console(file=buf, force_terminal=True, width=120)
+                console.print(rt, end="")
+                content.update(buf.getvalue())
 
             def _build_general(self) -> RichText:
-                text = self._render_tab_header()
+                text = self._render_header()
                 text.append(
                     "llm-code understands your codebase, makes edits with your "
                     "permission, and executes commands — right from your terminal.\n\n",
@@ -1043,72 +1113,21 @@ class LLMCodeTUI(App):
                     text.append("\n")
                 return text
 
-            def _build_commands(self) -> RichText:
-                text = self._render_tab_header()
-                text.append("Built-in commands:\n\n", style="white")
-                commands = [
-                    ("/help", "Show this help"),
-                    ("/clear", "Clear conversation"),
-                    ("/model <name>", "Switch model"),
-                    ("/cost", "Token usage & costs"),
-                    ("/budget <n>", "Set token budget"),
-                    ("/undo [list]", "Undo last file change"),
-                    ("/cd <dir>", "Change directory"),
-                    ("/config", "Show runtime config"),
-                    ("/thinking [on|off|adaptive]", "Toggle extended thinking"),
-                    ("/vim", "Toggle vim mode"),
-                    ("/image <path>", "Attach image"),
-                    ("/search <query>", "Search conversation"),
-                    ("/index [rebuild]", "Project index"),
-                    ("/session list|save", "Session management"),
-                    ("/skill", "Browse & manage skills"),
-                    ("/plugin", "Browse & manage plugins"),
-                    ("/mcp", "Browse & manage MCP servers"),
-                    ("/memory [set|get|delete]", "Project memory"),
-                    ("/cron [list|delete]", "Scheduled tasks"),
-                    ("/checkpoint [save|list|resume]", "Session checkpoints"),
-                    ("/vcr [start|stop|list]", "VCR recording"),
-                    ("/cancel", "Cancel generation"),
-                    ("/exit", "Quit"),
-                ]
-                for cmd_name, desc in commands:
-                    text.append(f"  {cmd_name:<35s}", style="cyan")
-                    text.append(f"{desc}\n", style="dim")
+            def _build_list(self, title: str, items: list[tuple[str, str]]) -> RichText:
+                text = self._render_header()
+                text.append(f"{title}\n\n", style="white")
+                if not items:
+                    text.append("  No items available.\n", style="dim")
+                    text.append("  Use /skill to browse and install.\n", style="dim")
+                    return text
+                for i, (cmd, desc) in enumerate(items):
+                    if i == self._cursor:
+                        text.append("  > ", style="bold cyan")
+                        text.append(f"{cmd}\n", style="bold white")
+                    else:
+                        text.append(f"    {cmd}\n", style="bold white")
+                    text.append(f"      {desc}\n", style="dim")
                 return text
-
-            def _build_custom_commands(self) -> RichText:
-                text = self._render_tab_header()
-                text.append("Browse custom commands:\n\n", style="white")
-                if skills:
-                    all_skills = list(skills.auto_skills) + list(skills.command_skills)
-                    for s in sorted(all_skills, key=lambda x: x.name):
-                        trigger = f"/{s.trigger}" if s.trigger else "(auto)"
-                        source = "user" if not getattr(s, "plugin", None) else f"({s.plugin})"
-                        text.append(f"  {trigger}\n", style="bold white")
-                        desc = s.description if hasattr(s, "description") and s.description else s.name
-                        text.append(f"    {desc} {source}\n", style="dim")
-                else:
-                    text.append("  No custom commands installed.\n", style="dim")
-                    text.append("  Use /skill to browse and install skills.\n", style="dim")
-                return text
-
-            def action_prev_tab(self) -> None:
-                self._tab = max(0, self._tab - 1)
-
-            def action_next_tab(self) -> None:
-                self._tab = min(2, self._tab + 1)
-
-            def action_tab_1(self) -> None:
-                self._tab = 0
-
-            def action_tab_2(self) -> None:
-                self._tab = 1
-
-            def action_tab_3(self) -> None:
-                self._tab = 2
-
-            def action_dismiss(self) -> None:
-                self.dismiss()
 
         self.push_screen(HelpScreen())
 
