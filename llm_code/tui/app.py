@@ -1275,6 +1275,12 @@ class LLMCodeTUI(App):
                 mcp_servers[short_name] = {"command": "npx", "args": ["-y", pkg]}
                 config_path.parent.mkdir(parents=True, exist_ok=True)
                 config_path.write_text(json.dumps(config_data, indent=2) + "\n")
+                # Update in-memory config so marketplace reflects the change
+                if self._config is not None:
+                    import dataclasses
+                    current_servers = dict(self._config.mcp_servers or {})
+                    current_servers[short_name] = {"command": "npx", "args": ["-y", pkg]}
+                    self._config = dataclasses.replace(self._config, mcp_servers=current_servers)
                 chat.add_entry(AssistantText(f"Added {short_name} to config. Starting server..."))
                 # Hot-start the MCP server without restart
                 self._hot_start_mcp(short_name, {"command": "npx", "args": ["-y", pkg]})
@@ -1291,6 +1297,12 @@ class LLMCodeTUI(App):
                     if name in mcp_servers:
                         del mcp_servers[name]
                         config_path.write_text(json.dumps(config_data, indent=2) + "\n")
+                        # Update in-memory config
+                        if self._config is not None:
+                            import dataclasses
+                            current = dict(self._config.mcp_servers or {})
+                            current.pop(name, None)
+                            self._config = dataclasses.replace(self._config, mcp_servers=current)
                         chat.add_entry(AssistantText(f"Removed {name} from config."))
                     else:
                         chat.add_entry(AssistantText(f"MCP server '{name}' not found in config."))
