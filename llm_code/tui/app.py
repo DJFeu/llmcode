@@ -1244,22 +1244,60 @@ class LLMCodeTUI(App):
                 "then restart llm-code."
             ))
         else:
-            if not self._config:
-                chat.add_entry(AssistantText("No config loaded."))
-                return
-            servers = self._config.mcp_servers if self._config.mcp_servers else {}
-            lines = [f"MCP Servers ({len(servers)} configured)"]
+            # Open interactive MCP marketplace browser
+            from llm_code.tui.marketplace import MarketplaceBrowser, MarketplaceItem
+
+            items: list[MarketplaceItem] = []
+            configured: set[str] = set()
+
+            # Configured MCP servers
+            servers = {}
+            if self._config and self._config.mcp_servers:
+                servers = self._config.mcp_servers
             for name, cfg in servers.items():
+                configured.add(name)
+                cmd = ""
                 if isinstance(cfg, dict):
-                    cmd = cfg.get("command", "")
-                    srv_args = " ".join(cfg.get("args", []))
-                    lines.append(f"  {name}  {cmd} {srv_args}".rstrip())
-                else:
-                    lines.append(f"  {name}")
-            if not servers:
-                lines.append("  No MCP servers configured.")
-            lines.append("\nInstall: /mcp install <npm-package>  |  Remove: /mcp remove <name>")
-            chat.add_entry(AssistantText("\n".join(lines)))
+                    cmd = f"{cfg.get('command', '')} {' '.join(cfg.get('args', []))}".strip()
+                items.append(MarketplaceItem(
+                    name=name,
+                    description=cmd or "(configured)",
+                    source="configured",
+                    installed=True,
+                    enabled=True,
+                    repo="",
+                ))
+
+            # Known MCP servers from npm registry (popular ones)
+            known_mcp = [
+                ("@anthropic/mcp-server-filesystem", "File system access via MCP"),
+                ("@anthropic/mcp-server-github", "GitHub API integration via MCP"),
+                ("@anthropic/mcp-server-slack", "Slack integration via MCP"),
+                ("@anthropic/mcp-server-google-maps", "Google Maps API via MCP"),
+                ("@anthropic/mcp-server-puppeteer", "Browser automation via MCP"),
+                ("@anthropic/mcp-server-memory", "Persistent memory via MCP"),
+                ("@anthropic/mcp-server-postgres", "PostgreSQL access via MCP"),
+                ("@anthropic/mcp-server-sqlite", "SQLite database via MCP"),
+                ("@modelcontextprotocol/server-brave-search", "Brave search via MCP"),
+                ("@modelcontextprotocol/server-fetch", "HTTP fetch via MCP"),
+                ("tavily-mcp", "Tavily AI search via MCP"),
+                ("@supabase/mcp-server-supabase", "Supabase database via MCP"),
+                ("context7-mcp", "Context7 documentation lookup via MCP"),
+            ]
+            for pkg_name, desc in known_mcp:
+                short = pkg_name.split("/")[-1] if "/" in pkg_name else pkg_name
+                if short not in configured and pkg_name not in configured:
+                    items.append(MarketplaceItem(
+                        name=pkg_name,
+                        description=desc,
+                        source="npm",
+                        installed=False,
+                        repo="",
+                        extra="npx",
+                    ))
+
+            browser = MarketplaceBrowser("MCP Server Marketplace", items)
+            self.push_screen(browser)
 
     # ── IDE ───────────────────────────────────────────────────────────
 
@@ -1551,7 +1589,10 @@ class LLMCodeTUI(App):
         action = event.action
 
         if action == "install":
-            if item.repo:
+            if item.source == "npm":
+                # MCP server install — show config instructions
+                self._cmd_mcp(f"install {item.name}")
+            elif item.repo:
                 if item.source in ("official", "community"):
                     self._cmd_plugin(f"install {item.repo}")
                 else:
