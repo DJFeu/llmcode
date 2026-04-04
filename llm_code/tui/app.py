@@ -821,7 +821,7 @@ class LLMCodeTUI(App):
             ("/hida", "HIDA classification"),
             ("/lsp", "LSP status"),
             ("/cancel", "Cancel generation"),
-            ("/exit", "Quit"),
+            ("/exit /quit", "Quit"),
         ]:
             lines.append(f"  {cmd_name:<35s} {desc}")
         chat.add_entry(AssistantText("\n".join(lines)))
