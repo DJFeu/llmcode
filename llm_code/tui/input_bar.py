@@ -30,7 +30,7 @@ class InputBar(Widget):
     InputBar {
         dock: bottom;
         height: auto;
-        min-height: 1;
+        min-height: 3;
         max-height: 8;
         padding: 0 1;
         background: $surface;
