@@ -43,23 +43,37 @@ if TYPE_CHECKING:
     from llm_code.tools.registry import ToolRegistry
 
 
-def build_thinking_extra_body(thinking_config) -> dict | None:
+def build_thinking_extra_body(thinking_config, *, is_local: bool = False) -> dict | None:
     """Build extra_body dict for thinking mode configuration.
 
     Returns None for adaptive mode (let provider decide),
     explicit enable/disable dict for other modes.
+
+    Local models get unlimited thinking budget (no cost concern).
     """
     mode = thinking_config.mode
     if mode == "enabled":
+        # Local models: no budget cap; cloud: use configured budget
+        budget = thinking_config.budget_tokens
+        if is_local:
+            budget = max(budget, 131072)  # At least 128K tokens for local
         return {
             "chat_template_kwargs": {
                 "enable_thinking": True,
-                "thinking_budget": thinking_config.budget_tokens,
+                "thinking_budget": budget,
             }
         }
     if mode == "disabled":
         return {"chat_template_kwargs": {"enable_thinking": False}}
-    # adaptive: no override
+    # adaptive: for local models, enable with generous budget; for cloud, let provider decide
+    if is_local:
+        budget = max(thinking_config.budget_tokens, 131072)
+        return {
+            "chat_template_kwargs": {
+                "enable_thinking": True,
+                "thinking_budget": budget,
+            }
+        }
     return None
 
 
@@ -267,7 +281,7 @@ class ConversationRuntime:
                 tools=tool_defs if use_native else (),
                 max_tokens=_current_max_tokens,
                 temperature=self._config.temperature,
-                extra_body=build_thinking_extra_body(self._config.thinking) if not use_native else None,
+                extra_body=build_thinking_extra_body(self._config.thinking, is_local=_is_local) if not use_native else None,
             )
 
             if self._vcr_recorder is not None:
@@ -306,7 +320,7 @@ class ConversationRuntime:
                         tools=(),
                         max_tokens=_current_max_tokens,
                         temperature=self._config.temperature,
-                        extra_body=build_thinking_extra_body(self._config.thinking),
+                        extra_body=build_thinking_extra_body(self._config.thinking, is_local=_is_local),
                     )
                     stream = await self._provider.stream_message(request)
                 elif (
