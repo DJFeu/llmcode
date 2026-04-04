@@ -5,6 +5,7 @@ from llm_code.tui.header_bar import HeaderBar
 from llm_code.tui.status_bar import StatusBar
 from llm_code.tui.chat_widgets import ToolBlock, ThinkingBlock, TurnSummary, SpinnerLine
 from llm_code.tui.chat_view import ChatScrollView
+from llm_code.tui.input_bar import InputBar
 
 
 class TestHeaderBar:
@@ -145,3 +146,13 @@ class TestSpinnerLine:
         assert "Thinking" in s.render_text()
         s.phase = "processing"
         assert "Processing" in s.render_text()
+
+
+class TestInputBar:
+    def test_creates(self):
+        bar = InputBar()
+        assert bar.value == ""
+
+    def test_prompt_symbol(self):
+        bar = InputBar()
+        assert bar.PROMPT == "❯ "
