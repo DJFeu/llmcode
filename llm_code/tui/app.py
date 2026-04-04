@@ -626,10 +626,25 @@ class LLMCodeTUI(App):
             chat.add_entry(AssistantText(f"Clipboard error: {exc}"))
 
     def on_paste(self, event) -> None:
-        """Handle terminal paste events — check for image data."""
-        # Textual fires on_paste when bracket paste mode delivers content.
-        # We check if clipboard has an image; if so, attach it.
+        """Handle terminal paste events — check clipboard for images.
+
+        When user presses Cmd+V (macOS) or Ctrl+V (Linux), the terminal
+        pastes text via bracket paste mode.  We also check the system
+        clipboard for an image — if found, attach it silently.
+        """
         self._paste_clipboard_image()
+
+    def on_screen_resume(self) -> None:
+        """Return focus to InputBar after any modal screen closes."""
+        self.query_one(InputBar).focus()
+
+    def _on_idle(self) -> None:
+        """Ensure InputBar stays focused during normal operation."""
+        input_bar = self.query_one(InputBar)
+        # Only refocus if no modal screen is active and InputBar lost focus
+        if not self.screen.is_modal and self.focused is not input_bar:
+            if not input_bar.disabled:
+                input_bar.focus()
 
     def on_input_bar_submitted(self, event: InputBar.Submitted) -> None:
         """Handle user input submission."""
@@ -1839,3 +1854,5 @@ class LLMCodeTUI(App):
                 self._cmd_plugin(f"remove {item.name}")
             else:
                 self._cmd_skill(f"remove {item.name}")
+        # Return focus to InputBar after marketplace action
+        self.query_one(InputBar).focus()
