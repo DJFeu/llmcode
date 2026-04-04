@@ -352,7 +352,7 @@ class ConversationRuntime:
 
             # 4. Collect events and buffers
             text_parts: list[str] = []
-            native_tool_calls: list[dict] = {}  # id -> {id, name, json_parts}
+            native_tool_calls: dict[str, dict] = {}  # id -> {id, name, json_parts}
             native_tool_list: list[dict] = []
             stop_event: StreamMessageStop | None = None
 

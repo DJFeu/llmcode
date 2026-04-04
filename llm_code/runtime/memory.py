@@ -54,6 +54,16 @@ class MemoryStore:
         data.pop(key, None)
         self._save(data)
 
+    def list_entries(self) -> dict[str, str] | None:
+        """Return a dict mapping key → value for all stored entries, or None if empty.
+
+        This is used by the prompt builder to inject memory into the system prompt.
+        Internal keys (starting with '_') are excluded.
+        """
+        data = self._load()
+        entries = {k: v["value"] for k, v in data.items() if not k.startswith("_")}
+        return entries if entries else None
+
     def get_all(self) -> dict[str, MemoryEntry]:
         """Return all entries as a mapping of key -> MemoryEntry."""
         data = self._load()

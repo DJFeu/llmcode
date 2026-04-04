@@ -245,8 +245,13 @@ class OpenAICompatProvider(LLMProvider):
 
     def _parse_response(self, response: httpx.Response) -> MessageResponse:
         data = response.json()
-        choice = data["choices"][0]
-        message = choice["message"]
+        choices = data.get("choices")
+        if not choices:
+            raise ProviderConnectionError(f"No choices in API response: {str(data)[:200]}")
+        choice = choices[0]
+        message = choice.get("message")
+        if not message:
+            raise ProviderConnectionError(f"No message in API choice: {str(choice)[:200]}")
         finish_reason = choice.get("finish_reason") or "stop"
 
         content_blocks: list[ContentBlock] = []
@@ -297,6 +302,7 @@ class _StreamIterator:
     def _build_events(self) -> None:
         events: list[StreamEvent] = []
         pending_tools: dict[int, dict] = {}
+        _stop_emitted = False
 
         for chunk in self._events:
             choices = chunk.get("choices", [])
@@ -337,8 +343,9 @@ class _StreamIterator:
                             )
                         )
 
-                # Stop event — emitted once at the end
-                if finish_reason:
+                # Stop event — emitted exactly once at the end
+                if finish_reason and not _stop_emitted:
+                    _stop_emitted = True
                     usage_data = chunk.get("usage") or {}
                     usage = TokenUsage(
                         input_tokens=usage_data.get("prompt_tokens", 0),
