@@ -357,10 +357,12 @@ def load_config(
 
     merged = merge_configs(merged, cli_overrides)
 
-    # Validate merged config; on error, report and continue with best-effort defaults
+    # Validate merged config; on error, log warning and continue with best-effort defaults
     try:
         ConfigSchema.model_validate(merged)
     except ValidationError as exc:
-        print(f"Config validation error: {exc}", file=sys.stderr)
+        import warnings
+        warnings.warn(f"Config validation error (continuing with defaults): {exc}", stacklevel=2)
+        print(f"[WARNING] Config validation error: {exc}", file=sys.stderr)
 
     return _dict_to_runtime_config(merged)

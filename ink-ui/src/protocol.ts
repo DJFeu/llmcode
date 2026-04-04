@@ -32,6 +32,11 @@ export type BackendMessage =
   | { type: 'message'; text: string; style?: string }
   | { type: 'help'; commands: Array<{cmd: string; desc: string}> }
   | { type: 'error'; message: string }
+  | { type: 'system'; text: string }
+  | { type: 'system_message'; text: string }
+  | { type: 'voice_start' }
+  | { type: 'voice_stop' }
+  | { type: 'voice_text'; text: string }
   | CronListMessage
 
 export interface MarketplaceItem {
@@ -64,3 +69,4 @@ export type FrontendMessage =
   | { type: 'marketplace_close' }
   | { type: 'action_select'; actionId: string }
   | { type: 'image_paste'; mediaType: string; data: string }
+  | { type: 'voice_toggle' }

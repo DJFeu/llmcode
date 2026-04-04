@@ -94,10 +94,10 @@ def _select_bracket(
     # For angle brackets, use simple nearest-neighbor search
     # (find nearest > to the left and < to the right of cursor)
     if open_ch == "<":
-        open_idx = buf.rfind(open_ch, 0, state.cursor + 1)
+        open_idx = buf.rfind(close_ch, 0, state.cursor + 1)
         if open_idx == -1:
             return None
-        close_idx = buf.find(close_ch, state.cursor)
+        close_idx = buf.find(open_ch, state.cursor)
         if close_idx == -1:
             return None
         if kind == "i":

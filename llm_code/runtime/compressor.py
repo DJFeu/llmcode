@@ -46,9 +46,13 @@ class ContextCompressor:
         Applies levels in order, stopping as soon as the budget is met.
         If all 4 levels still cannot reach the budget, the Level-4 result
         is returned (best-effort).
+
+        Resets cached indices after compression since message indices change.
         """
         if session.estimated_tokens() <= max_tokens:
             return session
+        # Reset stale cache indices — message positions change after compression
+        self._cached_indices.clear()
 
         session = self._snip_compact(session)
         if session.estimated_tokens() <= max_tokens:
