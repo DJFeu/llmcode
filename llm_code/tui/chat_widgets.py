@@ -63,11 +63,14 @@ class ToolBlock(Widget):
     def _extract_file_path(self) -> str:
         """Extract file path from args_display."""
         d = self._data
-        # Try to find 'path' in args
         for pattern in ("'path': '", '"path": "', "'file_path': '", '"file_path": "'):
             if pattern in d.args_display:
+                quote = "'" if "'" in pattern[-1] else '"'
                 start = d.args_display.index(pattern) + len(pattern)
-                end = d.args_display.index("'", start) if "'" in pattern else d.args_display.index('"', start)
+                end = d.args_display.find(quote, start)
+                if end == -1:
+                    # Truncated — use rest of string
+                    return d.args_display[start:start + 80]
                 return d.args_display[start:end]
         return d.args_display[:80]
 
