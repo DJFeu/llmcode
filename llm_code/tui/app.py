@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -56,6 +58,8 @@ class LLMCodeTUI(App):
         self._coordinator_tool_class = None
         self._permission_pending = False
         self._pending_images: list = []
+        self._voice_active = False
+        self._vcr_recorder = None
 
     def compose(self) -> ComposeResult:
         yield HeaderBar(id="header-bar")
@@ -74,6 +78,20 @@ class LLMCodeTUI(App):
         self.query_one(InputBar).focus()
         # Start MCP servers async
         self.run_worker(self._init_mcp(), name="init_mcp")
+
+    @staticmethod
+    def _is_safe_name(name: str) -> bool:
+        """Validate skill/plugin name — alphanumeric, hyphens, underscores, dots only."""
+        return bool(re.match(r'^[a-zA-Z0-9_.-]+$', name))
+
+    @staticmethod
+    def _is_valid_repo(source: str) -> bool:
+        """Validate GitHub repo format: owner/name with safe characters."""
+        cleaned = source.replace("https://github.com/", "").rstrip("/")
+        parts = cleaned.split("/")
+        if len(parts) != 2:
+            return False
+        return all(re.match(r'^[a-zA-Z0-9_.-]+$', p) for p in parts)
 
     def _detect_branch(self) -> str:
         try:
@@ -731,10 +749,6 @@ class LLMCodeTUI(App):
         handler = getattr(self, f"_cmd_{name}", None)
         if handler is not None:
             handler(args)
-        elif name in ("skill", "plugin", "mcp", "memory", "cron", "task",
-                       "swarm", "voice", "ide", "vcr", "hida", "checkpoint"):
-            chat = self.query_one(ChatScrollView)
-            chat.add_entry(AssistantText(f"/{name}: use --lite mode for full sub-command support"))
         else:
             chat = self.query_one(ChatScrollView)
             chat.add_entry(AssistantText(f"Unknown command: /{name} — type /help for help"))
@@ -938,3 +952,520 @@ class LLMCodeTUI(App):
 
     def _cmd_session(self, args: str) -> None:
         self.query_one(ChatScrollView).add_entry(AssistantText("Session management: use /session list|save"))
+
+    # ── Voice ─────────────────────────────────────────────────────────
+
+    def _cmd_voice(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        arg = args.strip().lower()
+        if arg == "on":
+            if self._config and getattr(self._config, 'voice', None) and self._config.voice.enabled:
+                self._voice_active = True
+                chat.add_entry(AssistantText("Voice input enabled"))
+            else:
+                chat.add_entry(AssistantText("Voice not configured. Set voice.enabled in config."))
+        elif arg == "off":
+            self._voice_active = False
+            chat.add_entry(AssistantText("Voice input disabled"))
+        else:
+            active = self._voice_active
+            chat.add_entry(AssistantText(
+                f"Voice: {'active' if active else 'inactive'}\nUsage: /voice [on|off]"
+            ))
+
+    # ── Cron ──────────────────────────────────────────────────────────
+
+    def _cmd_cron(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        if self._cron_storage is None:
+            chat.add_entry(AssistantText("Cron not available."))
+            return
+        sub = args.strip() if args.strip() else "list"
+        if not sub or sub == "list":
+            tasks = self._cron_storage.list_all()
+            if not tasks:
+                chat.add_entry(AssistantText("No scheduled tasks."))
+            else:
+                lines = [f"Scheduled tasks ({len(tasks)}):"]
+                for t in tasks:
+                    flags = []
+                    if t.recurring:
+                        flags.append("recurring")
+                    if t.permanent:
+                        flags.append("permanent")
+                    flag_str = f" [{', '.join(flags)}]" if flags else ""
+                    fired = f", last fired: {t.last_fired_at:%Y-%m-%d %H:%M}" if t.last_fired_at else ""
+                    lines.append(f"  {t.id}  {t.cron}  \"{t.prompt}\"{flag_str}{fired}")
+                chat.add_entry(AssistantText("\n".join(lines)))
+        elif sub.startswith("delete "):
+            task_id = sub.split(None, 1)[1].strip()
+            removed = self._cron_storage.remove(task_id)
+            if removed:
+                chat.add_entry(AssistantText(f"Deleted task {task_id}"))
+            else:
+                chat.add_entry(AssistantText(f"Task '{task_id}' not found"))
+        elif sub == "add":
+            chat.add_entry(AssistantText(
+                "Use the cron_create tool to schedule a task:\n"
+                "  cron: '0 9 * * *'  (5-field cron expression)\n"
+                "  prompt: 'your prompt here'\n"
+                "  recurring: true/false\n"
+                "  permanent: true/false"
+            ))
+        else:
+            chat.add_entry(AssistantText("Usage: /cron [list|add|delete <id>]"))
+
+    # ── Task ──────────────────────────────────────────────────────────
+
+    def _cmd_task(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        parts = args.strip().split(None, 1)
+        sub = parts[0] if parts else ""
+        if sub in ("new", ""):
+            chat.add_entry(AssistantText("Use the task tools directly to create or manage tasks."))
+        elif sub == "list":
+            if self._task_manager is None:
+                chat.add_entry(AssistantText("Task manager not initialized."))
+            else:
+                try:
+                    tasks = self._task_manager.list_tasks(exclude_done=False)
+                    if not tasks:
+                        chat.add_entry(AssistantText("No tasks found."))
+                    else:
+                        lines = ["Tasks:"]
+                        for t in tasks:
+                            lines.append(f"  {t.id}  [{t.status.value:8s}]  {t.title}")
+                        chat.add_entry(AssistantText("\n".join(lines)))
+                except Exception as exc:
+                    chat.add_entry(AssistantText(f"Error listing tasks: {exc}"))
+        elif sub in ("verify", "close"):
+            chat.add_entry(AssistantText("Use the task tools directly."))
+        else:
+            chat.add_entry(AssistantText("Usage: /task [new|verify <id>|close <id>|list]"))
+
+    # ── Swarm ─────────────────────────────────────────────────────────
+
+    def _cmd_swarm(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        parts = args.strip().split(None, 1)
+        sub = parts[0] if parts else ""
+        rest = parts[1].strip() if len(parts) > 1 else ""
+        if sub == "coordinate":
+            if not rest:
+                chat.add_entry(AssistantText("Usage: /swarm coordinate <task>"))
+                return
+            chat.add_entry(AssistantText("Swarm coordination: use the swarm tools directly."))
+        else:
+            if self._swarm_manager is None:
+                chat.add_entry(AssistantText("Swarm: not enabled. Set swarm.enabled=true in config."))
+            else:
+                chat.add_entry(AssistantText("Swarm: active\nUsage: /swarm coordinate <task>"))
+
+    # ── VCR ───────────────────────────────────────────────────────────
+
+    def _cmd_vcr(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        sub = args.strip().split(None, 1)[0] if args.strip() else ""
+        if sub == "start":
+            if self._vcr_recorder is not None:
+                chat.add_entry(AssistantText("VCR recording already active."))
+                return
+            try:
+                import uuid
+                from llm_code.runtime.vcr import VCRRecorder
+                recordings_dir = Path.home() / ".llm-code" / "recordings"
+                recordings_dir.mkdir(parents=True, exist_ok=True)
+                session_id = uuid.uuid4().hex[:8]
+                path = recordings_dir / f"{session_id}.jsonl"
+                self._vcr_recorder = VCRRecorder(path)
+                if self._runtime is not None:
+                    self._runtime._vcr_recorder = self._vcr_recorder
+                chat.add_entry(AssistantText(f"VCR recording started: {path.name}"))
+            except Exception as exc:
+                chat.add_entry(AssistantText(f"VCR start failed: {exc}"))
+        elif sub == "stop":
+            if self._vcr_recorder is None:
+                chat.add_entry(AssistantText("No active VCR recording."))
+                return
+            self._vcr_recorder.close()
+            self._vcr_recorder = None
+            if self._runtime is not None:
+                self._runtime._vcr_recorder = None
+            chat.add_entry(AssistantText("VCR recording stopped."))
+        elif sub == "list":
+            recordings_dir = Path.home() / ".llm-code" / "recordings"
+            if not recordings_dir.is_dir():
+                chat.add_entry(AssistantText("No recordings found."))
+                return
+            files = sorted(recordings_dir.glob("*.jsonl"))
+            if not files:
+                chat.add_entry(AssistantText("No recordings found."))
+                return
+            try:
+                from llm_code.runtime.vcr import VCRPlayer
+                lines = []
+                for f in files:
+                    player = VCRPlayer(f)
+                    s = player.summary()
+                    lines.append(
+                        f"  {f.name}  events={s['event_count']}  "
+                        f"duration={s['duration']:.1f}s  "
+                        f"tools={sum(s['tool_calls'].values())}"
+                    )
+                chat.add_entry(AssistantText("\n".join(lines)))
+            except Exception as exc:
+                chat.add_entry(AssistantText(f"VCR list failed: {exc}"))
+        else:
+            active = "active" if self._vcr_recorder is not None else "inactive"
+            chat.add_entry(AssistantText(f"VCR: {active}\nUsage: /vcr start|stop|list"))
+
+    # ── Checkpoint ────────────────────────────────────────────────────
+
+    def _cmd_checkpoint(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        try:
+            from llm_code.runtime.checkpoint_recovery import CheckpointRecovery
+        except ImportError:
+            chat.add_entry(AssistantText("Checkpoint recovery not available."))
+            return
+        checkpoints_dir = Path.home() / ".llm-code" / "checkpoints"
+        recovery = CheckpointRecovery(checkpoints_dir)
+        parts = args.strip().split(None, 1)
+        sub = parts[0].lower() if parts else "list"
+        rest = parts[1].strip() if len(parts) > 1 else ""
+        if sub == "save":
+            if self._runtime is None:
+                chat.add_entry(AssistantText("No active session to checkpoint."))
+                return
+            try:
+                path = recovery.save_checkpoint(self._runtime.session)
+                chat.add_entry(AssistantText(f"Checkpoint saved: {path}"))
+            except Exception as exc:
+                chat.add_entry(AssistantText(f"Save failed: {exc}"))
+        elif sub in ("list", ""):
+            try:
+                entries = recovery.list_checkpoints()
+                if not entries:
+                    chat.add_entry(AssistantText("No checkpoints found."))
+                    return
+                lines = ["Checkpoints:"]
+                for e in entries:
+                    lines.append(
+                        f"  {e['session_id']}  "
+                        f"{e['saved_at'][:19]}  "
+                        f"({e['message_count']} msgs)  "
+                        f"{e['project_path']}"
+                    )
+                chat.add_entry(AssistantText("\n".join(lines)))
+            except Exception as exc:
+                chat.add_entry(AssistantText(f"List failed: {exc}"))
+        elif sub == "resume":
+            try:
+                session_id = rest or None
+                if session_id:
+                    session = recovery.load_checkpoint(session_id)
+                else:
+                    session = recovery.detect_last_checkpoint()
+                if session is None:
+                    chat.add_entry(AssistantText("No checkpoint found to resume."))
+                    return
+                self._init_runtime()
+                chat.add_entry(AssistantText(
+                    f"Resumed session {session.id} ({len(session.messages)} messages)"
+                ))
+            except Exception as exc:
+                chat.add_entry(AssistantText(f"Resume failed: {exc}"))
+        else:
+            chat.add_entry(AssistantText("Usage: /checkpoint [save|list|resume [session_id]]"))
+
+    # ── Memory ────────────────────────────────────────────────────────
+
+    def _cmd_memory(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        if not self._memory:
+            chat.add_entry(AssistantText("Memory not initialized."))
+            return
+        parts = args.strip().split(None, 2)
+        sub = parts[0] if parts else ""
+        try:
+            if sub == "set" and len(parts) > 2:
+                self._memory.store(parts[1], parts[2])
+                chat.add_entry(AssistantText(f"Stored: {parts[1]}"))
+            elif sub == "get" and len(parts) > 1:
+                val = self._memory.recall(parts[1])
+                if val:
+                    chat.add_entry(AssistantText(str(val)))
+                else:
+                    chat.add_entry(AssistantText(f"Key not found: {parts[1]}"))
+            elif sub == "delete" and len(parts) > 1:
+                self._memory.delete(parts[1])
+                chat.add_entry(AssistantText(f"Deleted: {parts[1]}"))
+            elif sub == "consolidate":
+                chat.add_entry(AssistantText("Use --lite mode for consolidate (requires async)."))
+            elif sub == "history":
+                summaries = self._memory.load_consolidated_summaries(limit=5)
+                if not summaries:
+                    chat.add_entry(AssistantText("No consolidated memories yet."))
+                else:
+                    lines = [f"Consolidated Memories ({len(summaries)} most recent)"]
+                    for i, s in enumerate(summaries):
+                        preview = "\n".join(s.strip().splitlines()[:3])
+                        lines.append(f"  #{i+1} {preview}")
+                    chat.add_entry(AssistantText("\n".join(lines)))
+            else:
+                entries = self._memory.get_all()
+                lines = [f"Memory ({len(entries)} entries)"]
+                for k, v in entries.items():
+                    lines.append(f"  {k}: {v.value[:60]}")
+                if not entries:
+                    lines.append("  No memories stored.")
+                chat.add_entry(AssistantText("\n".join(lines)))
+        except Exception as exc:
+            chat.add_entry(AssistantText(f"Memory error: {exc}"))
+
+    # ── MCP ───────────────────────────────────────────────────────────
+
+    def _cmd_mcp(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        parts = args.strip().split(None, 1)
+        sub = parts[0] if parts else ""
+        subargs = parts[1] if len(parts) > 1 else ""
+        if sub == "install" and subargs:
+            chat.add_entry(AssistantText(
+                f"To install {subargs}:\n"
+                "Add to ~/.llm-code/config.json under mcp_servers section,\n"
+                f"e.g.: \"{subargs}\": {{\"command\": \"npx\", \"args\": [\"-y\", \"{subargs}\"]}}\n"
+                "Then restart llm-code to activate."
+            ))
+        elif sub == "remove" and subargs:
+            chat.add_entry(AssistantText(
+                f"To remove {subargs}:\n"
+                "Edit ~/.llm-code/config.json and delete the entry from mcp_servers,\n"
+                "then restart llm-code."
+            ))
+        else:
+            if not self._config:
+                chat.add_entry(AssistantText("No config loaded."))
+                return
+            servers = self._config.mcp_servers if self._config.mcp_servers else {}
+            lines = [f"MCP Servers ({len(servers)} configured)"]
+            for name, cfg in servers.items():
+                if isinstance(cfg, dict):
+                    cmd = cfg.get("command", "")
+                    srv_args = " ".join(cfg.get("args", []))
+                    lines.append(f"  {name}  {cmd} {srv_args}".rstrip())
+                else:
+                    lines.append(f"  {name}")
+            if not servers:
+                lines.append("  No MCP servers configured.")
+            lines.append("\nInstall: /mcp install <npm-package>  |  Remove: /mcp remove <name>")
+            chat.add_entry(AssistantText("\n".join(lines)))
+
+    # ── IDE ───────────────────────────────────────────────────────────
+
+    def _cmd_ide(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        sub = args.strip().lower()
+        if sub == "connect":
+            chat.add_entry(AssistantText("IDE bridge starts automatically when configured. Set ide.enabled=true in config."))
+            return
+        # status (default)
+        if self._ide_bridge is None:
+            chat.add_entry(AssistantText("IDE integration is disabled. Set ide.enabled=true in config."))
+            return
+        try:
+            if self._ide_bridge.is_connected:
+                ides = self._ide_bridge._server.connected_ides if self._ide_bridge._server else []
+                names = ", ".join(ide.name for ide in ides) if ides else "unknown"
+                chat.add_entry(AssistantText(f"IDE connected: {names}"))
+            else:
+                port = self._ide_bridge._config.port
+                chat.add_entry(AssistantText(f"IDE bridge listening on port {port}, no IDE connected."))
+        except Exception as exc:
+            chat.add_entry(AssistantText(f"IDE status error: {exc}"))
+
+    # ── HIDA ──────────────────────────────────────────────────────────
+
+    def _cmd_hida(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        if self._runtime and hasattr(self._runtime, "_last_hida_profile"):
+            profile = self._runtime._last_hida_profile
+            if profile is not None:
+                try:
+                    from llm_code.hida.engine import HidaEngine
+                    engine = HidaEngine()
+                    summary = engine.build_summary(profile)
+                    chat.add_entry(AssistantText(f"HIDA: {summary}"))
+                except Exception as exc:
+                    chat.add_entry(AssistantText(f"HIDA: {exc}"))
+            else:
+                hida_enabled = (
+                    getattr(self._config, "hida", None) and self._config.hida.enabled
+                )
+                status = "enabled" if hida_enabled else "disabled"
+                chat.add_entry(AssistantText(f"HIDA: {status}, no classification yet"))
+        else:
+            chat.add_entry(AssistantText("HIDA: not initialized"))
+
+    # ── Skill ─────────────────────────────────────────────────────────
+
+    def _cmd_skill(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        parts = args.strip().split(None, 1)
+        sub = parts[0] if parts else ""
+        subargs = parts[1] if len(parts) > 1 else ""
+        if sub == "install" and subargs:
+            source = subargs.strip()
+            if not self._is_valid_repo(source):
+                chat.add_entry(AssistantText("Usage: /skill install owner/repo"))
+                return
+            import tempfile
+            repo = source.replace("https://github.com/", "").rstrip("/")
+            name = repo.split("/")[-1]
+            dest = Path.home() / ".llm-code" / "skills" / name
+            if dest.exists():
+                shutil.rmtree(dest)
+            chat.add_entry(AssistantText(f"Cloning {repo}..."))
+            try:
+                with tempfile.TemporaryDirectory() as tmp:
+                    result = subprocess.run(
+                        ["git", "clone", "--depth", "1",
+                         f"https://github.com/{repo}.git", tmp],
+                        capture_output=True, text=True, timeout=30,
+                    )
+                    if result.returncode == 0:
+                        skills_src = Path(tmp) / "skills"
+                        if skills_src.is_dir():
+                            shutil.copytree(skills_src, dest)
+                        else:
+                            shutil.copytree(tmp, dest)
+                        chat.add_entry(AssistantText(f"Installed {name}. Restart to activate."))
+                    else:
+                        logger.warning("Skill clone failed for %s: %s", repo, result.stderr[:200])
+                        chat.add_entry(AssistantText(f"Clone failed. Check the repository URL."))
+            except Exception as exc:
+                chat.add_entry(AssistantText(f"Install failed: {exc}"))
+        elif sub == "enable" and subargs:
+            if not self._is_safe_name(subargs):
+                chat.add_entry(AssistantText("Invalid skill name."))
+                return
+            marker = Path.home() / ".llm-code" / "skills" / subargs / ".disabled"
+            marker.unlink(missing_ok=True)
+            chat.add_entry(AssistantText(f"Enabled {subargs}"))
+        elif sub == "disable" and subargs:
+            if not self._is_safe_name(subargs):
+                chat.add_entry(AssistantText("Invalid skill name."))
+                return
+            marker = Path.home() / ".llm-code" / "skills" / subargs / ".disabled"
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.touch()
+            chat.add_entry(AssistantText(f"Disabled {subargs}"))
+        elif sub == "remove" and subargs:
+            if not self._is_safe_name(subargs):
+                chat.add_entry(AssistantText("Invalid skill name."))
+                return
+            d = Path.home() / ".llm-code" / "skills" / subargs
+            if d.is_dir():
+                shutil.rmtree(d)
+                chat.add_entry(AssistantText(f"Removed {subargs}"))
+            else:
+                chat.add_entry(AssistantText(f"Not found: {subargs}"))
+        else:
+            # List installed skills
+            all_skills: list = []
+            if self._skills:
+                all_skills = list(self._skills.auto_skills) + list(self._skills.command_skills)
+            if not all_skills:
+                chat.add_entry(AssistantText(
+                    "No skills installed.\n"
+                    "Usage: /skill install owner/repo | /skill enable/disable/remove <name>"
+                ))
+            else:
+                lines = [f"Skills ({len(all_skills)} installed):"]
+                for s in all_skills:
+                    mode = "auto" if s.auto else f"/{s.trigger}"
+                    tokens = len(s.content) // 4
+                    lines.append(f"  {s.name}  {mode}  ~{tokens} tokens")
+                chat.add_entry(AssistantText("\n".join(lines)))
+
+    # ── Plugin ────────────────────────────────────────────────────────
+
+    def _cmd_plugin(self, args: str) -> None:
+        chat = self.query_one(ChatScrollView)
+        parts = args.strip().split(None, 1)
+        sub = parts[0] if parts else ""
+        subargs = parts[1] if len(parts) > 1 else ""
+        try:
+            from llm_code.marketplace.installer import PluginInstaller
+            installer = PluginInstaller(Path.home() / ".llm-code" / "plugins")
+        except ImportError:
+            chat.add_entry(AssistantText("Plugin system not available."))
+            return
+        if sub == "install" and subargs:
+            source = subargs.strip()
+            if not self._is_valid_repo(source):
+                chat.add_entry(AssistantText("Usage: /plugin install owner/repo"))
+                return
+            repo = source.replace("https://github.com/", "").rstrip("/")
+            name = repo.split("/")[-1]
+            dest = Path.home() / ".llm-code" / "plugins" / name
+            if dest.exists():
+                shutil.rmtree(dest)
+            chat.add_entry(AssistantText(f"Cloning {repo}..."))
+            try:
+                result = subprocess.run(
+                    ["git", "clone", "--depth", "1",
+                     f"https://github.com/{repo}.git", str(dest)],
+                    capture_output=True, text=True, timeout=30,
+                )
+                if result.returncode == 0:
+                    installer.enable(name)
+                    chat.add_entry(AssistantText(f"Installed {name}. Restart to activate."))
+                else:
+                    logger.warning("Plugin clone failed for %s: %s", repo, result.stderr[:200])
+                    chat.add_entry(AssistantText("Clone failed. Check the repository URL."))
+            except Exception as exc:
+                chat.add_entry(AssistantText(f"Install failed: {exc}"))
+        elif sub == "enable" and subargs:
+            if not self._is_safe_name(subargs):
+                chat.add_entry(AssistantText("Invalid plugin name."))
+                return
+            try:
+                installer.enable(subargs)
+                chat.add_entry(AssistantText(f"Enabled {subargs}"))
+            except Exception as exc:
+                chat.add_entry(AssistantText(f"Enable failed: {exc}"))
+        elif sub == "disable" and subargs:
+            if not self._is_safe_name(subargs):
+                chat.add_entry(AssistantText("Invalid plugin name."))
+                return
+            try:
+                installer.disable(subargs)
+                chat.add_entry(AssistantText(f"Disabled {subargs}"))
+            except Exception as exc:
+                chat.add_entry(AssistantText(f"Disable failed: {exc}"))
+        elif sub in ("remove", "uninstall") and subargs:
+            if not self._is_safe_name(subargs):
+                chat.add_entry(AssistantText("Invalid plugin name."))
+                return
+            try:
+                installer.uninstall(subargs)
+                chat.add_entry(AssistantText(f"Removed {subargs}"))
+            except Exception as exc:
+                chat.add_entry(AssistantText(f"Remove failed: {exc}"))
+        else:
+            try:
+                installed = installer.list_installed()
+                if not installed:
+                    chat.add_entry(AssistantText(
+                        "No plugins installed.\n"
+                        "Usage: /plugin install owner/repo | /plugin enable/disable/remove <name>"
+                    ))
+                else:
+                    lines = [f"Plugins ({len(installed)} installed):"]
+                    for p in installed:
+                        status = "enabled" if p.enabled else "disabled"
+                        lines.append(f"  {p.manifest.name}  v{p.manifest.version}  [{status}]")
+                    chat.add_entry(AssistantText("\n".join(lines)))
+            except Exception as exc:
+                chat.add_entry(AssistantText(f"Plugin list failed: {exc}"))
