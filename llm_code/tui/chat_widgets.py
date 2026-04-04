@@ -23,9 +23,21 @@ class ToolBlockData:
 
 
 class ToolBlock(Widget):
-    """Renders a tool call as ┌ name / │ args / ✓ result."""
+    """Renders a tool call — Claude Code style with diff view for edit/write."""
 
-    DEFAULT_CSS = "ToolBlock { height: auto; margin: 0 0 0 2; }"
+    DEFAULT_CSS = "ToolBlock { height: auto; margin: 0 0 0 0; }"
+
+    # Map tool names to display actions
+    _ACTION_MAP = {
+        "edit_file": "Update",
+        "write_file": "Write",
+        "read_file": "Read",
+        "bash": "Bash",
+        "glob_search": "Search",
+        "grep_search": "Search",
+        "notebook_read": "Read",
+        "notebook_edit": "Update",
+    }
 
     def __init__(self, data: ToolBlockData) -> None:
         super().__init__()
@@ -48,50 +60,86 @@ class ToolBlock(Widget):
         )
         return ToolBlock(data)
 
+    def _extract_file_path(self) -> str:
+        """Extract file path from args_display."""
+        d = self._data
+        # Try to find 'path' in args
+        for pattern in ("'path': '", '"path": "', "'file_path': '", '"file_path": "'):
+            if pattern in d.args_display:
+                start = d.args_display.index(pattern) + len(pattern)
+                end = d.args_display.index("'", start) if "'" in pattern else d.args_display.index('"', start)
+                return d.args_display[start:end]
+        return d.args_display[:80]
+
+    def _count_diff_changes(self) -> tuple[int, int]:
+        """Count added and removed lines in diff."""
+        added = sum(1 for l in self._data.diff_lines if l.startswith("+"))
+        removed = sum(1 for l in self._data.diff_lines if l.startswith("-"))
+        return added, removed
+
     def render_text(self) -> str:
         d = self._data
-        icon = "✗" if d.is_error else "✓"
-        args = d.args_display
-        if d.tool_name == "bash" and not args.startswith("$"):
-            args = f"$ {args}"
-        lines = [
-            f"  ┌ {d.tool_name}",
-            f"  │ {args}",
-            f"  {icon} {d.result}",
-        ]
-        for dl in d.diff_lines:
-            lines.append(f"    {dl}")
+        action = self._ACTION_MAP.get(d.tool_name, d.tool_name)
+        file_path = self._extract_file_path()
+        icon = "✗" if d.is_error else "●"
+        lines = [f"{icon} {action}({file_path})"]
+        if d.result:
+            lines.append(f"  └ {d.result}")
         return "\n".join(lines)
 
     def render(self) -> RenderResult:
         d = self._data
         text = Text()
-        text.append("  ┌ ", style="dim")
-        text.append(d.tool_name, style="bold cyan")
-        text.append("\n")
+        action = self._ACTION_MAP.get(d.tool_name, d.tool_name)
+        file_path = self._extract_file_path()
 
-        args = d.args_display
-        if d.tool_name == "bash" and not args.startswith("$"):
-            args = f"$ {args}"
-        text.append("  │ ", style="dim")
-        if d.tool_name == "bash":
-            text.append(args, style="white on #2a2a3a")
+        # Header: ● Action(file_path) or ✗ Action(file_path)
+        if d.is_error:
+            text.append("✗ ", style="bold red")
         else:
-            text.append(args, style="dim")
-        text.append("\n")
+            text.append("● ", style="bold #cc7a00")
+        text.append(f"{action}(", style="bold white")
+        text.append(file_path, style="bold white")
+        text.append(")", style="bold white")
 
-        icon = "✗" if d.is_error else "✓"
-        icon_style = "bold red" if d.is_error else "bold green"
-        text.append(f"  {icon} ", style=icon_style)
-        text.append(d.result, style="dim")
+        # For bash: show command
+        if d.tool_name == "bash":
+            args = d.args_display
+            if not args.startswith("$"):
+                args = f"$ {args}"
+            text.append("\n")
+            text.append(f"  │ {args}", style="white on #2a2a3a")
 
+        # Result summary
+        if d.result:
+            text.append("\n")
+            # For edit/write: show diff summary
+            if d.diff_lines and d.tool_name in ("edit_file", "write_file"):
+                added, removed = self._count_diff_changes()
+                parts = []
+                if added:
+                    parts.append(f"Added {added} line{'s' if added != 1 else ''}")
+                if removed:
+                    parts.append(f"removed {removed} line{'s' if removed != 1 else ''}")
+                summary = ", ".join(parts) if parts else d.result
+                text.append(f"  └ {summary}", style="dim")
+            else:
+                icon = "✗" if d.is_error else "✓"
+                icon_style = "bold red" if d.is_error else "bold green"
+                text.append(f"  {icon} ", style=icon_style)
+                text.append(d.result, style="dim")
+
+        # Diff lines with line numbers and colored backgrounds
         for dl in d.diff_lines:
             text.append("\n")
             if dl.startswith("+"):
-                text.append(f"    {dl}", style="green")
+                # Added line: green background
+                text.append(f"    {dl}", style="green on #0a2e0a")
             elif dl.startswith("-"):
-                text.append(f"    {dl}", style="red")
+                # Removed line: red background
+                text.append(f"    {dl}", style="red on #2e0a0a")
             else:
+                # Context line
                 text.append(f"    {dl}", style="dim")
 
         return text

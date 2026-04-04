@@ -98,9 +98,9 @@ class TestToolBlock:
     def test_format_standard(self):
         block = ToolBlock.create("read_file", "{'path': '/src/main.py'}", "Read 45 lines", is_error=False)
         rendered = block.render_text()
-        assert "┌ read_file" in rendered
-        assert "Read 45 lines" in rendered
-        assert "✓" in rendered
+        assert "Read" in rendered
+        assert "/src/main.py" in rendered
+        assert "●" in rendered
 
     def test_format_error(self):
         block = ToolBlock.create("bash", "$ rm -rf /", "Permission denied", is_error=True)
@@ -110,7 +110,16 @@ class TestToolBlock:
     def test_format_bash(self):
         block = ToolBlock.create("bash", "ls -la", "total 42", is_error=False)
         rendered = block.render_text()
-        assert "$ ls -la" in rendered
+        assert "Bash" in rendered
+
+    def test_format_edit_with_diff(self):
+        block = ToolBlock.create(
+            "edit_file", "{'path': '/src/app.py'}", "Updated",
+            is_error=False, diff_lines=["-old line", "+new line", " context"],
+        )
+        rendered = str(block.render())
+        assert "Update" in rendered
+        assert "/src/app.py" in rendered
 
 
 class TestThinkingBlock:
