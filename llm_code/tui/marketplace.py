@@ -141,11 +141,23 @@ class MarketplaceBrowser(ModalScreen):
     def on_mount(self) -> None:
         self._update_selection()
 
+    def on_key(self, event) -> None:
+        """Intercept arrow keys before VerticalScroll consumes them."""
+        if event.key == "up":
+            self.action_cursor_up()
+            event.prevent_default()
+            event.stop()
+        elif event.key == "down":
+            self.action_cursor_down()
+            event.prevent_default()
+            event.stop()
+
     def _update_selection(self) -> None:
-        rows = self.query(ItemRow)
+        rows = list(self.query(ItemRow))
         for i, row in enumerate(rows):
             if i == self._cursor:
                 row.add_class("selected")
+                row.scroll_visible()
             else:
                 row.remove_class("selected")
 
