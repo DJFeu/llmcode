@@ -952,41 +952,103 @@ class LLMCodeTUI(App):
     _cmd_quit = _cmd_exit
 
     def _cmd_help(self, args: str) -> None:
-        chat = self.query_one(ChatScrollView)
-        lines = ["Available commands:"]
-        for cmd_name, desc in [
-            ("/help", "Show this help"),
-            ("/clear", "Clear conversation"),
-            ("/model <name>", "Switch model"),
-            ("/cost", "Token usage"),
-            ("/budget <n>", "Set token budget"),
-            ("/undo [list]", "Undo last file change"),
-            ("/cd <dir>", "Change directory"),
-            ("/config", "Show runtime config"),
-            ("/thinking [on|off|adaptive]", "Toggle thinking"),
-            ("/vim", "Toggle vim mode"),
-            ("/image <path> or Ctrl+I", "Attach image"),
-            ("/search <query>", "Search history"),
-            ("/index [rebuild]", "Project index"),
-            ("/session list|save", "Manage sessions"),
-            ("/skill", "Browse & manage skills"),
-            ("/plugin", "Browse & manage plugins"),
-            ("/mcp", "Browse & manage MCP servers"),
-            ("/memory [set|get|delete]", "Project memory"),
-            ("/cron [list|delete]", "Scheduled tasks"),
-            ("/task [list]", "Task lifecycle"),
-            ("/swarm [coordinate]", "Swarm coordination"),
-            ("/voice [on|off]", "Voice input"),
-            ("/ide [status|connect]", "IDE bridge"),
-            ("/vcr [start|stop|list]", "VCR recording"),
-            ("/checkpoint [save|list|resume]", "Session checkpoints"),
-            ("/hida", "HIDA classification"),
-            ("/lsp", "LSP status"),
-            ("/cancel", "Cancel generation"),
-            ("/exit /quit", "Quit"),
-        ]:
-            lines.append(f"  {cmd_name:<35s} {desc}")
-        chat.add_entry(AssistantText("\n".join(lines)))
+        from textual.screen import ModalScreen
+        from textual.containers import VerticalScroll
+        from textual.widgets import Static
+        from rich.text import Text as RichText
+
+        class HelpScreen(ModalScreen):
+            BINDINGS = [("escape", "dismiss", "Close")]
+
+            DEFAULT_CSS = """
+            HelpScreen { align: center middle; }
+            #help-box {
+                width: 90%;
+                height: 85%;
+                background: $surface;
+                border: round $accent;
+                padding: 1 2;
+            }
+            #help-footer {
+                dock: bottom;
+                height: 1;
+                color: $text-muted;
+                text-align: center;
+            }
+            """
+
+            def compose(self):
+                text = RichText()
+
+                # Title
+                text.append("llm-code", style="bold cyan")
+                text.append("  local LLM agent\n\n", style="dim")
+
+                # Description
+                text.append(
+                    "llm-code understands your codebase, makes edits with your "
+                    "permission, and executes commands — right from your terminal.\n\n",
+                    style="white",
+                )
+
+                # Shortcuts section
+                text.append("Shortcuts\n", style="bold white")
+
+                shortcuts = [
+                    ("! for bash mode", "double tap esc to clear input", "Ctrl+D to quit"),
+                    ("/ for commands", "Shift+Enter for multiline", "Ctrl+I to paste images"),
+                    ("/skill to browse skills", "Ctrl+O for verbose output", "/vim to toggle vim"),
+                    ("/plugin to browse plugins", "Page Up/Down to scroll", "/model to switch model"),
+                    ("/mcp for MCP servers", "Tab to autocomplete", "/undo to revert changes"),
+                ]
+                for row in shortcuts:
+                    for i, col in enumerate(row):
+                        style = "white" if i == 0 else "dim"
+                        text.append(f"{col:<35s}", style=style)
+                    text.append("\n")
+
+                text.append("\n")
+
+                # Commands section
+                text.append("Commands\n", style="bold white")
+
+                commands = [
+                    ("/help", "Show this help"),
+                    ("/clear", "Clear conversation"),
+                    ("/model <name>", "Switch model"),
+                    ("/cost", "Token usage & costs"),
+                    ("/budget <n>", "Set token budget"),
+                    ("/undo [list]", "Undo last file change"),
+                    ("/cd <dir>", "Change directory"),
+                    ("/config", "Show runtime config"),
+                    ("/thinking [on|off|adaptive]", "Toggle extended thinking"),
+                    ("/vim", "Toggle vim mode"),
+                    ("/image <path>", "Attach image"),
+                    ("/search <query>", "Search conversation"),
+                    ("/index [rebuild]", "Project index"),
+                    ("/session list|save", "Session management"),
+                    ("/skill", "Browse & manage skills"),
+                    ("/plugin", "Browse & manage plugins"),
+                    ("/mcp", "Browse & manage MCP servers"),
+                    ("/memory [set|get|delete]", "Project memory"),
+                    ("/cron [list|delete]", "Scheduled tasks"),
+                    ("/checkpoint [save|list|resume]", "Session checkpoints"),
+                    ("/vcr [start|stop|list]", "VCR recording"),
+                    ("/cancel", "Cancel generation"),
+                    ("/exit", "Quit"),
+                ]
+                for cmd_name, desc in commands:
+                    text.append(f"  {cmd_name:<35s}", style="cyan")
+                    text.append(f"{desc}\n", style="dim")
+
+                with VerticalScroll(id="help-box"):
+                    yield Static(text)
+                yield Static("Esc to close", id="help-footer")
+
+            def action_dismiss(self):
+                self.dismiss()
+
+        self.push_screen(HelpScreen())
 
     def _cmd_clear(self, args: str) -> None:
         self.query_one(ChatScrollView).remove_children()

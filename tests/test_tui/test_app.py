@@ -65,19 +65,15 @@ async def test_app_boots_and_accepts_input():
 
 @pytest.mark.asyncio
 async def test_slash_help():
-    """Integration test: /help command shows help text in chat."""
+    """Integration test: /help command opens help modal screen."""
     app = LLMCodeTUI()
     async with app.run_test() as pilot:
-        # Type /help and press enter
         input_bar = app.query_one(InputBar)
-        input_bar.value = "/help"
         input_bar.post_message(InputBar.Submitted("/help"))
         await pilot.pause()
 
-        # Verify help text appeared in chat
-        chat = app.query_one(ChatScrollView)
-        children = chat.query("AssistantText")
-        assert len(children) > 0
+        # Verify a modal screen was pushed (help dialog)
+        assert len(app.screen_stack) > 1
 
 
 @pytest.mark.asyncio
