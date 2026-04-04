@@ -165,34 +165,62 @@ class TurnSummary(Widget):
 
 
 class SpinnerLine(Widget):
-    """Animated spinner showing current phase: waiting/thinking/processing."""
+    """Animated spinner — color changes: orange (normal) → red (>60s)."""
 
-    DEFAULT_CSS = "SpinnerLine { height: 1; color: $accent; }"
+    DEFAULT_CSS = "SpinnerLine { height: auto; }"
 
     phase: reactive[str] = reactive("waiting")
     elapsed: reactive[float] = reactive(0.0)
+    tokens: reactive[int] = reactive(0)
     _frame: int = 0
 
     _LABELS = {
         "waiting": "Waiting for model…",
-        "thinking": "Thinking…",
+        "thinking": "Puttering…",
         "processing": "Processing…",
-        "running": "Running {tool}…",
+        "running": "Reading {tool}…",
+        "streaming": "Streaming…",
     }
 
     def __init__(self, tool_name: str = "") -> None:
         super().__init__()
         self._tool_name = tool_name
+        self._detail_lines: list[str] = []
+
+    def set_detail(self, lines: list[str]) -> None:
+        """Set detail lines shown below the spinner (e.g. file paths)."""
+        self._detail_lines = lines
+        self.refresh()
 
     def render_text(self) -> str:
         label = self._LABELS.get(self.phase, "Working…")
         if "{tool}" in label:
             label = label.replace("{tool}", self._tool_name)
-        frame = SPINNER_FRAMES[self._frame % len(SPINNER_FRAMES)]
-        return f"{frame} {label} ({self.elapsed:.1f}s)"
+        # Time formatting
+        if self.elapsed >= 60:
+            time_str = f"{self.elapsed / 60:.0f}m {self.elapsed % 60:.0f}s"
+        else:
+            time_str = f"{self.elapsed:.0f}s"
+        # Build status parts
+        parts = [time_str]
+        if self.tokens > 0:
+            parts.append(f"↑ {self.tokens:,} tokens")
+        if self.phase == "thinking":
+            parts.append("thinking")
+        meta = " · ".join(parts)
+        return f"{label} ({meta})"
 
     def render(self) -> RenderResult:
-        return Text(self.render_text(), style="blue")
+        # Color: orange normally, red when elapsed > 60s
+        color = "#cc3333" if self.elapsed > 60 else "#cc7a00"
+        prefix = "●" if self.phase == "running" else "*"
+        text = Text()
+        text.append(f"{prefix} ", style=f"bold {color}")
+        text.append(self.render_text(), style=color)
+        # Detail lines (e.g. tool file paths)
+        for line in self._detail_lines:
+            text.append(f"\n    └ {line}", style="dim")
+        return text
 
     def advance_frame(self) -> None:
         self._frame += 1

@@ -143,9 +143,18 @@ class TestSpinnerLine:
         s.phase = "waiting"
         assert "Waiting" in s.render_text()
         s.phase = "thinking"
-        assert "Thinking" in s.render_text()
+        assert "Puttering" in s.render_text()
         s.phase = "processing"
         assert "Processing" in s.render_text()
+
+    def test_color_changes_after_60s(self):
+        s = SpinnerLine()
+        s.elapsed = 30
+        rendered = s.render()
+        assert "#cc7a00" in str(rendered._spans[0].style) or "cc7a00" in str(rendered)
+        s.elapsed = 90
+        rendered = s.render()
+        assert "#cc3333" in str(rendered._spans[0].style) or "cc3333" in str(rendered)
 
 
 def _simulate_key(bar: "InputBar", key: str) -> None:
