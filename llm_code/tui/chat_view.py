@@ -66,6 +66,10 @@ class ChatScrollView(VerticalScroll):
     def on_scroll_up(self) -> None:
         self._auto_scroll = False
 
+    def pause_auto_scroll(self) -> None:
+        """Disable auto-scroll (e.g. when user pages up to read history)."""
+        self._auto_scroll = False
+
     def resume_auto_scroll(self) -> None:
         self._auto_scroll = True
         self.scroll_end(animate=False)

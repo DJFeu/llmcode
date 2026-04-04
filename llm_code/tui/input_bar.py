@@ -38,6 +38,10 @@ class InputBar(Widget):
     disabled: reactive[bool] = reactive(False)
     vim_mode: reactive[str] = reactive("")  # "" | "NORMAL" | "INSERT"
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._vim_engine = None
+
     class Submitted(Message):
         """Fired when user presses Enter."""
         def __init__(self, value: str) -> None:
@@ -47,6 +51,15 @@ class InputBar(Widget):
     class Cancelled(Message):
         """Fired when user presses Escape during generation."""
         pass
+
+    def watch_vim_mode(self) -> None:
+        if self.vim_mode:
+            from llm_code.vim.engine import VimEngine
+            if self._vim_engine is None:
+                self._vim_engine = VimEngine(self.value)
+        else:
+            self._vim_engine = None
+        self.refresh()
 
     def render(self) -> RenderResult:
         text = Text()
@@ -68,6 +81,7 @@ class InputBar(Widget):
                 self.post_message(self.Cancelled())
             return
 
+        # Tab autocomplete (before vim routing)
         if event.key == "tab" and self.value.startswith("/"):
             matches = [c for c in SLASH_COMMANDS if c.startswith(self.value)]
             if len(matches) == 1:
@@ -79,6 +93,23 @@ class InputBar(Widget):
                     self.value = prefix
             return  # Don't add tab character
 
+        # Vim mode routing
+        if self._vim_engine is not None:
+            from llm_code.vim.types import VimMode
+            key_str = event.key if len(event.key) > 1 else (event.character or event.key)
+            self._vim_engine.feed_key(key_str)
+            self.value = self._vim_engine.buffer
+            # Update mode display
+            self.vim_mode = "NORMAL" if self._vim_engine.mode == VimMode.NORMAL else "INSERT"
+            # Handle enter in insert mode for submission
+            if event.key == "enter" and self._vim_engine.mode == VimMode.INSERT:
+                if self.value.strip():
+                    self.post_message(self.Submitted(self.value))
+                    self.value = ""
+                    self._vim_engine.set_buffer("")
+            return
+
+        # Normal (non-vim) key handling
         if event.key == "enter":
             if self.value.strip():
                 self.post_message(self.Submitted(self.value))

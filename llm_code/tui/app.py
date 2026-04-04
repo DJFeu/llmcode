@@ -505,6 +505,7 @@ class LLMCodeTUI(App):
             return
 
         chat = self.query_one(ChatScrollView)
+        chat.resume_auto_scroll()  # Resume on new input
         chat.add_entry(UserMessage(text))
 
         if text.startswith("/"):
@@ -517,12 +518,39 @@ class LLMCodeTUI(App):
         pass  # Phase 2: cancel runtime
 
     def on_key(self, event: "events.Key") -> None:
-        """Handle single-key permission responses (y/n/a).
+        """Handle single-key permission responses (y/n/a), image paste, and scroll."""
+        # Ctrl+V — paste image from clipboard
+        if event.key == "ctrl+v":
+            try:
+                from llm_code.cli.image import capture_clipboard_image
+                img = capture_clipboard_image()
+                if img is not None:
+                    self._pending_images.append(img)
+                    chat = self.query_one(ChatScrollView)
+                    chat.add_entry(AssistantText("Image attached from clipboard"))
+                    event.prevent_default()
+                    event.stop()
+                    return
+            except (ImportError, FileNotFoundError, OSError):
+                pass  # No clipboard tool available
+            except Exception as exc:
+                logger.warning("Clipboard paste error: %s", exc)
 
-        When ``_permission_pending`` is True, y/n/a keys are intercepted at the
-        App level before reaching any widget.  The key press resolves the
-        runtime's ``_permission_future`` which unblocks ``_run_turn``.
-        """
+        # Page Up / Page Down for chat scrolling
+        if event.key == "pageup":
+            chat = self.query_one(ChatScrollView)
+            chat.scroll_up(animate=False)
+            chat.pause_auto_scroll()
+            event.prevent_default()
+            return
+        if event.key == "pagedown":
+            chat = self.query_one(ChatScrollView)
+            chat.scroll_down(animate=False)
+            chat.resume_auto_scroll()
+            event.prevent_default()
+            return
+
+        # Permission handling (y/n/a)
         if not self._permission_pending or self._runtime is None:
             return
         response_map = {"y": "allow", "n": "deny", "a": "always"}
