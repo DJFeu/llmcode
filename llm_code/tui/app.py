@@ -1041,18 +1041,18 @@ class LLMCodeTUI(App):
                 elif key == "left":
                     self._tab = max(0, self._tab - 1)
                     self._cursor = 0
-                    self._render()
+                    self._refresh_content()
                 elif key == "right":
                     self._tab = min(2, self._tab + 1)
                     self._cursor = 0
-                    self._render()
+                    self._refresh_content()
                 elif key == "up" and self._tab > 0:
                     self._cursor = max(0, self._cursor - 1)
-                    self._render()
+                    self._refresh_content()
                 elif key == "down" and self._tab > 0:
                     items = _COMMANDS if self._tab == 1 else _custom_cmds
                     self._cursor = min(len(items) - 1, self._cursor + 1)
-                    self._render()
+                    self._refresh_content()
                 elif key == "enter" and self._tab > 0:
                     items = _COMMANDS if self._tab == 1 else _custom_cmds
                     if 0 <= self._cursor < len(items):
@@ -1076,7 +1076,7 @@ class LLMCodeTUI(App):
                 text.append("\n\n")
                 return text
 
-            def _render(self) -> None:
+            def _refresh_content(self) -> None:
                 content = self.query_one("#help-content", Static)
                 from rich.console import Console
                 from io import StringIO
