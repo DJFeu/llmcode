@@ -721,6 +721,11 @@ class LLMCodeTUI(App):
         assistant_added = False
         thinking_buffer = ""
         thinking_start = time.monotonic()
+        # Client-side tag parsing for models (like Qwen) that emit
+        # <think> and <tool_call> as raw StreamTextDelta
+        _in_think_tag = False
+        _in_tool_call_tag = False
+        _raw_text_buffer = ""
 
         async def remove_spinner() -> None:
             """Remove spinner if it is currently mounted."""
@@ -742,11 +747,64 @@ class LLMCodeTUI(App):
                     chat.add_entry(spinner)
 
                 if isinstance(event, StreamTextDelta):
-                    if not assistant_added:
-                        await remove_spinner()
-                        chat.add_entry(assistant)
-                        assistant_added = True
-                    assistant.append_text(event.text)
+                    # Client-side parsing: buffer text and strip <think>/<tool_call> tags
+                    _raw_text_buffer += event.text
+
+                    # Handle <think> tags — route to thinking buffer
+                    while "<think>" in _raw_text_buffer and not _in_think_tag:
+                        before, _, _raw_text_buffer = _raw_text_buffer.partition("<think>")
+                        if before.strip():
+                            if not assistant_added:
+                                await remove_spinner()
+                                chat.add_entry(assistant)
+                                assistant_added = True
+                            assistant.append_text(before)
+                        _in_think_tag = True
+                        spinner.phase = "thinking"
+
+                    if _in_think_tag:
+                        if "</think>" in _raw_text_buffer:
+                            think_content, _, _raw_text_buffer = _raw_text_buffer.partition("</think>")
+                            thinking_buffer += think_content
+                            _in_think_tag = False
+                            # Show thinking block immediately
+                            if thinking_buffer.strip():
+                                elapsed_t = time.monotonic() - thinking_start
+                                tokens_t = len(thinking_buffer) // 4
+                                chat.add_entry(ThinkingBlock(thinking_buffer, elapsed_t, tokens_t))
+                                thinking_buffer = ""  # Reset so we don't double-show
+                        else:
+                            thinking_buffer += _raw_text_buffer
+                            _raw_text_buffer = ""
+                        continue
+
+                    # Handle <tool_call> tags — suppress (runtime handles tool execution)
+                    while "<tool_call>" in _raw_text_buffer and not _in_tool_call_tag:
+                        before, _, _raw_text_buffer = _raw_text_buffer.partition("<tool_call>")
+                        if before.strip():
+                            if not assistant_added:
+                                await remove_spinner()
+                                chat.add_entry(assistant)
+                                assistant_added = True
+                            assistant.append_text(before)
+                        _in_tool_call_tag = True
+
+                    if _in_tool_call_tag:
+                        if "</tool_call>" in _raw_text_buffer:
+                            _, _, _raw_text_buffer = _raw_text_buffer.partition("</tool_call>")
+                            _in_tool_call_tag = False
+                        else:
+                            _raw_text_buffer = ""
+                        continue
+
+                    # Normal text — output to assistant
+                    if _raw_text_buffer:
+                        if not assistant_added:
+                            await remove_spinner()
+                            chat.add_entry(assistant)
+                            assistant_added = True
+                        assistant.append_text(_raw_text_buffer)
+                        _raw_text_buffer = ""
                     chat.resume_auto_scroll()
 
                 elif isinstance(event, StreamThinkingDelta):
