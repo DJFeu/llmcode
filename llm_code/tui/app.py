@@ -1376,13 +1376,14 @@ class LLMCodeTUI(App):
             from llm_code.marketplace.builtin_registry import get_all_known_plugins
 
             items: list[MarketplaceItem] = []
+            installed_names: set[str] = set()
 
-            # Installed skills first
+            # Installed skills (from runtime)
             all_skills: list = []
             if self._skills:
                 all_skills = list(self._skills.auto_skills) + list(self._skills.command_skills)
-            installed_names = {s.name for s in all_skills}
             for s in all_skills:
+                installed_names.add(s.name)
                 tokens = len(s.content) // 4
                 mode = "auto" if s.auto else f"/{s.trigger}"
                 items.append(MarketplaceItem(
@@ -1395,7 +1396,26 @@ class LLMCodeTUI(App):
                     extra=mode,
                 ))
 
-            # Marketplace plugins with skills that are not installed
+            # Installed plugins (check filesystem for newly installed)
+            try:
+                from llm_code.marketplace.installer import PluginInstaller
+                pi = PluginInstaller(Path.home() / ".llm-code" / "plugins")
+                for p in pi.list_installed():
+                    if p.manifest.name not in installed_names:
+                        installed_names.add(p.manifest.name)
+                        items.append(MarketplaceItem(
+                            name=p.manifest.name,
+                            description=getattr(p.manifest, "description", ""),
+                            source="installed",
+                            installed=True,
+                            enabled=p.enabled,
+                            repo="",
+                            extra=f"v{p.manifest.version}",
+                        ))
+            except Exception:
+                pass
+
+            # Marketplace plugins with skills — not yet installed
             for p in get_all_known_plugins():
                 if p.get("skills", 0) > 0 and p["name"] not in installed_names:
                     items.append(MarketplaceItem(
