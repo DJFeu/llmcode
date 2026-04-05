@@ -815,7 +815,7 @@ class LLMCodeCLI:
                 ("/mcp", "Browse & manage MCP servers"),
                 ("/plugin", "Browse & manage plugins"),
                 ("/memory", "Project memory"),
-                ("/session list|save|switch", "Manage sessions"),
+                ("/session list|save|load|rename|delete|search|tag", "Manage sessions"),
                 ("/undo", "Undo last file change"),
                 ("/index", "Project index"),
                 ("/image <path>", "Attach image"),
@@ -926,16 +926,66 @@ class LLMCodeCLI:
         elif name == "session":
             parts = args.split(None, 1)
             subcmd = parts[0] if parts else "list"
-            if subcmd == "list":
+            rest = parts[1].strip() if len(parts) > 1 else ""
+
+            if subcmd in ("list", ""):
+                # Enhanced list with picker
                 sessions = self._session_manager.list_sessions()
                 if not sessions:
                     console.print("[dim]No saved sessions.[/]")
-                for s in sessions:
-                    console.print(f"  [dim]{s.id}  {s.project_path}  ({s.message_count} msgs)[/]")
-            elif subcmd == "save" and self._runtime:
-                path = self._session_manager.save(self._runtime.session)
-                self._fire_hook("session_save", {})
-                console.print(f"[dim]Session saved: {path}[/]")
+                else:
+                    current_path = str(self._runtime.session.project_path) if self._runtime else ""
+                    items = []
+                    for s in sessions:
+                        display_name = s.name or s.id
+                        desc = f"{s.project_path} ({s.message_count} msgs)"
+                        is_current = str(s.project_path) == current_path
+                        items.append((display_name, desc, is_current))
+                    selected = _interactive_pick("Sessions", items)
+                    if selected and self._runtime:
+                        self._session_load(selected)
+
+            elif subcmd == "save":
+                if self._runtime:
+                    session = self._runtime.session
+                    if rest:
+                        session = session.rename(rest)
+                        self._runtime._session = session
+                    path = self._session_manager.save(session)
+                    self._fire_hook("session_save", {})
+                    display = rest or session.id
+                    console.print(f"[green]Session saved: {display}[/]")
+
+            elif subcmd == "load":
+                if self._runtime:
+                    self._session_load(rest)
+
+            elif subcmd == "rename":
+                if not rest:
+                    console.print("[red]Usage: /session rename <name>[/]")
+                elif self._runtime:
+                    session = self._runtime.session.rename(rest)
+                    self._runtime._session = session
+                    self._session_manager.save(session)
+                    console.print(f"[green]Session renamed: {rest}[/]")
+
+            elif subcmd == "delete":
+                self._session_delete(rest)
+
+            elif subcmd == "search":
+                self._session_search(rest)
+
+            elif subcmd == "tag":
+                tags = rest.split()
+                if not tags:
+                    console.print("[red]Usage: /session tag <tag1> [tag2...][/]")
+                elif self._runtime:
+                    session = self._runtime.session.add_tags(*tags)
+                    self._runtime._session = session
+                    self._session_manager.save(session)
+                    console.print(f"[green]Tags added: {', '.join(tags)}[/]")
+            else:
+                console.print(f"[red]Unknown subcommand: {subcmd}. Use: list, save, load, rename, delete, search, tag[/]")
 
         elif name == "image":
             if args:
@@ -1234,6 +1284,61 @@ class LLMCodeCLI:
                 f"    [dim]L{r.line_number}[/]  {before}[bold yellow]{match}[/]{after}"
             )
         console.print()
+
+    def _session_load(self, identifier: str) -> None:
+        """Load a session by ID or name."""
+        if not identifier:
+            console.print("[red]Usage: /session load <id|name>[/]")
+            return
+        try:
+            session = self._session_manager.load(identifier)
+        except FileNotFoundError:
+            session = self._session_manager.get_by_name(identifier)
+            if session is None:
+                console.print(f"[red]Session not found: {identifier}[/]")
+                return
+        self._runtime._session = session
+        display = session.name or session.id
+        console.print(f"[green]Loaded session: {display} ({len(session.messages)} messages)[/]")
+
+    def _session_delete(self, identifier: str) -> None:
+        """Delete a session by ID or name."""
+        if not identifier:
+            console.print("[red]Usage: /session delete <id|name>[/]")
+            return
+        # Resolve name to id
+        session_id = identifier
+        try:
+            self._session_manager.load(identifier)
+        except FileNotFoundError:
+            found = self._session_manager.get_by_name(identifier)
+            if found is None:
+                console.print(f"[red]Session not found: {identifier}[/]")
+                return
+            session_id = found.id
+        try:
+            confirm = input("Delete session? (y/N): ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if confirm == "y":
+            self._session_manager.delete(session_id)
+            console.print(f"[green]Session deleted: {identifier}[/]")
+        else:
+            console.print("[dim]Cancelled.[/]")
+
+    def _session_search(self, query: str) -> None:
+        """Search sessions by name, tags, or path."""
+        if not query:
+            console.print("[red]Usage: /session search <query>[/]")
+            return
+        results = self._session_manager.search(query)
+        if not results:
+            console.print(f"[dim]No sessions matching '{query}'.[/]")
+            return
+        for s in results:
+            name = s.name or s.id
+            tags_str = f" [{', '.join(s.tags)}]" if s.tags else ""
+            console.print(f"  [bold]{name}[/]{tags_str}  [dim]· {s.project_path} ({s.message_count} msgs)[/]")
 
     def _handle_vcr_command(self, args: str) -> None:
         """Handle /vcr start|stop|list commands."""
@@ -2096,7 +2201,8 @@ class LLMCodeCLI:
             "/plugin", "/plugin install", "/plugin enable", "/plugin disable", "/plugin remove",
             "/memory", "/memory get", "/memory set", "/memory delete",
             "/memory consolidate", "/memory history",
-            "/session list", "/session save", "/session switch",
+            "/session list", "/session save", "/session load", "/session rename",
+            "/session delete", "/session search", "/session tag",
             "/undo", "/undo list", "/index", "/index rebuild",
             "/image", "/cost", "/budget", "/cd", "/lsp", "/vim", "/exit",
         ]
