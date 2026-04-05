@@ -115,11 +115,13 @@ class PermissionPolicy:
         allow_tools: frozenset[str] = frozenset(),
         deny_tools: frozenset[str] = frozenset(),
         deny_patterns: tuple[str, ...] = (),
+        rbac: object | None = None,  # RBACEngine, loosely typed to avoid circular import
     ) -> None:
         self._mode = mode
         self._allow_tools = allow_tools
         self._deny_tools = deny_tools
         self._deny_patterns = deny_patterns
+        self._rbac = rbac
 
         # Warn about conflicting or redundant rules at construction time
         for warning in detect_shadowed_rules(allow_tools, deny_tools, mode):
@@ -130,10 +132,12 @@ class PermissionPolicy:
         tool_name: str,
         required: PermissionLevel,
         effective_level: PermissionLevel | None = None,
+        identity: object | None = None,  # AuthIdentity
     ) -> PermissionOutcome:
         """Determine whether a tool invocation is authorized.
 
         Precedence:
+          0. RBAC check (if engine and identity provided) → DENY
           1. deny_tools / deny_patterns → DENY
           2. allow_tools → ALLOW
           3. AUTO_ACCEPT → always ALLOW
@@ -147,9 +151,15 @@ class PermissionPolicy:
                 level comparisons (e.g. after safety analysis determines the
                 actual operation is less or more privileged than declared).
                 Deny/allow lists still take full precedence.
+            identity: Optional AuthIdentity for RBAC checks.
         """
         # Use effective_level for comparisons when provided, else fall back to required
         level = effective_level if effective_level is not None else required
+
+        # 0. RBAC check (if engine and identity provided)
+        if self._rbac is not None and identity is not None:
+            if not self._rbac.is_allowed(identity, f"tool:{tool_name}"):
+                return PermissionOutcome.DENY
 
         # 1. Deny list and patterns always win
         if tool_name in self._deny_tools:
