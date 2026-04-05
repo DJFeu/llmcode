@@ -74,3 +74,25 @@ class TestParseSlashCommand:
     def test_slash_only(self):
         result = parse_slash_command("/")
         assert result is None
+
+
+class TestKeybindCommand:
+    def test_parse_keybind_no_args(self) -> None:
+        from llm_code.cli.commands import parse_slash_command
+        cmd = parse_slash_command("/keybind")
+        assert cmd is not None
+        assert cmd.name == "keybind"
+        assert cmd.args == ""
+
+    def test_parse_keybind_with_args(self) -> None:
+        from llm_code.cli.commands import parse_slash_command
+        cmd = parse_slash_command("/keybind submit ctrl+enter")
+        assert cmd is not None
+        assert cmd.name == "keybind"
+        assert cmd.args == "submit ctrl+enter"
+
+    def test_parse_keybind_reset(self) -> None:
+        from llm_code.cli.commands import parse_slash_command
+        cmd = parse_slash_command("/keybind reset")
+        assert cmd is not None
+        assert cmd.args == "reset"

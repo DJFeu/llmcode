@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from textual import events
 from textual.message import Message
@@ -10,12 +11,14 @@ from textual.widget import Widget
 from textual.app import RenderResult
 from rich.text import Text
 
+from llm_code.tui.keybindings import KeybindingManager, load_keybindings
+
 SLASH_COMMANDS = sorted([
     "/help", "/clear", "/exit", "/quit", "/model", "/cost", "/budget",
     "/undo", "/cd", "/config", "/thinking", "/vim", "/image", "/search",
     "/index", "/session", "/skill", "/plugin", "/mcp", "/memory",
     "/lsp", "/cancel", "/cron", "/task", "/swarm", "/voice", "/ide",
-    "/vcr", "/hida", "/checkpoint",
+    "/vcr", "/hida", "/checkpoint", "/keybind",
 ])
 
 # Commands that execute immediately (no arguments needed)
@@ -55,6 +58,7 @@ SLASH_COMMAND_DESCS: list[tuple[str, str]] = [
     ("/cancel", "Cancel generation"),
     ("/exit", "Quit"),
     ("/quit", "Quit"),
+    ("/keybind", "Rebind keys"),
 ]
 
 
@@ -95,6 +99,7 @@ class InputBar(Widget):
         self._show_dropdown = False
         self._dropdown_items = []
         self._dropdown_cursor = 0
+        self._keybindings = load_keybindings(Path.home() / ".llm-code" / "keybindings.json")
 
     class Submitted(Message):
         """Fired when user presses Enter."""
@@ -269,43 +274,56 @@ class InputBar(Widget):
                     self._vim_engine.set_buffer("")
             return
 
-        # Normal (non-vim) key handling
-        if event.key == "enter":
+        # Normal (non-vim) key handling — table lookup
+        chord_action = self._keybindings.chord_state.feed(event.key)
+        if chord_action is not None:
+            self._handle_action(chord_action)
+            return
+        if self._keybindings.chord_state.pending is not None:
+            return
+
+        action = self._keybindings.get_action(event.key)
+        if action:
+            self._handle_action(action)
+        elif event.character and len(event.character) == 1:
+            self.value = self.value[:self._cursor] + event.character + self.value[self._cursor:]
+            self._cursor += 1
+
+    def _handle_action(self, action: str) -> None:
+        """Execute a named keybinding action."""
+        if action == "submit":
             if self.value.strip():
                 self.post_message(self.Submitted(self.value))
                 self.value = ""
                 self._cursor = 0
-        elif event.key == "shift+enter":
+        elif action == "newline":
             self.value = self.value[:self._cursor] + "\n" + self.value[self._cursor:]
             self._cursor += 1
-        elif event.key == "backspace":
+        elif action == "delete_back":
             if self._cursor > 0:
                 self.value = self.value[:self._cursor - 1] + self.value[self._cursor:]
                 self._cursor -= 1
-        elif event.key == "delete":
+        elif action == "delete_forward":
             if self._cursor < len(self.value):
                 self.value = self.value[:self._cursor] + self.value[self._cursor + 1:]
-        elif event.key == "left":
+        elif action == "cursor_left":
             if self._cursor > 0:
                 self._cursor -= 1
                 self.refresh()
-        elif event.key == "right":
+        elif action == "cursor_right":
             if self._cursor < len(self.value):
                 self._cursor += 1
                 self.refresh()
-        elif event.key == "home":
+        elif action == "cursor_home":
             self._cursor = 0
             self.refresh()
-        elif event.key == "end":
+        elif action == "cursor_end":
             self._cursor = len(self.value)
             self.refresh()
-        elif event.key == "escape":
+        elif action == "cancel":
             self.value = ""
             self._cursor = 0
             self.post_message(self.Cancelled())
-        elif event.character and len(event.character) == 1:
-            self.value = self.value[:self._cursor] + event.character + self.value[self._cursor:]
-            self._cursor += 1
 
     def watch_value(self) -> None:
         # Keep cursor in bounds

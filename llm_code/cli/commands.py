@@ -34,6 +34,7 @@ KNOWN_COMMANDS = frozenset({
     "task",
     "checkpoint",
     "cancel",
+    "keybind",
 })
 
 
