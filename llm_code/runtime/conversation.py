@@ -287,6 +287,18 @@ class ConversationRuntime:
             )
             if _deferred_hint:
                 system_prompt = system_prompt + "\n\n" + _deferred_hint
+
+            # Inject repo map if available
+            try:
+                from pathlib import Path as _Path
+                from llm_code.runtime.repo_map import build_repo_map
+                if self._context and hasattr(self._context, "cwd"):
+                    repo_map = build_repo_map(_Path(self._context.cwd))
+                    compact = repo_map.to_compact(max_tokens=2000)
+                    if compact:
+                        system_prompt = system_prompt + "\n\n# Repo Map\n" + compact
+            except Exception:
+                pass  # Don't fail conversation for repo map issues
             self._fire_hook("prompt_compile", {"prompt_length": len(system_prompt), "tool_count": len(tool_defs)})
 
             # 3. Create request and stream

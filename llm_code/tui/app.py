@@ -1670,6 +1670,23 @@ class LLMCodeTUI(App):
         except Exception as exc:
             chat.add_entry(AssistantText(f"Memory error: {exc}"))
 
+    # ── Repo Map ─────────────────────────────────────────────────────
+
+    def _cmd_map(self, args: str) -> None:
+        """Show repo map."""
+        from llm_code.runtime.repo_map import build_repo_map
+        chat = self.query_one(ChatScrollView)
+
+        try:
+            repo_map = build_repo_map(self._cwd)
+            compact = repo_map.to_compact(max_tokens=2000)
+            if compact:
+                chat.add_entry(AssistantText(f"# Repo Map\n{compact}"))
+            else:
+                chat.add_entry(AssistantText("No source files found."))
+        except Exception as exc:
+            chat.add_entry(AssistantText(f"Error building repo map: {exc}"))
+
     # ── MCP ───────────────────────────────────────────────────────────
 
     def _cmd_mcp(self, args: str) -> None:
