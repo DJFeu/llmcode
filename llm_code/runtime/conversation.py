@@ -143,6 +143,7 @@ class ConversationRuntime:
         self._memory_store = memory_store
         self._task_manager = task_manager
         self._project_index = project_index
+        self.plan_mode: bool = False
         self._permission_future: asyncio.Future[str] | None = None
         self._has_attempted_reactive_compact = False
         self._consecutive_failures: int = 0
@@ -656,6 +657,19 @@ class ConversationRuntime:
             effective = PermissionLevel.FULL_ACCESS
         else:
             effective = tool.required_permission
+
+        # 4a. Plan mode — deny write tools
+        _PLAN_DENIED_TOOLS = frozenset({
+            "write_file", "edit_file", "bash", "git_commit", "git_push", "notebook_edit",
+        })
+        if self.plan_mode and call.name in _PLAN_DENIED_TOOLS:
+            self._fire_hook("tool_denied", {"tool_name": call.name})
+            yield ToolResultBlock(
+                tool_use_id=call.id,
+                content=f"Plan mode: read-only. Tool '{call.name}' denied. Use /plan to switch to Act mode.",
+                is_error=True,
+            )
+            return
 
         # 4. Permission check (deny/allow lists still take precedence via authorize)
         outcome = self._permissions.authorize(

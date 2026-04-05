@@ -58,6 +58,7 @@ class LLMCodeTUI(App):
         self._coordinator_tool_class = None
         self._permission_pending = False
         self._pending_images: list = []
+        self._plan_mode: bool = False
         self._voice_active = False
         self._vcr_recorder = None
 
@@ -793,6 +794,9 @@ class LLMCodeTUI(App):
 
         perm_widget = None
 
+        # Sync plan mode flag to runtime before each turn
+        self._runtime.plan_mode = self._plan_mode
+
         try:
             async for event in self._runtime.run_turn(user_input, images=images):
                 # Clean up permission widget from previous iteration
@@ -1023,6 +1027,7 @@ class LLMCodeTUI(App):
             ("/config", "Show runtime config"),
             ("/thinking", "Toggle extended thinking"),
             ("/vim", "Toggle vim mode"),
+            ("/plan", "Toggle plan/act mode (read-only when ON)"),
             ("/image", "Attach image"),
             ("/search", "Search conversation"),
             ("/index", "Project index"),
@@ -1315,6 +1320,24 @@ class LLMCodeTUI(App):
         if self._runtime and hasattr(self._runtime, '_cancel'):
             self._runtime._cancel()
         self.query_one(ChatScrollView).add_entry(AssistantText("(cancelled)"))
+
+    def _cmd_plan(self, args: str) -> None:
+        """Toggle plan/act mode."""
+        self._plan_mode = not self._plan_mode
+        status = self.query_one(StatusBar)
+        chat = self.query_one(ChatScrollView)
+        if self._plan_mode:
+            status.plan_mode = "PLAN"
+            chat.add_entry(AssistantText(
+                "Plan mode ON -- agent will explore and plan without making changes."
+            ))
+        else:
+            status.plan_mode = ""
+            chat.add_entry(AssistantText(
+                "Plan mode OFF -- back to normal."
+            ))
+        if self._runtime:
+            self._runtime.plan_mode = self._plan_mode
 
     def _cmd_search(self, args: str) -> None:
         chat = self.query_one(ChatScrollView)
