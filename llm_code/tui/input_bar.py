@@ -18,6 +18,39 @@ SLASH_COMMANDS = sorted([
     "/vcr", "/hida", "/checkpoint",
 ])
 
+SLASH_COMMAND_DESCS: list[tuple[str, str]] = [
+    ("/help", "Show help"),
+    ("/clear", "Clear conversation"),
+    ("/model", "Switch model"),
+    ("/cost", "Token usage"),
+    ("/budget", "Set token budget"),
+    ("/undo", "Undo last change"),
+    ("/cd", "Change directory"),
+    ("/config", "Runtime config"),
+    ("/thinking", "Toggle thinking"),
+    ("/vim", "Toggle vim mode"),
+    ("/image", "Attach image"),
+    ("/search", "Search history"),
+    ("/index", "Project index"),
+    ("/session", "Sessions"),
+    ("/skill", "Browse skills"),
+    ("/plugin", "Browse plugins"),
+    ("/mcp", "MCP servers"),
+    ("/memory", "Project memory"),
+    ("/cron", "Scheduled tasks"),
+    ("/task", "Task lifecycle"),
+    ("/swarm", "Swarm coordination"),
+    ("/voice", "Voice input"),
+    ("/ide", "IDE bridge"),
+    ("/vcr", "VCR recording"),
+    ("/checkpoint", "Checkpoints"),
+    ("/hida", "HIDA classification"),
+    ("/lsp", "LSP status"),
+    ("/cancel", "Cancel generation"),
+    ("/exit", "Quit"),
+    ("/quit", "Quit"),
+]
+
 
 class InputBar(Widget):
     """Bottom input bar: ❯ {text}"""
@@ -45,10 +78,17 @@ class InputBar(Widget):
     vim_mode: reactive[str] = reactive("")  # "" | "NORMAL" | "INSERT"
     pending_image_count: reactive[int] = reactive(0)
 
+    _show_dropdown: bool = False
+    _dropdown_items: list[tuple[str, str]] = []
+    _dropdown_cursor: int = 0
+
     def __init__(self) -> None:
         super().__init__()
         self._vim_engine = None
         self._cursor = 0  # cursor position within self.value
+        self._show_dropdown = False
+        self._dropdown_items = []
+        self._dropdown_cursor = 0
 
     class Submitted(Message):
         """Fired when user presses Enter."""
@@ -79,8 +119,30 @@ class InputBar(Widget):
         self._cursor += len(self._IMAGE_MARKER)
         self.pending_image_count += 1
 
+    def _update_dropdown(self) -> None:
+        """Recompute dropdown items based on current value."""
+        if self.value.startswith("/") and " " not in self.value:
+            query = self.value
+            self._dropdown_items = [
+                (cmd, desc) for cmd, desc in SLASH_COMMAND_DESCS if cmd.startswith(query)
+            ]
+            self._dropdown_cursor = min(self._dropdown_cursor, max(0, len(self._dropdown_items) - 1))
+            self._show_dropdown = len(self._dropdown_items) > 0
+        else:
+            self._dropdown_items = []
+            self._dropdown_cursor = 0
+            self._show_dropdown = False
+
     def render(self) -> RenderResult:
         text = Text()
+        # Render dropdown above prompt when active
+        if self._show_dropdown and self._dropdown_items:
+            visible = self._dropdown_items[:8]
+            for i, (cmd, desc) in enumerate(visible):
+                if i == self._dropdown_cursor:
+                    text.append(f"  > {cmd:<20s} {desc}\n", style="bold white on #3a3a5a")
+                else:
+                    text.append(f"    {cmd:<20s} {desc}\n", style="dim")
         if self.vim_mode == "NORMAL":
             text.append("[N] ", style="yellow bold")
         elif self.vim_mode == "INSERT":
@@ -134,7 +196,37 @@ class InputBar(Widget):
                 self.post_message(self.Cancelled())
             return
 
-        # Tab autocomplete (before vim routing)
+        # Dropdown navigation (when dropdown is visible)
+        if self._show_dropdown and self._dropdown_items:
+            if event.key == "up":
+                self._dropdown_cursor = (self._dropdown_cursor - 1) % min(len(self._dropdown_items), 8)
+                self.refresh()
+                event.prevent_default()
+                event.stop()
+                return
+            elif event.key == "down":
+                self._dropdown_cursor = (self._dropdown_cursor + 1) % min(len(self._dropdown_items), 8)
+                self.refresh()
+                event.prevent_default()
+                event.stop()
+                return
+            elif event.key in ("enter", "tab"):
+                selected_cmd = self._dropdown_items[self._dropdown_cursor][0]
+                self.value = selected_cmd + " "
+                self._cursor = len(self.value)
+                self._show_dropdown = False
+                self._dropdown_items = []
+                self._dropdown_cursor = 0
+                self.refresh()
+                return
+            elif event.key == "escape":
+                self._show_dropdown = False
+                self._dropdown_items = []
+                self._dropdown_cursor = 0
+                self.refresh()
+                return
+
+        # Tab autocomplete (before vim routing) — fallback when dropdown not shown
         if event.key == "tab" and self.value.startswith("/"):
             matches = [c for c in SLASH_COMMANDS if c.startswith(self.value)]
             if len(matches) == 1:
@@ -205,4 +297,5 @@ class InputBar(Widget):
         # Keep cursor in bounds
         if self._cursor > len(self.value):
             self._cursor = len(self.value)
+        self._update_dropdown()
         self.refresh()
