@@ -225,11 +225,12 @@ class TestWebSearchToolExecute:
         mock_backend.search.assert_called_once_with("test", max_results=10)
 
     def test_execute_backend_exception_returns_error(self) -> None:
+        # When a specific (non-auto) backend raises, the tool returns an error.
         mock_backend = MagicMock()
         mock_backend.search.side_effect = Exception("network error")
 
         with patch("llm_code.tools.web_search.create_backend", return_value=mock_backend):
-            result = self.tool.execute({"query": "test"})
+            result = self.tool.execute({"query": "test", "backend": "duckduckgo"})
 
         assert result.is_error is True
 

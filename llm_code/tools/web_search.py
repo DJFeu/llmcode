@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from llm_code.tools.base import PermissionLevel, Tool, ToolResult
 from llm_code.tools.search_backends import SearchResult, create_backend
 
-_VALID_BACKENDS = ("auto", "duckduckgo", "tavily", "searxng")
+_VALID_BACKENDS = ("auto", "duckduckgo", "brave", "tavily", "searxng")
 
 
 class WebSearchInput(BaseModel):
@@ -30,7 +30,7 @@ class WebSearchTool(Tool):
     def description(self) -> str:
         return (
             "Search the web for information. "
-            "Supports DuckDuckGo (default), Tavily, and SearXNG backends. "
+            "Supports DuckDuckGo (default), Brave, Tavily, and SearXNG backends. "
             "Returns ranked results with titles, URLs, and snippets."
         )
 
@@ -99,7 +99,11 @@ class WebSearchTool(Tool):
 
         # Build kwargs for backends that need configuration
         kwargs: dict = {}
-        if backend_name == "tavily" and cfg is not None:
+        if backend_name == "brave" and cfg is not None:
+            api_key_env = getattr(cfg, "brave_api_key_env", "BRAVE_API_KEY")
+            api_key = os.environ.get(api_key_env, "")
+            kwargs["api_key"] = api_key
+        elif backend_name == "tavily" and cfg is not None:
             api_key_env = getattr(cfg, "tavily_api_key_env", "TAVILY_API_KEY")
             api_key = os.environ.get(api_key_env, "")
             kwargs["api_key"] = api_key
@@ -199,22 +203,6 @@ class WebSearchTool(Tool):
         max_results = int(args.get("max_results", 10))
         backend_arg = str(args.get("backend", "auto"))
 
-        try:
-            backend, _backend_name = self._resolve_backend(backend_arg)
-        except (ValueError, Exception) as exc:
-            return ToolResult(
-                output=f"Error: Failed to initialize search backend: {exc}",
-                is_error=True,
-            )
-
-        try:
-            results = backend.search(query, max_results=max_results)
-        except Exception as exc:
-            return ToolResult(
-                output=f"Error: Search failed: {exc}",
-                is_error=True,
-            )
-
         # Apply domain filtering from config
         cfg = self._get_web_search_config()
         allowlist: tuple[str, ...] = ()
@@ -223,11 +211,70 @@ class WebSearchTool(Tool):
             allowlist = getattr(cfg, "domain_allowlist", ())
             denylist = getattr(cfg, "domain_denylist", ())
 
-        results = self._filter_results(
-            results,
-            domain_allowlist=allowlist,
-            domain_denylist=denylist,
-        )
+        if backend_arg == "auto":
+            # Fallback chain: try each configured backend until one returns results
+            results = self._search_with_fallback(query, max_results, cfg)
+        else:
+            try:
+                backend, _name = self._resolve_backend(backend_arg)
+            except (ValueError, Exception) as exc:
+                return ToolResult(
+                    output=f"Error: Failed to initialize search backend: {exc}",
+                    is_error=True,
+                )
+            try:
+                results = backend.search(query, max_results=max_results)
+            except Exception as exc:
+                return ToolResult(
+                    output=f"Error: Search failed: {exc}",
+                    is_error=True,
+                )
 
+        results = self._filter_results(results, domain_allowlist=allowlist, domain_denylist=denylist)
         output = self._format_results(query, results)
         return ToolResult(output=output, is_error=False)
+
+    def _search_with_fallback(
+        self, query: str, max_results: int, cfg: object | None,
+    ) -> tuple[SearchResult, ...]:
+        """Try backends in order until one returns results.
+
+        Fallback order: duckduckgo -> brave -> searxng -> tavily.
+        Only backends that are configured (have API keys / base_url set) are tried.
+        """
+        # Build ordered list of (backend_name, kwargs) to try
+        chain: list[tuple[str, dict]] = []
+
+        # 1. DuckDuckGo (always available, no config needed)
+        chain.append(("duckduckgo", {}))
+
+        # 2. Brave (if API key configured)
+        if cfg is not None:
+            brave_key_env = getattr(cfg, "brave_api_key_env", "BRAVE_API_KEY")
+            brave_key = os.environ.get(brave_key_env, "")
+            if brave_key:
+                chain.append(("brave", {"api_key": brave_key}))
+
+        # 3. SearXNG (if base_url configured)
+        if cfg is not None:
+            searxng_url = getattr(cfg, "searxng_base_url", "")
+            if searxng_url:
+                chain.append(("searxng", {"base_url": searxng_url}))
+
+        # 4. Tavily (if API key configured)
+        if cfg is not None:
+            tavily_key_env = getattr(cfg, "tavily_api_key_env", "TAVILY_API_KEY")
+            tavily_key = os.environ.get(tavily_key_env, "")
+            if tavily_key:
+                chain.append(("tavily", {"api_key": tavily_key}))
+
+        for backend_name, kwargs in chain:
+            try:
+                backend = create_backend(backend_name, **kwargs)
+                results = backend.search(query, max_results=max_results)
+                if results:
+                    return results
+            except Exception:
+                continue
+
+        return ()

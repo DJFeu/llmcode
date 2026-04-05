@@ -82,6 +82,7 @@ class WebFetchConfig:
 @dataclass(frozen=True)
 class WebSearchConfig:
     default_backend: str = "duckduckgo"
+    brave_api_key_env: str = "BRAVE_API_KEY"
     tavily_api_key_env: str = "TAVILY_API_KEY"
     searxng_base_url: str = ""
     max_results: int = 10
