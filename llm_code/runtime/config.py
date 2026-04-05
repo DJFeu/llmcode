@@ -70,6 +70,25 @@ class IDEConfig:
 
 
 @dataclass(frozen=True)
+class WebFetchConfig:
+    default_renderer: str = "default"
+    browser_timeout: float = 30.0
+    cache_ttl: float = 900.0
+    cache_max_entries: int = 50
+    max_length: int = 50_000
+
+
+@dataclass(frozen=True)
+class WebSearchConfig:
+    default_backend: str = "duckduckgo"
+    tavily_api_key_env: str = "TAVILY_API_KEY"
+    searxng_base_url: str = ""
+    max_results: int = 10
+    domain_allowlist: tuple[str, ...] = ()
+    domain_denylist: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class SwarmConfig:
     enabled: bool = False
     backend: str = "auto"       # "auto" | "tmux" | "subprocess"
@@ -131,6 +150,8 @@ class RuntimeConfig:
     vcr: VCRConfig = field(default_factory=VCRConfig)
     hida: HidaConfig = field(default_factory=HidaConfig)
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
+    web_fetch: WebFetchConfig = field(default_factory=WebFetchConfig)
+    web_search: WebSearchConfig = field(default_factory=WebSearchConfig)
     max_budget_usd: float | None = None
 
 
