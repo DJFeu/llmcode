@@ -61,6 +61,8 @@ class LLMCodeTUI(App):
         self._plan_mode: bool = False
         self._voice_active = False
         self._vcr_recorder = None
+        self._interrupt_pending: bool = False
+        self._last_interrupt_time: float = 0.0
 
     def compose(self) -> ComposeResult:
         yield HeaderBar(id="header-bar")
@@ -83,6 +85,13 @@ class LLMCodeTUI(App):
             status.is_local = "localhost" in url or "127.0.0.1" in url or "0.0.0.0" in url
         # Focus input bar so it receives key events
         self.query_one(InputBar).focus()
+        # Register SIGINT handler for clean interrupt (Ctrl+C)
+        import signal
+
+        def _sigint_handler(signum, frame):
+            self.call_from_thread(self._handle_interrupt)
+
+        signal.signal(signal.SIGINT, _sigint_handler)
         # Start MCP servers async
         self.run_worker(self._init_mcp(), name="init_mcp")
 
@@ -167,6 +176,49 @@ class LLMCodeTUI(App):
             return r.stdout.strip() if r.returncode == 0 else ""
         except Exception:
             return ""
+
+    def _handle_interrupt(self) -> None:
+        """Handle Ctrl+C: first press saves checkpoint, second force exits."""
+        import time as _time
+
+        now = _time.monotonic()
+        status = self.query_one(StatusBar)
+        chat = self.query_one(ChatScrollView)
+
+        # If not streaming, exit immediately
+        if not status.is_streaming:
+            self.exit()
+            return
+
+        # Second Ctrl+C within 2 seconds: force exit
+        if self._interrupt_pending and (now - self._last_interrupt_time) < 2.0:
+            chat.add_entry(AssistantText("Goodbye."))
+            self.exit()
+            return
+
+        # First Ctrl+C while streaming: save checkpoint and prompt
+        self._interrupt_pending = True
+        self._last_interrupt_time = now
+
+        session_id = ""
+        if self._runtime is not None:
+            try:
+                from llm_code.runtime.checkpoint_recovery import CheckpointRecovery
+                recovery = CheckpointRecovery(
+                    Path.home() / ".llm-code" / "checkpoints"
+                )
+                path = recovery.save_checkpoint(self._runtime.session)
+                session_id = self._runtime.session.id
+            except Exception:
+                pass
+
+        resume_hint = (
+            f"\n  Resume with: llm-code --resume {session_id}" if session_id else ""
+        )
+        chat.add_entry(AssistantText(
+            f"\u23f8 Session paused and saved.{resume_hint}\n"
+            f"  Press Ctrl+C again to quit immediately."
+        ))
 
     def _init_runtime(self) -> None:
         """Initialize the conversation runtime."""
