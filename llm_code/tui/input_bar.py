@@ -18,7 +18,7 @@ SLASH_COMMANDS = sorted([
     "/undo", "/cd", "/config", "/thinking", "/vim", "/image", "/search",
     "/index", "/session", "/skill", "/plugin", "/mcp", "/memory",
     "/lsp", "/cancel", "/cron", "/task", "/swarm", "/voice", "/ide",
-    "/vcr", "/hida", "/checkpoint", "/keybind",
+    "/vcr", "/hida", "/checkpoint", "/keybind", "/audit",
 ])
 
 # Commands that execute immediately (no arguments needed)
@@ -59,6 +59,7 @@ SLASH_COMMAND_DESCS: list[tuple[str, str]] = [
     ("/exit", "Quit"),
     ("/quit", "Quit"),
     ("/keybind", "Rebind keys"),
+    ("/audit", "Audit log"),
 ]
 
 

@@ -96,3 +96,18 @@ class TestKeybindCommand:
         cmd = parse_slash_command("/keybind reset")
         assert cmd is not None
         assert cmd.args == "reset"
+
+
+class TestAuditCommand:
+    def test_parse_audit_no_args(self) -> None:
+        from llm_code.cli.commands import parse_slash_command
+        cmd = parse_slash_command("/audit")
+        assert cmd is not None
+        assert cmd.name == "audit"
+        assert cmd.args == ""
+
+    def test_parse_audit_search(self) -> None:
+        from llm_code.cli.commands import parse_slash_command
+        cmd = parse_slash_command("/audit search bash")
+        assert cmd is not None
+        assert cmd.args == "search bash"
