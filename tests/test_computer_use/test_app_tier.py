@@ -91,3 +91,73 @@ class TestAppTierDenied:
     def test_hint(self) -> None:
         err = AppTierDenied(app="Chrome", tier="read", action="type", hint="Use browser MCP")
         assert err.hint == "Use browser MCP"
+
+
+from unittest.mock import patch
+
+
+class TestCoordinatorTierEnforcement:
+    @patch("llm_code.computer_use.coordinator.get_frontmost_app_sync")
+    @patch("llm_code.computer_use.coordinator.take_screenshot_base64", return_value="IMG")
+    @patch("llm_code.computer_use.coordinator.mouse_click")
+    def test_click_blocked_on_read_tier(self, _click, _ss, mock_app) -> None:
+        from llm_code.computer_use.coordinator import ComputerUseCoordinator
+        from llm_code.runtime.config import ComputerUseConfig
+
+        mock_app.return_value = AppInfo(name="Chrome", bundle_id="com.google.Chrome", pid=1)
+        config = ComputerUseConfig(enabled=True, screenshot_delay=0.0, app_tiers=())
+        coord = ComputerUseCoordinator(config)
+        with pytest.raises(AppTierDenied, match="read"):
+            coord.click_and_observe(100, 200)
+
+    @patch("llm_code.computer_use.coordinator.get_frontmost_app_sync")
+    @patch("llm_code.computer_use.coordinator.take_screenshot_base64", return_value="IMG")
+    @patch("llm_code.computer_use.coordinator.keyboard_type")
+    def test_type_blocked_on_click_tier(self, _type, _ss, mock_app) -> None:
+        from llm_code.computer_use.coordinator import ComputerUseCoordinator
+        from llm_code.runtime.config import ComputerUseConfig
+
+        mock_app.return_value = AppInfo(name="Terminal", bundle_id="com.apple.Terminal", pid=1)
+        config = ComputerUseConfig(enabled=True, screenshot_delay=0.0, app_tiers=())
+        coord = ComputerUseCoordinator(config)
+        with pytest.raises(AppTierDenied, match="click"):
+            coord.type_and_observe("hello")
+
+    @patch("llm_code.computer_use.coordinator.get_frontmost_app_sync")
+    @patch("llm_code.computer_use.coordinator.take_screenshot_base64", return_value="IMG")
+    @patch("llm_code.computer_use.coordinator.mouse_click")
+    def test_click_allowed_on_full_tier(self, _click, _ss, mock_app) -> None:
+        from llm_code.computer_use.coordinator import ComputerUseCoordinator
+        from llm_code.runtime.config import ComputerUseConfig
+
+        mock_app.return_value = AppInfo(name="Notes", bundle_id="com.apple.Notes", pid=1)
+        config = ComputerUseConfig(enabled=True, screenshot_delay=0.0, app_tiers=())
+        coord = ComputerUseCoordinator(config)
+        result = coord.click_and_observe(100, 200)
+        assert result["screenshot_base64"] == "IMG"
+
+    @patch("llm_code.computer_use.coordinator.get_frontmost_app_sync")
+    @patch("llm_code.computer_use.coordinator.take_screenshot_base64", return_value="IMG")
+    def test_screenshot_allowed_on_read_tier(self, _ss, mock_app) -> None:
+        from llm_code.computer_use.coordinator import ComputerUseCoordinator
+        from llm_code.runtime.config import ComputerUseConfig
+
+        mock_app.return_value = AppInfo(name="Chrome", bundle_id="com.google.Chrome", pid=1)
+        config = ComputerUseConfig(enabled=True, screenshot_delay=0.0, app_tiers=())
+        coord = ComputerUseCoordinator(config)
+        result = coord.screenshot()
+        assert "screenshot_base64" in result
+
+    @patch("llm_code.computer_use.coordinator.get_frontmost_app_sync")
+    @patch("llm_code.computer_use.coordinator.take_screenshot_base64", return_value="IMG")
+    @patch("llm_code.computer_use.coordinator.mouse_click")
+    def test_user_tier_override(self, _click, _ss, mock_app) -> None:
+        from llm_code.computer_use.coordinator import ComputerUseCoordinator
+        from llm_code.runtime.config import ComputerUseConfig
+
+        mock_app.return_value = AppInfo(name="Chrome", bundle_id="com.google.Chrome", pid=1)
+        user_tier = ({"pattern": "com.google.Chrome*", "tier": "full"},)
+        config = ComputerUseConfig(enabled=True, screenshot_delay=0.0, app_tiers=user_tier)
+        coord = ComputerUseCoordinator(config)
+        result = coord.click_and_observe(100, 200)
+        assert result["screenshot_base64"] == "IMG"

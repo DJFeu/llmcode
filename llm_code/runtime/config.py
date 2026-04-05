@@ -61,6 +61,7 @@ class VoiceConfig:
 class ComputerUseConfig:
     enabled: bool = False
     screenshot_delay: float = 0.5
+    app_tiers: tuple[dict, ...] = ()  # user-defined tier overrides
 
 
 @dataclass(frozen=True)
@@ -314,6 +315,7 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
     computer_use = ComputerUseConfig(
         enabled=computer_use_raw.get("enabled", False),
         screenshot_delay=computer_use_raw.get("screenshot_delay", 0.5),
+        app_tiers=tuple(computer_use_raw.get("app_tiers", [])),
     )
 
     ide_raw = data.get("ide", {})
