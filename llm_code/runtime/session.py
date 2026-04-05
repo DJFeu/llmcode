@@ -234,3 +234,35 @@ class SessionManager:
             except (json.JSONDecodeError, KeyError):
                 continue
         return summaries
+
+    def rename(self, session_id: str, name: str) -> Session:
+        """Rename a session and persist the change; returns updated Session."""
+        session = self.load(session_id)
+        renamed = session.rename(name)
+        self.save(renamed)
+        return renamed
+
+    def delete(self, session_id: str) -> bool:
+        """Delete a session file; returns True if deleted, False if not found."""
+        path = self._session_dir / f"{session_id}.json"
+        if not path.exists():
+            return False
+        path.unlink()
+        return True
+
+    def search(self, query: str) -> list[SessionSummary]:
+        """Return summaries whose name, project path, or tags contain query (case-insensitive)."""
+        query_lower = query.lower()
+        return [
+            s for s in self.list_sessions()
+            if query_lower in s.name.lower()
+            or query_lower in str(s.project_path).lower()
+            or any(query_lower in t.lower() for t in s.tags)
+        ]
+
+    def get_by_name(self, name: str) -> Session | None:
+        """Return the first Session whose name matches exactly, or None."""
+        for summary in self.list_sessions():
+            if summary.name == name:
+                return self.load(summary.id)
+        return None

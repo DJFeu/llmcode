@@ -50,3 +50,69 @@ class TestSessionNaming:
         s2 = Session.from_dict(d)
         assert s2.name == ""
         assert s2.tags == ()
+
+
+from llm_code.runtime.session import SessionManager
+
+
+class TestSessionManagerExtensions:
+    def test_rename(self, tmp_path):
+        mgr = SessionManager(tmp_path)
+        s = Session.create(Path("/tmp"))
+        mgr.save(s)
+        renamed = mgr.rename(s.id, "my-session")
+        assert renamed.name == "my-session"
+        loaded = mgr.load(s.id)
+        assert loaded.name == "my-session"
+
+    def test_delete(self, tmp_path):
+        mgr = SessionManager(tmp_path)
+        s = Session.create(Path("/tmp"))
+        mgr.save(s)
+        assert mgr.delete(s.id) is True
+        with pytest.raises(FileNotFoundError):
+            mgr.load(s.id)
+
+    def test_delete_nonexistent(self, tmp_path):
+        mgr = SessionManager(tmp_path)
+        assert mgr.delete("nonexistent") is False
+
+    def test_search_by_name(self, tmp_path):
+        mgr = SessionManager(tmp_path)
+        s1 = Session.create(Path("/tmp")).rename("auth-refactor")
+        s2 = Session.create(Path("/tmp")).rename("perf-tuning")
+        mgr.save(s1)
+        mgr.save(s2)
+        results = mgr.search("auth")
+        assert len(results) == 1
+        assert results[0].name == "auth-refactor"
+
+    def test_search_by_path(self, tmp_path):
+        mgr = SessionManager(tmp_path)
+        s1 = Session.create(Path("/work/myapp"))
+        s2 = Session.create(Path("/work/other"))
+        mgr.save(s1)
+        mgr.save(s2)
+        results = mgr.search("myapp")
+        assert len(results) == 1
+
+    def test_search_by_tag(self, tmp_path):
+        mgr = SessionManager(tmp_path)
+        s1 = Session.create(Path("/tmp")).add_tags("urgent")
+        s2 = Session.create(Path("/tmp")).add_tags("low-priority")
+        mgr.save(s1)
+        mgr.save(s2)
+        results = mgr.search("urgent")
+        assert len(results) == 1
+
+    def test_get_by_name(self, tmp_path):
+        mgr = SessionManager(tmp_path)
+        s = Session.create(Path("/tmp")).rename("my-session")
+        mgr.save(s)
+        found = mgr.get_by_name("my-session")
+        assert found is not None
+        assert found.id == s.id
+
+    def test_get_by_name_not_found(self, tmp_path):
+        mgr = SessionManager(tmp_path)
+        assert mgr.get_by_name("nope") is None
