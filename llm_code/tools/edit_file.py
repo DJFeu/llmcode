@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pathlib
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
@@ -15,6 +16,50 @@ if TYPE_CHECKING:
     from llm_code.runtime.overlay import OverlayFS
 
 _MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB
+
+
+@dataclass(frozen=True)
+class EditApplyResult:
+    """Result of applying a search-and-replace edit to content."""
+
+    success: bool
+    new_content: str
+    replaced: int = 0
+    fuzzy_match: bool = False
+    error: str = ""
+
+
+def _apply_edit(content: str, old: str, new: str, replace_all: bool = False) -> EditApplyResult:
+    """Apply search-and-replace to content string. Returns EditApplyResult."""
+    # --- Exact match ---
+    count = content.count(old)
+
+    if count == 0:
+        # --- Fuzzy match: quote normalization + trailing whitespace ---
+        norm_content = normalize_for_match(content)
+        norm_old = normalize_for_match(old)
+        norm_count = norm_content.count(norm_old)
+
+        if norm_count == 0:
+            return EditApplyResult(success=False, new_content=content, error=f"Text not found: {old!r}")
+
+        if replace_all:
+            new_content = _fuzzy_replace_all(content, norm_content, norm_old, new)
+            replaced = norm_count
+        else:
+            new_content = _fuzzy_replace_first(content, norm_content, norm_old, new)
+            replaced = 1
+
+        return EditApplyResult(success=True, new_content=new_content, replaced=replaced, fuzzy_match=True)
+
+    if replace_all:
+        new_content = content.replace(old, new)
+        replaced = count
+    else:
+        new_content = content.replace(old, new, 1)
+        replaced = 1
+
+    return EditApplyResult(success=True, new_content=new_content, replaced=replaced)
 
 
 class EditFileInput(BaseModel):
@@ -93,42 +138,15 @@ class EditFileTool(Tool):
                 return ToolResult(output=f"File not found: {path}", is_error=True)
             mtime_before = None
 
-        # --- Exact match ---
-        fuzzy_match = False
-        count = content.count(old)
-
-        if count == 0:
-            # --- Fuzzy match: quote normalization + trailing whitespace ---
-            norm_content = normalize_for_match(content)
-            norm_old = normalize_for_match(old)
-            norm_count = norm_content.count(norm_old)
-
-            if norm_count == 0:
-                return ToolResult(
-                    output=f"Text not found in {path}: {old!r}",
-                    is_error=True,
-                )
-
-            # Reconstruct replacement on the normalised strings, then map back
-            # to the original content by replacing via the normalised proxy.
-            # Strategy: replace in normalised content, then re-apply to original
-            # by finding the original span that corresponds to each normalised match.
-            fuzzy_match = True
-            count = norm_count
-
-            if replace_all:
-                new_content = _fuzzy_replace_all(content, norm_content, norm_old, new)
-                replaced = count
-            else:
-                new_content = _fuzzy_replace_first(content, norm_content, norm_old, new)
-                replaced = 1
-        else:
-            if replace_all:
-                new_content = content.replace(old, new)
-                replaced = count
-            else:
-                new_content = content.replace(old, new, 1)
-                replaced = 1
+        result = _apply_edit(content, old, new, replace_all)
+        if not result.success:
+            return ToolResult(
+                output=f"Text not found in {path}: {old!r}",
+                is_error=True,
+            )
+        new_content = result.new_content
+        replaced = result.replaced
+        fuzzy_match = result.fuzzy_match
 
         # --- mtime conflict check (real FS only, before write) ---
         if overlay is None and mtime_before is not None:
