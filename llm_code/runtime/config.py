@@ -126,6 +126,25 @@ class TelemetryConfig:
 
 
 @dataclass(frozen=True)
+class CompressorConfig:
+    llm_summarize: bool = False
+    summarize_model: str = ""
+    max_summary_tokens: int = 1000
+
+
+@dataclass(frozen=True)
+class BashRule:
+    pattern: str = ""
+    action: str = "confirm"  # "allow" | "confirm" | "block"
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class BashRulesConfig:
+    rules: tuple[BashRule, ...] = ()
+
+
+@dataclass(frozen=True)
 class RuntimeConfig:
     model: str = ""
     provider_base_url: str | None = None
@@ -163,6 +182,8 @@ class RuntimeConfig:
     web_fetch: WebFetchConfig = field(default_factory=WebFetchConfig)
     web_search: WebSearchConfig = field(default_factory=WebSearchConfig)
     max_budget_usd: float | None = None
+    compressor: CompressorConfig = field(default_factory=CompressorConfig)
+    bash_rules: BashRulesConfig = field(default_factory=BashRulesConfig)
 
 
 class ConfigSchema(BaseModel):
@@ -184,6 +205,8 @@ class ConfigSchema(BaseModel):
     temperature: float = 0.7
     compact_after_tokens: int = 80000
     native_tools: bool = True
+    compressor: dict = {}
+    bash_rules: list = []
 
     @field_validator("temperature")
     @classmethod
