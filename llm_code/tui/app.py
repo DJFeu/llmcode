@@ -1028,6 +1028,7 @@ class LLMCodeTUI(App):
             ("/thinking", "Toggle extended thinking"),
             ("/vim", "Toggle vim mode"),
             ("/plan", "Toggle plan/act mode (read-only when ON)"),
+            ("/dump", "Dump codebase to .llm-code/dump.txt for external LLM use"),
             ("/image", "Attach image"),
             ("/search", "Search conversation"),
             ("/index", "Project index"),
@@ -1338,6 +1339,36 @@ class LLMCodeTUI(App):
             ))
         if self._runtime:
             self._runtime.plan_mode = self._plan_mode
+
+    def _cmd_dump(self, args: str) -> None:
+        """Dump codebase for external LLM use (DAFC pattern)."""
+        import asyncio
+        asyncio.ensure_future(self._run_dump(args))
+
+    async def _run_dump(self, args: str) -> None:
+        from llm_code.tools.dump import dump_codebase
+        chat = self.query_one(ChatScrollView)
+
+        max_files = 200
+        if args.strip().isdigit():
+            max_files = int(args.strip())
+
+        result = dump_codebase(self._cwd, max_files=max_files)
+
+        if result.file_count == 0:
+            chat.add_entry(AssistantText("No source files found to dump."))
+            return
+
+        # Write to file
+        dump_path = self._cwd / ".llm-code" / "dump.txt"
+        dump_path.parent.mkdir(parents=True, exist_ok=True)
+        dump_path.write_text(result.text, encoding="utf-8")
+
+        chat.add_entry(AssistantText(
+            f"Dumped {result.file_count} files "
+            f"({result.total_lines:,} lines, ~{result.estimated_tokens:,} tokens)\n"
+            f"Saved to: {dump_path}"
+        ))
 
     def _cmd_search(self, args: str) -> None:
         chat = self.query_one(ChatScrollView)
