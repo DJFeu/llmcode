@@ -44,3 +44,10 @@ node_modules/
 ink-ui/node_modules/
 ink-ui/dist/
 .superpowers/
+
+# Test artifacts (from llm-code self-testing)
+test.txt
+test_output.log
+python_tutorial.py
+九九乘法表.py
+*.log
