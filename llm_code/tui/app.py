@@ -691,9 +691,10 @@ class LLMCodeTUI(App):
 
     def on_key(self, event: "events.Key") -> None:
         """Handle single-key permission responses (y/n/a), image paste, and scroll."""
-        # Ctrl+D — quit
+        # Ctrl+D — quit (with dream consolidation)
         if event.key == "ctrl+d":
-            self.exit()
+            import asyncio
+            asyncio.ensure_future(self._graceful_exit())
             return
 
         # Ctrl+V / Ctrl+I — paste image from clipboard
@@ -961,9 +962,35 @@ class LLMCodeTUI(App):
             chat.add_entry(AssistantText(f"Unknown command: /{name} — type /help for help"))
 
     def _cmd_exit(self, args: str) -> None:
-        self.exit()
+        import asyncio
+        asyncio.ensure_future(self._graceful_exit())
 
     _cmd_quit = _cmd_exit
+
+    async def _graceful_exit(self) -> None:
+        """Dream consolidation + session save before exit."""
+        await self._dream_on_exit()
+        self.exit()
+
+    async def _dream_on_exit(self) -> None:
+        """Fire DreamTask consolidation on session exit (best-effort, 30s timeout)."""
+        import asyncio as _aio
+        if not self._memory or not self._runtime:
+            return
+        try:
+            from llm_code.runtime.dream import DreamTask
+            dream = DreamTask()
+            await _aio.wait_for(
+                dream.consolidate(
+                    self._runtime.session,
+                    self._memory,
+                    self._runtime._provider,
+                    self._config,
+                ),
+                timeout=30.0,
+            )
+        except Exception:
+            pass
 
     def _cmd_help(self, args: str) -> None:
         from textual.screen import ModalScreen
