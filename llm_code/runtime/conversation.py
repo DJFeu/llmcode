@@ -637,6 +637,19 @@ class ConversationRuntime:
             return
 
         # 3. Safety analysis → effective permission level
+        #    For bash-like tools, truly dangerous (blocked) commands are denied
+        #    immediately without entering the permission prompt flow.
+        if hasattr(tool, "classify") and callable(tool.classify):
+            safety = tool.classify(validated_args)
+            if safety.is_blocked:
+                self._fire_hook("tool_denied", {"tool_name": call.name})
+                yield ToolResultBlock(
+                    tool_use_id=call.id,
+                    content=f"Dangerous command blocked: {'; '.join(safety.reasons)}",
+                    is_error=True,
+                )
+                return
+
         if tool.is_read_only(validated_args):
             effective = PermissionLevel.READ_ONLY
         elif tool.is_destructive(validated_args):

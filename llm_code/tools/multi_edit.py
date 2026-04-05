@@ -83,9 +83,16 @@ class MultiEditTool(Tool):
         errors: list[str] = []
         for i, edit in enumerate(edits):
             path = pathlib.Path(edit.path)
-            if not path.exists():
-                errors.append(f"Edit {i + 1}: File not found: {path}")
-                continue
+            if overlay is None:
+                if not path.exists():
+                    errors.append(f"Edit {i + 1}: File not found: {path}")
+                    continue
+            else:
+                try:
+                    overlay.read(path)
+                except FileNotFoundError:
+                    errors.append(f"Edit {i + 1}: File not found: {path}")
+                    continue
             protection = check_write(str(path))
             if not protection.allowed:
                 errors.append(f"Edit {i + 1}: {protection.reason}")
@@ -97,7 +104,11 @@ class MultiEditTool(Tool):
         for edit in edits:
             p = str(edit.path)
             if p not in snapshots:
-                snapshots[p] = pathlib.Path(p).read_text(encoding="utf-8")
+                path = pathlib.Path(p)
+                if overlay is not None:
+                    snapshots[p] = overlay.read(path)
+                else:
+                    snapshots[p] = path.read_text(encoding="utf-8")
 
         # Phase 3: Apply all edits in memory
         applied: list[str] = []
@@ -106,9 +117,11 @@ class MultiEditTool(Tool):
             p = str(edit.path)
             result = _apply_edit(current_contents[p], edit.old, edit.new, edit.replace_all)
             if not result.success:
-                # Rollback any files already written (none in this phase, but restore snapshots)
-                for sp, sc in snapshots.items():
-                    pathlib.Path(sp).write_text(sc, encoding="utf-8")
+                # Rollback: restore snapshots to real FS (overlay needs no rollback
+                # — caller discards the overlay on failure)
+                if overlay is None:
+                    for sp, sc in snapshots.items():
+                        pathlib.Path(sp).write_text(sc, encoding="utf-8")
                 return ToolResult(
                     output=f"Edit {i + 1} failed ({edit.path}): {result.error}. All edits rolled back.",
                     is_error=True,
@@ -116,9 +129,13 @@ class MultiEditTool(Tool):
             current_contents[p] = result.new_content
             applied.append(f"Edit {i + 1}: {edit.path} ({result.replaced} replacement(s))")
 
-        # Phase 4: Write all files atomically
+        # Phase 4: Write all files
         for p, content in current_contents.items():
-            pathlib.Path(p).write_text(content, encoding="utf-8")
+            path = pathlib.Path(p)
+            if overlay is not None:
+                overlay.write(path, content)
+            else:
+                path.write_text(content, encoding="utf-8")
 
         return ToolResult(
             output=f"Applied {len(edits)} edits:\n" + "\n".join(applied),

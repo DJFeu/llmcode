@@ -168,8 +168,8 @@ async def test_bash_rm_denied_in_prompt_mode(tmp_path: Path) -> None:
         pass
 
     text = _session_text(runtime)
-    assert "approval" in text or "permission" in text or "dangerous" in text, (
-        f"Expected 'approval', 'permission', or 'dangerous' in session for rm -rf.\n"
+    assert "dangerous" in text or "permission" in text or "denied" in text or "blocked" in text, (
+        f"Expected 'dangerous', 'permission', 'denied', or 'blocked' in session for rm -rf.\n"
         f"Session text: {text}"
     )
 
