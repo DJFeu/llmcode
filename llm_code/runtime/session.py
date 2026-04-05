@@ -82,6 +82,8 @@ class Session:
     updated_at: str
     total_usage: TokenUsage
     project_path: Path
+    name: str = ""
+    tags: tuple[str, ...] = ()
 
     @classmethod
     def create(cls, project_path: Path) -> "Session":
@@ -105,6 +107,17 @@ class Session:
             messages=self.messages + (msg,),
             updated_at=now,
         )
+
+    def rename(self, name: str) -> "Session":
+        """Return a new Session with the given name (immutable)."""
+        now = datetime.now(timezone.utc).isoformat()
+        return dataclasses.replace(self, name=name, updated_at=now)
+
+    def add_tags(self, *tags: str) -> "Session":
+        """Return a new Session with tags merged (deduped, order-preserving, immutable)."""
+        merged = tuple(dict.fromkeys(self.tags + tags))
+        now = datetime.now(timezone.utc).isoformat()
+        return dataclasses.replace(self, tags=merged, updated_at=now)
 
     def update_usage(self, usage: TokenUsage) -> "Session":
         """Return a new Session with accumulated token usage (immutable)."""
@@ -139,6 +152,8 @@ class Session:
                 "output_tokens": self.total_usage.output_tokens,
             },
             "project_path": str(self.project_path),
+            "name": self.name,
+            "tags": list(self.tags),
         }
 
     @classmethod
@@ -153,6 +168,8 @@ class Session:
                 output_tokens=data["total_usage"]["output_tokens"],
             ),
             project_path=Path(data["project_path"]),
+            name=data.get("name", ""),
+            tags=tuple(data.get("tags", ())),
         )
 
 
@@ -166,6 +183,8 @@ class SessionSummary:
     project_path: Path
     created_at: str
     message_count: int
+    name: str = ""
+    tags: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +227,8 @@ class SessionManager:
                         project_path=Path(data["project_path"]),
                         created_at=data["created_at"],
                         message_count=len(data["messages"]),
+                        name=data.get("name", ""),
+                        tags=tuple(data.get("tags", ())),
                     )
                 )
             except (json.JSONDecodeError, KeyError):
