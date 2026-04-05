@@ -163,7 +163,7 @@ class LLMCodeTUI(App):
             return ""
 
     def _init_runtime(self) -> None:
-        """Initialize the conversation runtime — mirrors LLMCodeCLI._init_session."""
+        """Initialize the conversation runtime."""
         if self._config is None:
             logger.warning("No config provided; runtime will not be initialized.")
             return
@@ -218,6 +218,9 @@ class LLMCodeTUI(App):
         _bash_timeout = 0 if _is_local else 30  # 0 = no timeout for local models
 
         self._tool_reg = ToolRegistry()
+        from llm_code.tools.web_fetch import WebFetchTool
+        from llm_code.tools.web_search import WebSearchTool
+
         for tool in (
             ReadFileTool(),
             WriteFileTool(),
@@ -227,6 +230,8 @@ class LLMCodeTUI(App):
             GrepSearchTool(),
             NotebookReadTool(),
             NotebookEditTool(),
+            WebFetchTool(),
+            WebSearchTool(),
         ):
             try:
                 self._tool_reg.register(tool)

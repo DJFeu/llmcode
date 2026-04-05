@@ -31,14 +31,14 @@ class TestAppCreation:
 
 
 class TestEntryPointFlags:
-    def test_tui_main_has_ink_flag(self):
-        """Verify tui_main accepts --ink flag."""
+    def test_tui_main_has_core_flags(self):
+        """Verify tui_main accepts core flags."""
         from click.testing import CliRunner
         from llm_code.cli.tui_main import main
         runner = CliRunner()
         result = runner.invoke(main, ["--help"])
-        assert "--ink" in result.output
-        assert "--lite" in result.output
+        assert "--model" in result.output
+        assert "--verbose" in result.output
 
 
 @pytest.mark.asyncio
