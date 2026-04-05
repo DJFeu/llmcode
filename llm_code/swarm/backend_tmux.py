@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -27,6 +28,7 @@ class TmuxBackend:
         role: str,
         task: str,
         extra_args: tuple[str, ...] = (),
+        model: str = "",
     ) -> str | None:
         """Spawn a new tmux pane running llm-code --lite.
 
@@ -40,6 +42,9 @@ class TmuxBackend:
 
         if extra_args:
             cmd += " " + " ".join(extra_args)
+
+        if model:
+            cmd += " --model " + shlex.quote(model)
 
         prompt = f"You are a swarm worker with role '{role}'. Your task: {task}"
         full_cmd = f"echo {repr(prompt)} | {cmd}"

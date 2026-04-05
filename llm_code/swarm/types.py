@@ -20,6 +20,7 @@ class SwarmMember:
     backend: str          # "tmux" | "subprocess"
     pid: int | None
     status: SwarmStatus
+    model: str = ""
 
 
 @dataclass(frozen=True)

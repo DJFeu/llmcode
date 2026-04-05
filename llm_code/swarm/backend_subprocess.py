@@ -25,6 +25,7 @@ class SubprocessBackend:
         role: str,
         task: str,
         extra_args: tuple[str, ...] = (),
+        model: str = "",
     ) -> int | None:
         """Spawn a new llm-code --lite process for this member.
 
@@ -43,6 +44,9 @@ class SubprocessBackend:
             cmd_args = [llm_code_bin, "--lite"]
 
         cmd_args.extend(extra_args)
+
+        if model:
+            cmd_args.extend(["--model", model])
 
         prompt = f"You are a swarm worker with role '{role}'. Your task: {task}"
 

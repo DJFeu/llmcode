@@ -4,6 +4,7 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
+from llm_code.runtime.config import RuntimeConfig
 from llm_code.swarm.backend_subprocess import SubprocessBackend
 from llm_code.swarm.backend_tmux import TmuxBackend, is_tmux_available
 from llm_code.swarm.mailbox import Mailbox
@@ -24,12 +25,14 @@ class SwarmManager:
         swarm_dir: Path,
         max_members: int = 5,
         backend_preference: str = "auto",
+        config: RuntimeConfig | None = None,
     ) -> None:
         self._swarm_dir = Path(swarm_dir)
         self._swarm_dir.mkdir(parents=True, exist_ok=True)
         self._max_members = max_members
         self._backend_preference = backend_preference
         self._members: dict[str, SwarmMember] = {}
+        self._config = config or RuntimeConfig()
 
         # Backends (lazily used)
         self._subprocess_backend = SubprocessBackend(swarm_dir=self._swarm_dir)
@@ -44,6 +47,7 @@ class SwarmManager:
         role: str,
         task: str,
         backend: str = "auto",
+        model: str | None = None,
     ) -> SwarmMember:
         """Spawn a new swarm worker.
 
@@ -51,6 +55,8 @@ class SwarmManager:
             role: Role description (e.g. 'security reviewer').
             task: The task this member should perform.
             backend: 'tmux', 'subprocess', or 'auto' (default).
+            model: Override the model for this specific member. When None,
+                the effective model is resolved via the 4-level fallback chain.
 
         Returns:
             The created SwarmMember.
@@ -65,15 +71,16 @@ class SwarmManager:
 
         member_id = uuid.uuid4().hex[:8]
         effective_backend = self._resolve_backend(backend)
+        effective_model = self._resolve_model(role, model)
 
         pid: int | str | None = None
         if effective_backend == "tmux":
             pid = self._tmux_backend.spawn(
-                member_id=member_id, role=role, task=task,
+                member_id=member_id, role=role, task=task, model=effective_model,
             )
         else:
             pid = await self._subprocess_backend.spawn(
-                member_id=member_id, role=role, task=task,
+                member_id=member_id, role=role, task=task, model=effective_model,
             )
 
         member = SwarmMember(
@@ -83,9 +90,31 @@ class SwarmManager:
             backend=effective_backend,
             pid=pid if isinstance(pid, int) else None,
             status=SwarmStatus.RUNNING,
+            model=effective_model,
         )
         self._members[member_id] = member
         return member
+
+    def _resolve_model(self, role: str, explicit: str | None) -> str:
+        """Determine the effective model using a 4-level fallback chain.
+
+        Priority (highest to lowest):
+          1. explicit argument
+          2. config.swarm.role_models[role]
+          3. config.model_routing.sub_agent
+          4. config.model
+
+        The resolved value is then looked up in config.model_aliases.
+        """
+        if explicit:
+            model = explicit
+        elif role in self._config.swarm.role_models:
+            model = self._config.swarm.role_models[role]
+        elif self._config.model_routing.sub_agent:
+            model = self._config.model_routing.sub_agent
+        else:
+            model = self._config.model
+        return self._config.model_aliases.get(model, model)
 
     def list_members(self) -> list[SwarmMember]:
         """Return all current swarm members."""
