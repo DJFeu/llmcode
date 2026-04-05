@@ -13,6 +13,7 @@ class SwarmCreateInput(BaseModel):
     role: str
     task: str
     backend: str = "auto"
+    model: str | None = None
 
 
 class SwarmCreateTool(Tool):
@@ -50,6 +51,14 @@ class SwarmCreateTool(Tool):
                     "description": "Backend to use (default: auto)",
                     "default": "auto",
                 },
+                "model": {
+                    "type": "string",
+                    "description": (
+                        "Override the LLM model for this specific swarm member. "
+                        "When omitted, the model is resolved via the config fallback chain: "
+                        "role_models -> model_routing.sub_agent -> global model."
+                    ),
+                },
             },
             "required": ["role", "task"],
         }
@@ -66,6 +75,7 @@ class SwarmCreateTool(Tool):
         role = args["role"]
         task = args["task"]
         backend = args.get("backend", "auto")
+        model = args.get("model")
 
         try:
             try:
@@ -79,11 +89,11 @@ class SwarmCreateTool(Tool):
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     member = pool.submit(
                         asyncio.run,
-                        self._manager.create_member(role=role, task=task, backend=backend),
+                        self._manager.create_member(role=role, task=task, backend=backend, model=model),
                     ).result()
             else:
                 member = asyncio.run(
-                    self._manager.create_member(role=role, task=task, backend=backend)
+                    self._manager.create_member(role=role, task=task, backend=backend, model=model)
                 )
         except ValueError as exc:
             return ToolResult(output=str(exc), is_error=True)
