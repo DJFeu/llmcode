@@ -17,7 +17,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-2355%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-2861%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
 </p>
 
@@ -94,8 +94,7 @@ llm-code
 
 ```bash
 llm-code                       # Default: Fullscreen TUI (Python Textual)
-llm-code --ink                 # React+Ink UI (requires Node.js)
-llm-code --lite                # Lightweight print-based CLI
+llm-code --provider ollama     # Auto-detect Ollama + interactive model selector
 llm-code --serve --port 8765   # Remote WebSocket server
 llm-code --connect host:8765   # Connect to remote agent
 llm-code --ssh user@host       # SSH tunnel + auto-connect
@@ -242,14 +241,12 @@ PLAN --> DO --> VERIFY --> CLOSE --> DONE
   - Spinner with orange→red color transition on long operations
   - Permission prompts with single-key y/n/a
   - Cursor movement (←→, Home/End) in input bar
-- **React+Ink** (`--ink`) — interactive menus, real-time streaming, syntax highlighting
 - **Vim mode** — full motions (hjkl, w/b/e, 0/$, gg/G, f/F/t/T), operators (d/c/y), text objects (iw, i", i()
 - **Diff visualization** — colored inline diffs on every file change
 - **Search** — `/search` or Ctrl+F with match highlighting
 - **OSC8 hyperlinks** — clickable URLs in supporting terminals
 - **Voice input** — hold-to-talk STT (Whisper, Google, Anthropic backends)
 - **Extended thinking** — collapsible thinking panel with adaptive/enabled/disabled modes
-- **`--lite` mode** — pure print-based CLI, no Node.js dependency
 
 ### Hook System
 
@@ -419,7 +416,7 @@ Supports **stdio**, **HTTP**, **SSE**, and **WebSocket** transports with health 
 ```
 llm_code/               21,000 lines Python
 ├── api/                Provider abstraction (OpenAI-compat + Anthropic)
-├── cli/                Print-based CLI + React/Ink bridge
+├── cli/                CLI entry point + Textual TUI launcher
 ├── runtime/            ReAct engine, memory layers, compression, hooks,
 │                       permissions, checkpoint, dream, VCR, speculative
 │                       execution, telemetry, file protection, sandbox
@@ -437,8 +434,7 @@ llm_code/               21,000 lines Python
 ├── ide/                IDE bridge (WebSocket JSON-RPC server)
 ├── swarm/              Multi-agent (coordinator, tmux/subprocess, mailbox)
 ├── utils/              Notebook, diff, hyperlinks, search, text normalize
-ink-ui/                 1,400 lines TypeScript (React+Ink frontend)
-tests/                  2,355 tests across 170 test files
+tests/                  2,861 tests across 170+ test files
 ```
 
 ---
@@ -446,21 +442,17 @@ tests/                  2,355 tests across 170 test files
 ## Contributing
 
 ```bash
-git clone https://github.com/djfeu-adam/llm-code
+git clone https://github.com/DJFeu/llm-code
 cd llm-code
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest                  # 2,355 tests
+pytest                  # 2,861 tests
 ruff check llm_code/    # lint
-
-# Ink frontend
-cd ink-ui && npm install
 ```
 
 ### Requirements
 
 - Python 3.11+
-- Node.js 18+ (only for `--ink` mode; default TUI and `--lite` work without it)
 - An LLM server (vLLM, Ollama, LM Studio, or cloud API)
 
 ---
