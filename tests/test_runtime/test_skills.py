@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from llm_code.runtime.skills import Skill, SkillLoader
+from llm_code.runtime.skills import Skill, SkillDependency, SkillLoader
 
 
 # ---------------------------------------------------------------------------
@@ -168,3 +168,60 @@ class TestLoadFromDirs:
         skill_set = SkillLoader.load_from_dirs([tmp_path])
         with pytest.raises((AttributeError, TypeError)):
             skill_set.auto_skills = ()  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# SkillDependency dataclass
+# ---------------------------------------------------------------------------
+
+class TestSkillDependency:
+    def test_create_with_name_only(self) -> None:
+        dep = SkillDependency(name="base-tools")
+        assert dep.name == "base-tools"
+        assert dep.registry == ""
+
+    def test_create_with_registry(self) -> None:
+        dep = SkillDependency(name="base-tools", registry="official")
+        assert dep.registry == "official"
+
+    def test_frozen(self) -> None:
+        dep = SkillDependency(name="x")
+        with pytest.raises(AttributeError):
+            dep.name = "y"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Extended Skill fields
+# ---------------------------------------------------------------------------
+
+class TestSkillExtendedFields:
+    def test_default_new_fields(self) -> None:
+        skill = Skill(name="test", description="desc", content="body")
+        assert skill.version == ""
+        assert skill.tags == ()
+        assert skill.model == ""
+        assert skill.depends == ()
+        assert skill.min_version == ""
+
+    def test_new_fields_populated(self) -> None:
+        skill = Skill(
+            name="test",
+            description="desc",
+            content="body",
+            version="1.2.0",
+            tags=("debug", "python"),
+            model="sonnet",
+            depends=(SkillDependency(name="base"),),
+            min_version="0.8.0",
+        )
+        assert skill.version == "1.2.0"
+        assert skill.tags == ("debug", "python")
+        assert skill.model == "sonnet"
+        assert len(skill.depends) == 1
+        assert skill.depends[0].name == "base"
+        assert skill.min_version == "0.8.0"
+
+    def test_existing_fields_unchanged(self) -> None:
+        skill = Skill(name="x", description="d", content="c", auto=True, trigger="go")
+        assert skill.auto is True
+        assert skill.trigger == "go"

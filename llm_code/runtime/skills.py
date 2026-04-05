@@ -9,6 +9,14 @@ _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)", re.DOTALL)
 
 
 @dataclass(frozen=True)
+class SkillDependency:
+    """A dependency on another skill."""
+
+    name: str
+    registry: str = ""  # empty = search all registries
+
+
+@dataclass(frozen=True)
 class Skill:
     """A single skill loaded from a SKILL.md file."""
 
@@ -17,6 +25,11 @@ class Skill:
     content: str
     auto: bool = False
     trigger: str = ""
+    version: str = ""
+    tags: tuple[str, ...] = ()
+    model: str = ""
+    depends: tuple[SkillDependency, ...] = ()
+    min_version: str = ""
 
     def __post_init__(self) -> None:
         # If trigger not set (empty string), default it to name.
