@@ -19,6 +19,9 @@ BUILTIN_ALIASES: dict[str, str] = {
     # Qwen shortcuts
     "qwen": "qwen3.5",
     "qwen-large": "Qwen3.5-122B-A10B",
+    # Ollama convenience aliases
+    "qwen-small": "qwen3:1.7b",
+    "qwen-medium": "qwen3.5:4b",
 }
 
 

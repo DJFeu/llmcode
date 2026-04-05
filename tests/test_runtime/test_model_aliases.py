@@ -75,3 +75,11 @@ class TestUnknownModel:
 
     def test_empty_string_returns_empty(self) -> None:
         assert resolve_model("") == ""
+
+
+class TestOllamaAliases:
+    def test_ollama_qwen_small(self) -> None:
+        assert resolve_model("qwen-small") == "qwen3:1.7b"
+
+    def test_ollama_qwen_medium(self) -> None:
+        assert resolve_model("qwen-medium") == "qwen3.5:4b"
