@@ -1485,6 +1485,15 @@ class InkBridge:
         except ImportError:
             pass
 
+        # Web tools
+        try:
+            from llm_code.tools.web_fetch import WebFetchTool
+            from llm_code.tools.web_search import WebSearchTool
+            registry.register(WebFetchTool())
+            registry.register(WebSearchTool())
+        except (ImportError, ValueError):
+            pass
+
         # AgentTool
         try:
             from llm_code.tools.agent import AgentTool

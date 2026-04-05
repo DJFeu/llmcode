@@ -5,6 +5,7 @@ import asyncio
 import shutil
 import sys
 from pathlib import Path
+from typing import IO
 
 
 class SubprocessBackend:
@@ -60,7 +61,7 @@ class SubprocessBackend:
         self._procs[member_id] = proc
         # Track open file handles for cleanup
         if not hasattr(self, "_log_files"):
-            self._log_files: dict[str, object] = {}
+            self._log_files: dict[str, IO[str]] = {}
         self._log_files[member_id] = log_fh
 
         # Send initial prompt
