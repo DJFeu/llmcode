@@ -1,12 +1,15 @@
 """SwarmManager — orchestrate creation, lifecycle, and teardown of swarm members."""
 from __future__ import annotations
 
+import re
+import subprocess as sp
 import uuid
 from pathlib import Path
 
 from llm_code.runtime.config import RuntimeConfig
 from llm_code.swarm.backend_subprocess import SubprocessBackend
 from llm_code.swarm.backend_tmux import TmuxBackend, is_tmux_available
+from llm_code.swarm.backend_worktree import WorktreeBackend
 from llm_code.swarm.mailbox import Mailbox
 from llm_code.swarm.memory_sync import SharedMemory
 from llm_code.swarm.types import SwarmMember, SwarmStatus
@@ -37,6 +40,8 @@ class SwarmManager:
         # Backends (lazily used)
         self._subprocess_backend = SubprocessBackend(swarm_dir=self._swarm_dir)
         self._tmux_backend = TmuxBackend()
+        # WorktreeBackend is initialised on demand (requires git + project dir)
+        self._worktree_backend: WorktreeBackend | None = None
 
         # Shared resources
         self.mailbox = Mailbox(self._swarm_dir / "mailbox")
@@ -76,6 +81,15 @@ class SwarmManager:
         pid: int | str | None = None
         if effective_backend == "tmux":
             pid = self._tmux_backend.spawn(
+                member_id=member_id, role=role, task=task, model=effective_model,
+            )
+        elif effective_backend == "worktree":
+            if self._worktree_backend is None:
+                self._worktree_backend = WorktreeBackend(
+                    project_dir=self._swarm_dir.parent,
+                    config=self._config.swarm.worktree,
+                )
+            pid = await self._worktree_backend.spawn(
                 member_id=member_id, role=role, task=task, model=effective_model,
             )
         else:
@@ -144,15 +158,45 @@ class SwarmManager:
         self._members.clear()
 
     def _resolve_backend(self, requested: str) -> str:
-        """Determine which backend to use."""
+        """Determine which backend to use.
+
+        Priority for explicit requests: worktree > tmux > subprocess.
+        In auto mode: worktree (if git available) > tmux (if available) > subprocess.
+        """
+        if requested == "worktree":
+            return "worktree"
         if requested == "tmux":
             return "tmux"
         if requested == "subprocess":
             return "subprocess"
-        # auto: prefer tmux if available
+        # auto path — honour backend_preference first
         pref = self._backend_preference
-        if pref == "auto":
-            return "tmux" if is_tmux_available() else "subprocess"
+        if pref == "worktree":
+            return "worktree"
         if pref == "tmux":
             return "tmux"
-        return "subprocess"
+        # pref == "auto": try worktree > tmux > subprocess
+        if self._is_git_repo() and self._git_supports_worktree():
+            return "worktree"
+        return "tmux" if is_tmux_available() else "subprocess"
+
+    def _is_git_repo(self) -> bool:
+        """Return True if the project directory is inside a git repository."""
+        result = sp.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=str(self._swarm_dir.parent),
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0
+
+    def _git_supports_worktree(self) -> bool:
+        """Return True if the installed git version supports worktrees (>= 2.15)."""
+        result = sp.run(["git", "--version"], capture_output=True, text=True)
+        if result.returncode != 0:
+            return False
+        match = re.search(r"(\d+)\.(\d+)", result.stdout)
+        if not match:
+            return False
+        major, minor = int(match.group(1)), int(match.group(2))
+        return (major, minor) >= (2, 15)
