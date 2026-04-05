@@ -36,6 +36,8 @@ KNOWN_COMMANDS = frozenset({
     "cancel",
     "keybind",
     "audit",
+    "analyze",
+    "diff_check",
 })
 
 

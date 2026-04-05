@@ -63,6 +63,7 @@ class LLMCodeTUI(App):
         self._vcr_recorder = None
         self._interrupt_pending: bool = False
         self._last_interrupt_time: float = 0.0
+        self._analysis_context: str | None = None
 
     def compose(self) -> ComposeResult:
         yield HeaderBar(id="header-bar")
@@ -1082,6 +1083,8 @@ class LLMCodeTUI(App):
             ("/vim", "Toggle vim mode"),
             ("/plan", "Toggle plan/act mode (read-only when ON)"),
             ("/dump", "Dump codebase to .llm-code/dump.txt for external LLM use"),
+            ("/analyze", "Run code analysis rules on the codebase"),
+            ("/diff_check", "Show new/fixed violations vs last analysis"),
             ("/image", "Attach image"),
             ("/search", "Search conversation"),
             ("/index", "Project index"),
@@ -1422,6 +1425,67 @@ class LLMCodeTUI(App):
             f"({result.total_lines:,} lines, ~{result.estimated_tokens:,} tokens)\n"
             f"Saved to: {dump_path}"
         ))
+
+    def _cmd_analyze(self, args: str) -> None:
+        """Run code analysis rules on the codebase."""
+        import asyncio
+        asyncio.ensure_future(self._run_analyze(args))
+
+    async def _run_analyze(self, args: str) -> None:
+        from llm_code.analysis.engine import run_analysis
+        chat = self.query_one(ChatScrollView)
+
+        target = Path(args.strip()) if args.strip() else self._cwd
+        if not target.is_absolute():
+            target = self._cwd / target
+
+        try:
+            result = run_analysis(target)
+        except Exception as exc:
+            chat.add_entry(AssistantText(f"Analysis failed: {exc}"))
+            return
+
+        chat.add_entry(AssistantText(result.format_chat()))
+
+        # Store context for injection into future prompts
+        if result.violations:
+            self._analysis_context = result.format_context(max_tokens=1000)
+            if self._runtime is not None:
+                self._runtime.analysis_context = self._analysis_context
+        else:
+            self._analysis_context = None
+            if self._runtime is not None:
+                self._runtime.analysis_context = None
+
+    def _cmd_diff_check(self, args: str) -> None:
+        """Show new and fixed violations compared with cached results."""
+        import asyncio
+        asyncio.ensure_future(self._run_diff_check(args))
+
+    async def _run_diff_check(self, args: str) -> None:
+        from llm_code.analysis.engine import run_diff_check
+        chat = self.query_one(ChatScrollView)
+
+        try:
+            new_violations, fixed_violations = run_diff_check(self._cwd)
+        except Exception as exc:
+            chat.add_entry(AssistantText(f"Diff check failed: {exc}"))
+            return
+
+        if not new_violations and not fixed_violations:
+            chat.add_entry(AssistantText("No changes in violations since last analysis."))
+            return
+
+        lines: list[str] = ["## Diff Check"]
+        for v in new_violations:
+            loc = f"{v.file_path}:{v.line}" if v.line > 0 else v.file_path
+            lines.append(f"NEW {v.severity.upper()} {loc} {v.message}")
+        for v in fixed_violations:
+            loc = f"{v.file_path}:{v.line}" if v.line > 0 else v.file_path
+            lines.append(f"FIXED {v.severity.upper()} {loc} {v.message}")
+
+        lines.append(f"\n{len(new_violations)} new, {len(fixed_violations)} fixed")
+        chat.add_entry(AssistantText("\n".join(lines)))
 
     def _cmd_search(self, args: str) -> None:
         chat = self.query_one(ChatScrollView)

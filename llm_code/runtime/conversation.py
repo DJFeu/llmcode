@@ -146,6 +146,7 @@ class ConversationRuntime:
         self._project_index = project_index
         self._lsp_manager = lsp_manager
         self.plan_mode: bool = False
+        self.analysis_context: str | None = None
         self._permission_future: asyncio.Future[str] | None = None
         self._has_attempted_reactive_compact = False
         self._consecutive_failures: int = 0
@@ -301,6 +302,11 @@ class ConversationRuntime:
                         system_prompt = system_prompt + "\n\n# Repo Map\n" + compact
             except Exception:
                 pass  # Don't fail conversation for repo map issues
+
+            # Inject analysis context if available
+            if self.analysis_context:
+                system_prompt = system_prompt + "\n\n" + self.analysis_context
+
             self._fire_hook("prompt_compile", {"prompt_length": len(system_prompt), "tool_count": len(tool_defs)})
 
             # 3. Create request and stream
