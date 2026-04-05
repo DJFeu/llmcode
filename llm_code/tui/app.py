@@ -75,6 +75,11 @@ class LLMCodeTUI(App):
         header.project = self._cwd.name
         header.branch = self._detect_branch()
         self._render_welcome()
+        # Detect local provider and update status bar
+        if self._config and self._config.provider_base_url:
+            url = self._config.provider_base_url
+            status = self.query_one(StatusBar)
+            status.is_local = "localhost" in url or "127.0.0.1" in url or "0.0.0.0" in url
         # Focus input bar so it receives key events
         self.query_one(InputBar).focus()
         # Start MCP servers async
@@ -912,6 +917,11 @@ class LLMCodeTUI(App):
                             self._cost_tracker.add_usage(
                                 event.usage.input_tokens, event.usage.output_tokens,
                             )
+                        # Real-time status bar update
+                        status.tokens = self._output_tokens
+                        if self._cost_tracker:
+                            cost_usd = self._cost_tracker.total_cost_usd
+                            status.cost = f"${cost_usd:.4f}" if cost_usd > 0.0001 else ""
 
         except Exception as exc:
             chat.add_entry(AssistantText(f"Error: {exc}"))

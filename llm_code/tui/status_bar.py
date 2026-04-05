@@ -14,6 +14,8 @@ class StatusBar(Widget):
     cost: reactive[str] = reactive("")
     is_streaming: reactive[bool] = reactive(False)
     vim_mode: reactive[str] = reactive("")  # "" | "NORMAL" | "INSERT"
+    is_local: reactive[bool] = reactive(False)
+    plan_mode: reactive[str] = reactive("")  # "" | "PLAN"
 
     DEFAULT_CSS = """
     StatusBar {
@@ -27,13 +29,17 @@ class StatusBar(Widget):
 
     def _format_content(self) -> str:
         parts: list[str] = []
+        if self.plan_mode:
+            parts.append(self.plan_mode)
         if self.vim_mode:
             parts.append(f"-- {self.vim_mode} --")
         if self.model:
             parts.append(self.model)
         if self.tokens > 0:
             parts.append(f"↓{self.tokens:,} tok")
-        if self.cost:
+        if self.is_local:
+            parts.append("free")
+        elif self.cost:
             parts.append(self.cost)
         if self.is_streaming:
             parts.append("streaming…")
@@ -57,4 +63,10 @@ class StatusBar(Widget):
         self.refresh()
 
     def watch_vim_mode(self) -> None:
+        self.refresh()
+
+    def watch_is_local(self) -> None:
+        self.refresh()
+
+    def watch_plan_mode(self) -> None:
         self.refresh()
