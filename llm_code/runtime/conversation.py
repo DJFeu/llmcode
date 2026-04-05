@@ -122,6 +122,7 @@ class ConversationRuntime:
         memory_store: Any = None,
         task_manager: Any = None,
         project_index: Any = None,
+        lsp_manager: Any = None,
     ) -> None:
         self._provider = provider
         self._tool_registry = tool_registry
@@ -143,6 +144,7 @@ class ConversationRuntime:
         self._memory_store = memory_store
         self._task_manager = task_manager
         self._project_index = project_index
+        self._lsp_manager = lsp_manager
         self.plan_mode: bool = False
         self._permission_future: asyncio.Future[str] | None = None
         self._has_attempted_reactive_compact = False
@@ -847,6 +849,30 @@ class ConversationRuntime:
                     auto_commit_file(Path(file_path), call.name)
             except Exception:
                 pass  # Never block tool flow for checkpoint failure
+
+        # 7c. LSP auto-diagnose after write/edit tools
+        if (
+            hasattr(self._config, "lsp_auto_diagnose")
+            and self._config.lsp_auto_diagnose
+            and call.name in ("write_file", "edit_file")
+            and not tool_result.is_error
+        ):
+            try:
+                from pathlib import Path
+                from llm_code.runtime.auto_diagnose import auto_diagnose
+                file_path = args.get("file_path") or args.get("path", "")
+                if file_path and self._lsp_manager is not None:
+                    diag_errors = await auto_diagnose(self._lsp_manager, file_path)
+                    if diag_errors:
+                        diag_text = "\n".join(diag_errors)
+                        # Inject as system message for agent to see
+                        yield StreamToolProgress(
+                            tool_name="lsp_auto_diagnose",
+                            message=f"LSP found errors in {Path(file_path).name}:\n{diag_text}",
+                            percent=None,
+                        )
+            except Exception:
+                pass  # Never block tool flow for diagnostic failure
 
         # 8. Emit tool execution result event
         if self._vcr_recorder is not None:

@@ -554,6 +554,7 @@ class LLMCodeTUI(App):
             memory_store=self._memory,
             task_manager=self._task_manager,
             project_index=self._project_index,
+            lsp_manager=self._lsp_manager,
         )
 
     async def _init_mcp(self) -> None:
