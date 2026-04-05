@@ -16,12 +16,14 @@ class PermissionMode(Enum):
     FULL_ACCESS = "full_access"
     PROMPT = "prompt"
     AUTO_ACCEPT = "auto_accept"
+    PLAN = "plan"
 
 
 class PermissionOutcome(Enum):
     ALLOW = "allow"
     DENY = "deny"
     NEED_PROMPT = "need_prompt"
+    NEED_PLAN = "need_plan"
 
 
 # Numeric levels for comparison (higher = more permissive)
@@ -38,6 +40,7 @@ _MODE_MAX_LEVEL: dict[PermissionMode, int] = {
     PermissionMode.FULL_ACCESS: 2,
     PermissionMode.AUTO_ACCEPT: 2,
     PermissionMode.PROMPT: -1,  # PROMPT handled separately
+    PermissionMode.PLAN: 2,  # PLAN handled separately; max level unused but set for safety
 }
 
 
@@ -168,6 +171,12 @@ class PermissionPolicy:
             if level == PermissionLevel.READ_ONLY:
                 return PermissionOutcome.ALLOW
             return PermissionOutcome.NEED_PROMPT
+
+        # 4b. PLAN mode: read-only always allowed, elevated needs planning confirmation
+        if self._mode == PermissionMode.PLAN:
+            if level == PermissionLevel.READ_ONLY:
+                return PermissionOutcome.ALLOW
+            return PermissionOutcome.NEED_PLAN
 
         # 5. Level-based comparison for READ_ONLY, WORKSPACE_WRITE, FULL_ACCESS modes
         level_rank = _LEVEL_RANK[level]
