@@ -1,11 +1,17 @@
 """BashTool — execute shell commands with timeout and safety checks."""
 from __future__ import annotations
 
+import logging
 import re
 import select
 import subprocess
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
+
+if TYPE_CHECKING:
+    from llm_code.runtime.config import BashRule
+
+_log = logging.getLogger(__name__)
 
 from pydantic import BaseModel
 
@@ -217,12 +223,33 @@ def _is_truly_dangerous(command: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def classify_command(command: str) -> BashSafetyResult:
+def classify_command(
+    command: str,
+    user_rules: "tuple[BashRule, ...]" = (),
+) -> BashSafetyResult:
     """Classify a bash command and return a BashSafetyResult.
 
     Rules 1–7  map to the original pattern lists.
     Rules 8–20 are the new extended security checks.
+
+    user_rules are checked first; first match wins and returns immediately.
     """
+    # --- Phase 0: User-defined rules (first match wins) ----------------------
+    for i, rule in enumerate(user_rules):
+        try:
+            if re.search(rule.pattern, command):
+                action_map = {"allow": "safe", "confirm": "needs_confirm", "block": "blocked"}
+                classification = action_map.get(rule.action, "needs_confirm")
+                reason = rule.description or f"Matched user rule: {rule.pattern}"
+                return BashSafetyResult(
+                    classification=classification,
+                    reasons=(reason,),
+                    rule_ids=(f"user:{i}",),
+                )
+        except re.error:
+            _log.warning("Invalid regex in user bash rule %d: %s", i, rule.pattern)
+            continue
+
     reasons: list[str] = []
     rule_ids: list[str] = []
     classification = "safe"
