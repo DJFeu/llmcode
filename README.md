@@ -93,8 +93,9 @@ llm-code
 ### Modes
 
 ```bash
-llm-code                       # Default: React+Ink UI
-llm-code --lite                # Print-based CLI (no Node.js needed)
+llm-code                       # Default: Fullscreen TUI (Python Textual)
+llm-code --ink                 # React+Ink UI (requires Node.js)
+llm-code --lite                # Lightweight print-based CLI
 llm-code --serve --port 8765   # Remote WebSocket server
 llm-code --connect host:8765   # Connect to remote agent
 llm-code --ssh user@host       # SSH tunnel + auto-connect
@@ -231,7 +232,17 @@ PLAN --> DO --> VERIFY --> CLOSE --> DONE
 
 ### Terminal UI
 
-- **React+Ink** — interactive menus, real-time streaming, syntax highlighting
+- **Fullscreen TUI** (default) — Python Textual, no Node.js required, Claude Code-style UI
+  - Welcome banner, markdown rendering, syntax-highlighted code blocks
+  - Slash command autocomplete dropdown with `Tab`/arrow navigation
+  - Inline `[image]` markers with `Cmd+V` paste support
+  - Interactive marketplace browser for skills, plugins, and MCP servers
+  - Tabbed `/help` modal (general / commands / custom-commands)
+  - ToolBlock diff view with colored +/- lines and line numbers
+  - Spinner with orange→red color transition on long operations
+  - Permission prompts with single-key y/n/a
+  - Cursor movement (←→, Home/End) in input bar
+- **React+Ink** (`--ink`) — interactive menus, real-time streaming, syntax highlighting
 - **Vim mode** — full motions (hjkl, w/b/e, 0/$, gg/G, f/F/t/T), operators (d/c/y), text objects (iw, i", i()
 - **Diff visualization** — colored inline diffs on every file change
 - **Search** — `/search` or Ctrl+F with match highlighting
@@ -449,7 +460,7 @@ cd ink-ui && npm install
 ### Requirements
 
 - Python 3.11+
-- Node.js 18+ (for Ink UI; `--lite` works without it)
+- Node.js 18+ (only for `--ink` mode; default TUI and `--lite` work without it)
 - An LLM server (vLLM, Ollama, LM Studio, or cloud API)
 
 ---
