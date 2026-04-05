@@ -89,11 +89,20 @@ class WebSearchConfig:
 
 
 @dataclass(frozen=True)
+class WorktreeConfig:
+    on_complete: str = "diff"   # "diff" | "merge" | "branch"
+    base_dir: str = ""
+    copy_gitignored: tuple[str, ...] = (".env", ".env.local")
+    cleanup_on_success: bool = True
+
+
+@dataclass(frozen=True)
 class SwarmConfig:
     enabled: bool = False
-    backend: str = "auto"       # "auto" | "tmux" | "subprocess"
+    backend: str = "auto"       # "auto" | "tmux" | "subprocess" | "worktree"
     max_members: int = 5
     role_models: dict[str, str] = field(default_factory=dict)
+    worktree: WorktreeConfig = field(default_factory=WorktreeConfig)
 
 
 @dataclass(frozen=True)
@@ -291,11 +300,19 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
     )
 
     swarm_raw = data.get("swarm", {})
+    worktree_raw = swarm_raw.get("worktree", {})
+    worktree = WorktreeConfig(
+        on_complete=worktree_raw.get("on_complete", "diff"),
+        base_dir=worktree_raw.get("base_dir", ""),
+        copy_gitignored=tuple(worktree_raw.get("copy_gitignored", (".env", ".env.local"))),
+        cleanup_on_success=worktree_raw.get("cleanup_on_success", True),
+    )
     swarm = SwarmConfig(
         enabled=swarm_raw.get("enabled", False),
         backend=swarm_raw.get("backend", "auto"),
         max_members=swarm_raw.get("max_members", 5),
         role_models=swarm_raw.get("role_models", {}),
+        worktree=worktree,
     )
 
     vcr_raw = data.get("vcr", {})
