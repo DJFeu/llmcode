@@ -303,8 +303,15 @@ class _StreamIterator:
         events: list[StreamEvent] = []
         pending_tools: dict[int, dict] = {}
         _stop_emitted = False
+        _last_usage: dict = {}
 
         for chunk in self._events:
+            # Some providers (vLLM, Ollama) send usage in a standalone
+            # final chunk with no choices.  Capture it regardless.
+            chunk_usage = chunk.get("usage")
+            if chunk_usage:
+                _last_usage = chunk_usage
+
             choices = chunk.get("choices", [])
             for choice in choices:
                 delta = choice.get("delta", {})
@@ -346,7 +353,7 @@ class _StreamIterator:
                 # Stop event — emitted exactly once at the end
                 if finish_reason and not _stop_emitted:
                     _stop_emitted = True
-                    usage_data = chunk.get("usage") or {}
+                    usage_data = chunk_usage or _last_usage or {}
                     usage = TokenUsage(
                         input_tokens=usage_data.get("prompt_tokens", 0),
                         output_tokens=usage_data.get("completion_tokens", 0),
@@ -354,6 +361,21 @@ class _StreamIterator:
                     events.append(
                         StreamMessageStop(usage=usage, stop_reason=finish_reason)
                     )
+
+        # If usage arrived in a trailing chunk after finish_reason, patch it
+        if _stop_emitted and _last_usage:
+            for i in range(len(events) - 1, -1, -1):
+                if isinstance(events[i], StreamMessageStop):
+                    existing = events[i]
+                    if existing.usage.input_tokens == 0 and existing.usage.output_tokens == 0:
+                        events[i] = StreamMessageStop(
+                            usage=TokenUsage(
+                                input_tokens=_last_usage.get("prompt_tokens", 0),
+                                output_tokens=_last_usage.get("completion_tokens", 0),
+                            ),
+                            stop_reason=existing.stop_reason,
+                        )
+                    break
 
         self._processed = events
 
