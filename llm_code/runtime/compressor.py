@@ -1,28 +1,57 @@
-"""ContextCompressor: 4-level progressive context compression."""
+"""ContextCompressor: 5-level progressive context compression."""
 from __future__ import annotations
 
 import dataclasses
+import logging
+from typing import TYPE_CHECKING
 
-from llm_code.api.types import Message, TextBlock, ToolResultBlock, ToolUseBlock
+from llm_code.api.types import Message, MessageRequest, TextBlock, ToolResultBlock, ToolUseBlock
 from llm_code.runtime.session import Session
+
+if TYPE_CHECKING:
+    from llm_code.api.provider import LLMProvider
+
+_log = logging.getLogger(__name__)
+
+_SUMMARIZE_SYSTEM_PROMPT = """\
+You are a context compression agent. Given conversation messages from a coding \
+session, produce a concise summary preserving:
+
+1. What files were read, created, or modified (exact paths)
+2. Key decisions made and their rationale
+3. Current state of the task (what's done, what's pending)
+4. Any errors encountered and how they were resolved
+
+Be factual. Use bullet points. Do not include code blocks unless critical.
+"""
 
 
 class ContextCompressor:
-    """Progressively compress a Session context through 4 escalating levels.
+    """Progressively compress a Session context through 5 escalating levels.
 
     Level 1 — snip_compact: Truncate oversized ToolResultBlock content.
     Level 2 — micro_compact: Remove stale read_file results (keep only latest per path).
     Level 3 — context_collapse: Replace old tool_call+result pairs with one-line summaries.
     Level 4 — auto_compact: Discard all old messages, keep a summary + recent tail.
+    Level 5 — llm_summarize: (async only) Replace Level 4 placeholder with LLM-generated summary.
 
     Cache-aware: tracks which message indices have been sent to the API (cached).
     Compression levels prefer removing non-cached messages first to preserve
     API-side prompt cache hits.
     """
 
-    def __init__(self, max_result_chars: int = 2000) -> None:
+    def __init__(
+        self,
+        max_result_chars: int = 2000,
+        provider: "LLMProvider | None" = None,
+        summarize_model: str = "",
+        max_summary_tokens: int = 1000,
+    ) -> None:
         self._max_result_chars = max_result_chars
         self._cached_indices: set[int] = set()
+        self._provider = provider
+        self._summarize_model = summarize_model
+        self._max_summary_tokens = max_summary_tokens
 
     # ------------------------------------------------------------------
     # Cache tracking
@@ -68,6 +97,73 @@ class ContextCompressor:
 
         session = self._auto_compact(session, keep_recent=4)
         return session
+
+    async def compress_async(self, session: Session, max_tokens: int) -> Session:
+        """Async compress with optional Level 5 LLM summarization."""
+        result = self.compress(session, max_tokens)
+        if self._provider is not None:
+            result = await self._llm_summarize(result)
+        return result
+
+    # ------------------------------------------------------------------
+    # Level 5 (async only)
+    # ------------------------------------------------------------------
+
+    async def _llm_summarize(self, session: Session) -> Session:
+        """Replace Level 4 placeholder with LLM-generated summary."""
+        placeholder_idx = None
+        for i, msg in enumerate(session.messages):
+            for block in msg.content:
+                if isinstance(block, TextBlock) and "[Previous conversation summary]" in block.text:
+                    placeholder_idx = i
+                    break
+            if placeholder_idx is not None:
+                break
+
+        if placeholder_idx is None:
+            return session
+
+        # Build context from remaining messages
+        context_parts: list[str] = []
+        for i, msg in enumerate(session.messages):
+            if i == placeholder_idx:
+                continue
+            for block in msg.content:
+                if isinstance(block, TextBlock):
+                    context_parts.append(f"[{msg.role}] {block.text[:500]}")
+                elif isinstance(block, ToolUseBlock):
+                    context_parts.append(f"[tool_call] {block.name}({str(block.input)[:200]})")
+                elif isinstance(block, ToolResultBlock):
+                    context_parts.append(f"[tool_result] {block.content[:200]}")
+
+        if not context_parts:
+            return session
+
+        try:
+            request = MessageRequest(
+                model=self._summarize_model,
+                system=_SUMMARIZE_SYSTEM_PROMPT,
+                messages=(
+                    Message(
+                        role="user",
+                        content=(TextBlock(text="Summarize this conversation:\n\n" + "\n".join(context_parts)),),
+                    ),
+                ),
+                max_tokens=self._max_summary_tokens,
+            )
+            response = await self._provider.complete(request)
+            summary_text = response.content if isinstance(response.content, str) else str(response.content)
+        except Exception:
+            _log.warning("Level 5 LLM summarization failed, keeping placeholder", exc_info=True)
+            return session
+
+        summary_msg = Message(
+            role="user",
+            content=(TextBlock(text=f"[Conversation summary]\n{summary_text}"),),
+        )
+        messages = list(session.messages)
+        messages[placeholder_idx] = summary_msg
+        return dataclasses.replace(session, messages=tuple(messages))
 
     # ------------------------------------------------------------------
     # Level 1
