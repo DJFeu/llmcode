@@ -146,6 +146,34 @@ class BashRulesConfig:
 
 
 @dataclass(frozen=True)
+class EnterpriseAuthConfig:
+    provider: str = ""  # "" | "none" | "oidc"
+    oidc_issuer: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+    oidc_scopes: tuple[str, ...] = ("openid", "email", "profile")
+    oidc_redirect_port: int = 9877
+
+
+@dataclass(frozen=True)
+class EnterpriseRBACConfig:
+    group_role_mapping: dict[str, str] = field(default_factory=dict)
+    custom_roles: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class EnterpriseAuditConfig:
+    retention_days: int = 90
+
+
+@dataclass(frozen=True)
+class EnterpriseConfig:
+    auth: EnterpriseAuthConfig = field(default_factory=EnterpriseAuthConfig)
+    rbac: EnterpriseRBACConfig = field(default_factory=EnterpriseRBACConfig)
+    audit: EnterpriseAuditConfig = field(default_factory=EnterpriseAuditConfig)
+
+
+@dataclass(frozen=True)
 class RuntimeConfig:
     model: str = ""
     provider_base_url: str | None = None
@@ -185,6 +213,7 @@ class RuntimeConfig:
     max_budget_usd: float | None = None
     compressor: CompressorConfig = field(default_factory=CompressorConfig)
     bash_rules: BashRulesConfig = field(default_factory=BashRulesConfig)
+    enterprise: EnterpriseConfig = field(default_factory=EnterpriseConfig)
 
 
 class ConfigSchema(BaseModel):
@@ -360,6 +389,32 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         service_name=telemetry_raw.get("service_name", "llm-code"),
     )
 
+    enterprise_raw = data.get("enterprise", {})
+    auth_raw = enterprise_raw.get("auth", {})
+    rbac_raw = enterprise_raw.get("rbac", {})
+    audit_raw = enterprise_raw.get("audit", {})
+    oidc_raw = auth_raw.get("oidc", {})
+    enterprise_auth = EnterpriseAuthConfig(
+        provider=auth_raw.get("provider", ""),
+        oidc_issuer=oidc_raw.get("issuer", ""),
+        oidc_client_id=oidc_raw.get("client_id", ""),
+        oidc_client_secret=oidc_raw.get("client_secret", ""),
+        oidc_scopes=tuple(oidc_raw.get("scopes", ("openid", "email", "profile"))),
+        oidc_redirect_port=oidc_raw.get("redirect_port", 9877),
+    )
+    enterprise_rbac = EnterpriseRBACConfig(
+        group_role_mapping=rbac_raw.get("group_role_mapping", {}),
+        custom_roles=rbac_raw.get("custom_roles", {}),
+    )
+    enterprise_audit = EnterpriseAuditConfig(
+        retention_days=audit_raw.get("retention_days", 90),
+    )
+    enterprise = EnterpriseConfig(
+        auth=enterprise_auth,
+        rbac=enterprise_rbac,
+        audit=enterprise_audit,
+    )
+
     return RuntimeConfig(
         model=data.get("model", ""),
         provider_base_url=provider.get("base_url", None),
@@ -395,6 +450,7 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         hida=hida,
         telemetry=telemetry,
         max_budget_usd=data.get("max_budget_usd", None),
+        enterprise=enterprise,
     )
 
 
