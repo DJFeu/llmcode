@@ -5,6 +5,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
+
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)", re.DOTALL)
 
 
@@ -59,19 +61,35 @@ class SkillLoader:
 
         frontmatter_raw, content = m.group(1), m.group(2)
 
-        # Simple key:value YAML parser
-        meta: dict[str, str] = {}
-        for line in frontmatter_raw.splitlines():
-            line = line.strip()
-            if ":" in line:
-                key, _, value = line.partition(":")
-                meta[key.strip()] = value.strip().strip('"').strip("'")
+        try:
+            meta = yaml.safe_load(frontmatter_raw) or {}
+        except yaml.YAMLError:
+            meta = {}
 
-        name = meta.get("name", "")
-        description = meta.get("description", "")
-        auto_raw = meta.get("auto", "false").lower()
-        auto = auto_raw in ("true", "yes", "1")
-        trigger = meta.get("trigger", "")  # default handled in __post_init__
+        name = str(meta.get("name", ""))
+        description = str(meta.get("description", ""))
+        auto_raw = meta.get("auto", False)
+        auto = auto_raw is True or str(auto_raw).lower() in ("true", "yes", "1")
+        trigger = str(meta.get("trigger", ""))
+
+        version = str(meta.get("version", ""))
+        model = str(meta.get("model", ""))
+        min_version = str(meta.get("min_version", ""))
+
+        tags_raw = meta.get("tags", [])
+        tags = tuple(str(t) for t in tags_raw) if isinstance(tags_raw, list) else ()
+
+        depends_raw = meta.get("depends", [])
+        depends: tuple[SkillDependency, ...] = ()
+        if isinstance(depends_raw, list):
+            deps = []
+            for item in depends_raw:
+                if isinstance(item, dict) and "name" in item:
+                    deps.append(SkillDependency(
+                        name=str(item["name"]),
+                        registry=str(item.get("registry", "")),
+                    ))
+            depends = tuple(deps)
 
         return Skill(
             name=name,
@@ -79,6 +97,11 @@ class SkillLoader:
             content=content,
             auto=auto,
             trigger=trigger,
+            version=version,
+            tags=tags,
+            model=model,
+            depends=depends,
+            min_version=min_version,
         )
 
     @staticmethod

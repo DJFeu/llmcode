@@ -225,3 +225,66 @@ class TestSkillExtendedFields:
         skill = Skill(name="x", description="d", content="c", auto=True, trigger="go")
         assert skill.auto is True
         assert skill.trigger == "go"
+
+
+# ---------------------------------------------------------------------------
+# SkillLoader extended frontmatter parsing (YAML)
+# ---------------------------------------------------------------------------
+
+class TestSkillLoaderExtendedFrontmatter:
+    def test_parse_version(self, tmp_path) -> None:
+        p = tmp_path / "SKILL.md"
+        p.write_text("---\nname: demo\ndescription: d\nversion: 2.0.1\n---\nbody\n")
+        skill = SkillLoader.load_skill(p)
+        assert skill.version == "2.0.1"
+
+    def test_parse_tags(self, tmp_path) -> None:
+        p = tmp_path / "SKILL.md"
+        p.write_text("---\nname: demo\ndescription: d\ntags: [debug, python]\n---\nbody\n")
+        skill = SkillLoader.load_skill(p)
+        assert skill.tags == ("debug", "python")
+
+    def test_parse_model(self, tmp_path) -> None:
+        p = tmp_path / "SKILL.md"
+        p.write_text("---\nname: demo\ndescription: d\nmodel: haiku\n---\nbody\n")
+        skill = SkillLoader.load_skill(p)
+        assert skill.model == "haiku"
+
+    def test_parse_min_version(self, tmp_path) -> None:
+        p = tmp_path / "SKILL.md"
+        p.write_text("---\nname: demo\ndescription: d\nmin_version: 0.8.0\n---\nbody\n")
+        skill = SkillLoader.load_skill(p)
+        assert skill.min_version == "0.8.0"
+
+    def test_parse_depends_single(self, tmp_path) -> None:
+        p = tmp_path / "SKILL.md"
+        content = "---\nname: demo\ndescription: d\ndepends:\n  - name: base-tools\n---\nbody\n"
+        p.write_text(content)
+        skill = SkillLoader.load_skill(p)
+        assert len(skill.depends) == 1
+        assert skill.depends[0].name == "base-tools"
+        assert skill.depends[0].registry == ""
+
+    def test_parse_depends_with_registry(self, tmp_path) -> None:
+        p = tmp_path / "SKILL.md"
+        content = "---\nname: demo\ndescription: d\ndepends:\n  - name: base-tools\n    registry: official\n---\nbody\n"
+        p.write_text(content)
+        skill = SkillLoader.load_skill(p)
+        assert skill.depends[0].registry == "official"
+
+    def test_parse_depends_multiple(self, tmp_path) -> None:
+        p = tmp_path / "SKILL.md"
+        content = "---\nname: demo\ndescription: d\ndepends:\n  - name: a\n  - name: b\n---\nbody\n"
+        p.write_text(content)
+        skill = SkillLoader.load_skill(p)
+        assert len(skill.depends) == 2
+
+    def test_no_new_fields_gives_defaults(self, tmp_path) -> None:
+        p = tmp_path / "SKILL.md"
+        p.write_text("---\nname: demo\ndescription: d\n---\nbody\n")
+        skill = SkillLoader.load_skill(p)
+        assert skill.version == ""
+        assert skill.tags == ()
+        assert skill.model == ""
+        assert skill.depends == ()
+        assert skill.min_version == ""
