@@ -40,3 +40,40 @@ def format_status_line(state: StatusLineState) -> str:
     parts.append("/help")
     parts.append("Ctrl+D quit")
     return " │ ".join(parts)
+
+
+class CLIStatusLine:
+    """Persistent bottom status line for the print CLI using Rich Live."""
+
+    def __init__(self, console: Console) -> None:
+        self._console = console
+        self.state = StatusLineState()
+        self._live: Live | None = None
+
+    def update(self, **kwargs: Any) -> None:
+        """Update one or more state fields and refresh the display."""
+        for key, value in kwargs.items():
+            if hasattr(self.state, key):
+                setattr(self.state, key, value)
+        if self._live is not None:
+            self._live.update(self._render())
+
+    def _render(self) -> Text:
+        """Render the current state as a Rich Text object."""
+        return Text(format_status_line(self.state), style="dim")
+
+    def start(self) -> None:
+        """Begin live rendering at the bottom of the terminal."""
+        self._live = Live(
+            self._render(),
+            console=self._console,
+            refresh_per_second=4,
+            transient=True,
+        )
+        self._live.start()
+
+    def stop(self) -> None:
+        """Stop live rendering."""
+        if self._live is not None:
+            self._live.stop()
+            self._live = None

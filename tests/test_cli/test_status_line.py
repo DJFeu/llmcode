@@ -41,3 +41,26 @@ class TestFormatStatusLine:
         state = StatusLineState(model="qwen-72b", permission_mode="plan")
         result = format_status_line(state)
         assert "[plan]" in result
+
+
+from unittest.mock import MagicMock
+from rich.console import Console
+
+
+class TestCLIStatusLine:
+    def test_update_changes_state(self):
+        from llm_code.cli.status_line import CLIStatusLine
+        console = Console(file=MagicMock(), force_terminal=True)
+        line = CLIStatusLine(console)
+        line.update(model="test-model", tokens=500)
+        assert line.state.model == "test-model"
+        assert line.state.tokens == 500
+
+    def test_update_partial(self):
+        from llm_code.cli.status_line import CLIStatusLine
+        console = Console(file=MagicMock(), force_terminal=True)
+        line = CLIStatusLine(console)
+        line.update(model="m1")
+        line.update(tokens=100)
+        assert line.state.model == "m1"
+        assert line.state.tokens == 100
