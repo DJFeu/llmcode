@@ -18,6 +18,12 @@ SLASH_COMMANDS = sorted([
     "/vcr", "/hida", "/checkpoint",
 ])
 
+# Commands that execute immediately (no arguments needed)
+_NO_ARG_COMMANDS = frozenset({
+    "/help", "/clear", "/cost", "/config", "/vim", "/skill", "/plugin",
+    "/mcp", "/lsp", "/cancel", "/exit", "/quit", "/hida",
+})
+
 SLASH_COMMAND_DESCS: list[tuple[str, str]] = [
     ("/help", "Show help"),
     ("/clear", "Clear conversation"),
@@ -212,11 +218,19 @@ class InputBar(Widget):
                 return
             elif event.key in ("enter", "tab"):
                 selected_cmd = self._dropdown_items[self._dropdown_cursor][0]
-                self.value = selected_cmd + " "
-                self._cursor = len(self.value)
                 self._show_dropdown = False
                 self._dropdown_items = []
                 self._dropdown_cursor = 0
+                if selected_cmd in _NO_ARG_COMMANDS:
+                    # Execute immediately
+                    self.value = selected_cmd
+                    self._cursor = 0
+                    self.post_message(self.Submitted(selected_cmd))
+                    self.value = ""
+                else:
+                    # Fill and wait for argument
+                    self.value = selected_cmd + " "
+                    self._cursor = len(self.value)
                 self.refresh()
                 return
             elif event.key == "escape":
