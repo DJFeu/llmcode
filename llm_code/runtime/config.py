@@ -93,6 +93,7 @@ class SwarmConfig:
     enabled: bool = False
     backend: str = "auto"       # "auto" | "tmux" | "subprocess"
     max_members: int = 5
+    role_models: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -294,6 +295,7 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         enabled=swarm_raw.get("enabled", False),
         backend=swarm_raw.get("backend", "auto"),
         max_members=swarm_raw.get("max_members", 5),
+        role_models=swarm_raw.get("role_models", {}),
     )
 
     vcr_raw = data.get("vcr", {})
