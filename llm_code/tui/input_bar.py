@@ -133,6 +133,7 @@ class InputBar(Widget):
 
     def _update_dropdown(self) -> None:
         """Recompute dropdown items based on current value."""
+        was_showing = self._show_dropdown
         if self.value.startswith("/") and " " not in self.value:
             query = self.value
             self._dropdown_items = [
@@ -144,6 +145,9 @@ class InputBar(Widget):
             self._dropdown_items = []
             self._dropdown_cursor = 0
             self._show_dropdown = False
+        # Trigger relayout when dropdown visibility or item count changes
+        if self._show_dropdown != was_showing:
+            self.refresh(layout=True)
 
     def render(self) -> RenderResult:
         text = Text()
