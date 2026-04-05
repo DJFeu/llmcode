@@ -227,6 +227,7 @@ class TestInputBar:
     def test_on_key_backspace(self):
         bar = InputBar()
         bar.value = "hello"
+        bar._cursor = 5  # cursor at end
         _simulate_key(bar, "backspace")
         assert bar.value == "hell"
 
@@ -238,26 +239,47 @@ class TestInputBar:
     def test_on_key_shift_enter_multiline(self):
         bar = InputBar()
         bar.value = "line1"
+        bar._cursor = 5
         _simulate_key(bar, "shift+enter")
         assert bar.value == "line1\n"
 
     def test_on_key_enter_submits_and_clears(self):
         bar = InputBar()
         bar.value = "hello"
+        bar._cursor = 5
         _simulate_key(bar, "enter")
         assert bar.value == ""
 
     def test_on_key_enter_ignores_whitespace_only(self):
         bar = InputBar()
         bar.value = "   "
+        bar._cursor = 3
         _simulate_key(bar, "enter")
         assert bar.value == "   "
 
     def test_on_key_escape_clears_and_cancels(self):
         bar = InputBar()
         bar.value = "draft"
+        bar._cursor = 5
         _simulate_key(bar, "escape")
         assert bar.value == ""
+
+    def test_cursor_movement(self):
+        bar = InputBar()
+        bar.value = "hello"
+        bar._cursor = 5
+        _simulate_key(bar, "left")
+        assert bar._cursor == 4
+        _simulate_key(bar, "left")
+        assert bar._cursor == 3
+        # Insert at cursor
+        _simulate_key(bar, "x")
+        assert bar.value == "helxlo"
+        assert bar._cursor == 4
+        # Backspace at cursor
+        _simulate_key(bar, "backspace")
+        assert bar.value == "hello"
+        assert bar._cursor == 3
 
     def test_on_key_disabled_blocks_input(self):
         bar = InputBar()

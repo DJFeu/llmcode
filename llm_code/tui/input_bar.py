@@ -48,6 +48,7 @@ class InputBar(Widget):
     def __init__(self) -> None:
         super().__init__()
         self._vim_engine = None
+        self._cursor = 0  # cursor position within self.value
 
     class Submitted(Message):
         """Fired when user presses Enter."""
@@ -74,7 +75,8 @@ class InputBar(Widget):
 
     def insert_image_marker(self) -> None:
         """Insert an [image] marker at current cursor position."""
-        self.value += self._IMAGE_MARKER
+        self.value = self.value[:self._cursor] + self._IMAGE_MARKER + self.value[self._cursor:]
+        self._cursor += len(self._IMAGE_MARKER)
         self.pending_image_count += 1
 
     def render(self) -> RenderResult:
@@ -92,14 +94,35 @@ class InputBar(Widget):
         if self.disabled:
             text.append("generating…", style="dim italic")
         else:
-            # Render value with inline [image] markers styled in pink
-            parts = self.value.split(self._IMAGE_MARKER)
-            for i, part in enumerate(parts):
-                if i > 0:
-                    text.append("[image] ", style=self._IMAGE_STYLE)
-                text.append(part)
-            text.append("█", style="dim")  # cursor
+            # Render value with cursor at _cursor position
+            val = self.value
+            cur = min(self._cursor, len(val))
+            before = val[:cur]
+            after = val[cur:]
+            # Render before cursor
+            self._render_with_markers(text, before)
+            # Cursor block
+            if after:
+                # Show character at cursor with highlight
+                if after.startswith(self._IMAGE_MARKER):
+                    text.append("[image]", style=f"{self._IMAGE_STYLE} reverse")
+                    after = after[len(self._IMAGE_MARKER):]
+                else:
+                    text.append(after[0], style="reverse")
+                    after = after[1:]
+                self._render_with_markers(text, after)
+            else:
+                text.append("█", style="dim")
         return text
+
+    def _render_with_markers(self, text: Text, s: str) -> None:
+        """Render string with [image] markers styled in pink."""
+        parts = s.split(self._IMAGE_MARKER)
+        for i, part in enumerate(parts):
+            if i > 0:
+                text.append("[image] ", style=self._IMAGE_STYLE)
+            if part:
+                text.append(part)
 
     def get_clean_value(self) -> str:
         """Return value with image markers stripped (for display in chat)."""
@@ -116,12 +139,13 @@ class InputBar(Widget):
             matches = [c for c in SLASH_COMMANDS if c.startswith(self.value)]
             if len(matches) == 1:
                 self.value = matches[0] + " "
+                self._cursor = len(self.value)
             elif matches:
-                # Find common prefix
                 prefix = os.path.commonprefix(matches)
                 if len(prefix) > len(self.value):
                     self.value = prefix
-            return  # Don't add tab character
+                    self._cursor = len(self.value)
+            return
 
         # Vim mode routing
         if self._vim_engine is not None:
@@ -144,15 +168,41 @@ class InputBar(Widget):
             if self.value.strip():
                 self.post_message(self.Submitted(self.value))
                 self.value = ""
+                self._cursor = 0
         elif event.key == "shift+enter":
-            self.value += "\n"
+            self.value = self.value[:self._cursor] + "\n" + self.value[self._cursor:]
+            self._cursor += 1
         elif event.key == "backspace":
-            self.value = self.value[:-1]
+            if self._cursor > 0:
+                self.value = self.value[:self._cursor - 1] + self.value[self._cursor:]
+                self._cursor -= 1
+        elif event.key == "delete":
+            if self._cursor < len(self.value):
+                self.value = self.value[:self._cursor] + self.value[self._cursor + 1:]
+        elif event.key == "left":
+            if self._cursor > 0:
+                self._cursor -= 1
+                self.refresh()
+        elif event.key == "right":
+            if self._cursor < len(self.value):
+                self._cursor += 1
+                self.refresh()
+        elif event.key == "home":
+            self._cursor = 0
+            self.refresh()
+        elif event.key == "end":
+            self._cursor = len(self.value)
+            self.refresh()
         elif event.key == "escape":
             self.value = ""
+            self._cursor = 0
             self.post_message(self.Cancelled())
         elif event.character and len(event.character) == 1:
-            self.value += event.character
+            self.value = self.value[:self._cursor] + event.character + self.value[self._cursor:]
+            self._cursor += 1
 
     def watch_value(self) -> None:
+        # Keep cursor in bounds
+        if self._cursor > len(self.value):
+            self._cursor = len(self.value)
         self.refresh()
