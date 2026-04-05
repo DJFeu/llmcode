@@ -806,6 +806,22 @@ class ConversationRuntime:
             if hasattr(post_result, "__await__"):
                 await post_result
 
+        # 7b. Auto-commit checkpoint after write/edit tools
+        if (
+            hasattr(self._config, "auto_commit")
+            and self._config.auto_commit
+            and call.name in ("write_file", "edit_file")
+            and not tool_result.is_error
+        ):
+            try:
+                from pathlib import Path
+                from llm_code.runtime.auto_commit import auto_commit_file
+                file_path = args.get("file_path") or args.get("path", "")
+                if file_path:
+                    auto_commit_file(Path(file_path), call.name)
+            except Exception:
+                pass  # Never block tool flow for checkpoint failure
+
         # 8. Emit tool execution result event
         if self._vcr_recorder is not None:
             self._vcr_recorder.record("tool_result", {

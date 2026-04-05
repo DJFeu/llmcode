@@ -214,6 +214,7 @@ class RuntimeConfig:
     compressor: CompressorConfig = field(default_factory=CompressorConfig)
     bash_rules: BashRulesConfig = field(default_factory=BashRulesConfig)
     enterprise: EnterpriseConfig = field(default_factory=EnterpriseConfig)
+    auto_commit: bool = False
 
 
 class ConfigSchema(BaseModel):
@@ -451,6 +452,7 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         telemetry=telemetry,
         max_budget_usd=data.get("max_budget_usd", None),
         enterprise=enterprise,
+        auto_commit=data.get("auto_commit", False),
     )
 
 
