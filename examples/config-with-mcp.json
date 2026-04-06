@@ -7,7 +7,7 @@
     "github": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": {"GITHUB_TOKEN": "ghp_your_token_here"}
+      "env": {"GITHUB_TOKEN": "<your-github-token>"}
     },
     "filesystem": {
       "command": "npx",

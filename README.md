@@ -17,8 +17,9 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-3529%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-3578%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
+  <img src="https://img.shields.io/pypi/v/llmcode-cli" alt="PyPI">
 </p>
 
 ---
@@ -49,6 +50,7 @@ Run the same agent experience with a free local model on your own GPU, or with a
 - **ReAct engine** with 5-stage turn loop and streaming tool execution
 - **7-layer error recovery** that self-heals instead of crashing
 - **5-layer memory system** with governance, working, project, task, and summary memory
+- **3-tier skill router** — keyword + TF-IDF + LLM classifier for intent-based skill activation
 - **Multi-agent orchestration** with coordinator pattern and inter-agent messaging
 - **Defense-in-depth security** with 21-point bash checks, MCP sanitization, secret scanning, env filtering
 
@@ -99,7 +101,7 @@ llmcode
 ### Modes
 
 ```bash
-llmcode                       # Default: Fullscreen TUI (Python Textual)
+llmcode                       # Default: Fullscreen TUI
 llmcode --provider ollama     # Auto-detect Ollama + interactive model selector
 llmcode --mode suggest        # Confirm each tool call before execution
 llmcode --mode plan           # Read-only mode, show plan without executing
@@ -143,11 +145,30 @@ pip install llmcode-cli[treesitter]     # Tree-sitter multi-language repo map
 - **Model routing** — different models for sub-agents, compaction, and fallback
 - **Local models get unlimited token output** — no artificial cap on localhost
 
+### Skill Router
+
+Auto-skills are matched to user intent per turn — not dumped wholesale into the system prompt. Works with any model (Claude, Qwen, Gemini).
+
+```
+User message → Tier A: Keyword match (0ms)
+                  ↓ miss
+               Tier B: TF-IDF similarity (~10ms)
+                  ↓ miss
+               Tier C: LLM classifier (optional, ~2-5s)
+                  ↓ miss
+               No skill injected (clean prompt)
+```
+
+- **CJK-aware tokenization** — Chinese, Japanese, Korean text handled correctly
+- **Zero external dependencies** — pure Python TF-IDF with `collections.Counter`
+- **Per-turn caching** — identical messages return cached results instantly
+- Skills can declare `keywords` in YAML frontmatter for precise routing
+
 ### Agent Runtime Engine
 
 The core loop follows a 5-stage **ReAct** (Reason + Act) pattern:
 
-1. **Context preparation** — compress history, load relevant memory, apply HIDA filtering
+1. **Context preparation** — compress history, route skills, load relevant memory, apply HIDA filtering
 2. **Streaming model call** — send conversation + tools, stream response in real-time
 3. **Tool execution** — read-only tools run concurrently during streaming; writes wait
 4. **Attachment collection** — gather file changes, task state, memory updates
@@ -159,7 +180,6 @@ The core loop follows a 5-stage **ReAct** (Reason + Act) pattern:
 - **Speculative execution** — writes pre-execute in a tmpdir overlay before user confirms; confirm copies back, deny discards
 - **5-level context compression** — snip (truncate tool results), microcompact (deduplicate reads), context collapse (summarize old tool calls), autocompact (AI summary), reactive (emergency on 413)
 - **Proactive compaction** — auto-detects model context window via `/v1/models` API, compresses before hitting limit (not after)
-- **API-reported compaction** — uses actual token count from API response (not estimated) for accurate triggers
 - **Cache-aware compression** — preferentially removes non-API-cached messages to preserve cache hits
 - **3-tier prompt cache** — global/project/session scope boundaries for optimal API cache utilization
 - **HIDA dynamic loading** — classifies input into 10 task types, loads only relevant tools/memory/governance rules
@@ -181,6 +201,8 @@ Built-in tools with smart permission classification:
 | **IDE** | ide_open, ide_diagnostics, ide_selection |
 | **Swarm** | swarm_create, swarm_list, swarm_message, swarm_delete, coordinate |
 | **Memory** | LSP, memory tools |
+
+**Smart path resolution** — auto-corrects LLM path mistakes (e.g. `llm-code` vs `llm_code` confusion) with workspace boundary checks to prevent path traversal.
 
 When tool count exceeds 20, non-core tools are deferred and discoverable via `tool_search`.
 
@@ -212,8 +234,6 @@ Injection detection, newline attack prevention, pipe chain limits, interpreter R
 **Environment variable filtering:** Subprocess inherits safe env only. Sensitive vars (`*_KEY`, `*SECRET*`, `*TOKEN*`, `*PASSWORD*`) replaced with `[FILTERED]`. Allowlist preserves PATH, HOME, SSH_AUTH_SOCK, etc.
 
 **File protection:** Sensitive files (`.env`, SSH keys, `credentials.*`, `*.pem`) are blocked on write and warned on read.
-
-**Sandbox detection:** Auto-detects Docker/container environments and restricts paths.
 
 **Permission system:** 6 modes (read_only / workspace_write / full_access / prompt / plan / auto_accept) with allow/deny lists, shadowed rule detection, and input-aware classification (`ls` auto-approved, `rm -rf` needs confirmation). Switch at runtime with `/mode suggest|normal|plan`.
 
@@ -250,11 +270,12 @@ PLAN --> DO --> VERIFY --> CLOSE --> DONE
 
 ### Terminal UI
 
-- **Fullscreen TUI** (default) — Python Textual, no Node.js required, Claude Code-style UI
-  - Welcome banner, markdown rendering, syntax-highlighted code blocks
+- **Fullscreen TUI** — Python Textual, no Node.js required
+  - Native terminal text selection (mouse=False, plain Text rendering for CJK compatibility)
+  - Welcome banner, inline markdown styling (bold, code, headings)
   - Scrollable slash command dropdown with fuzzy match on typos ("did you mean /search?")
-  - Inline `[image]` markers with `Cmd+V` paste support (text and images)
-  - Interactive marketplace browser for skills, plugins, and MCP servers (aligned with Claude Code official architecture)
+  - `Cmd+V` clipboard paste (auto-detects text vs image)
+  - Interactive marketplace browser for skills, plugins, and MCP servers
   - Hot-reload for skills, plugins, MCP — no restart needed after install
   - Tabbed `/help` modal (general / commands / custom-commands)
   - ToolBlock diff view with colored +/- lines and line numbers
@@ -339,7 +360,7 @@ Sources: **Official** (anthropics/claude-plugins-official), **Community**, **npm
     "github": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": {"GITHUB_TOKEN": "ghp_xxx"}
+      "env": {"GITHUB_TOKEN": "<your-github-token>"}
     }
   }
 }
@@ -362,12 +383,7 @@ Supports **stdio**, **HTTP**, **SSE**, and **WebSocket** transports with health 
 
 ```json
 {
-  "model": "qwen3.5-122b",
-  "model_aliases": {
-    "qwen": "/models/Qwen3.5-122B-A10B-int4-AutoRound",
-    "fast": "qwen3.5-7b",
-    "gpt": "gpt-4o"
-  },
+  "model": "qwen3.5",
   "provider": {
     "base_url": "http://localhost:8000/v1",
     "api_key_env": "LLM_API_KEY",
@@ -382,10 +398,15 @@ Supports **stdio**, **HTTP**, **SSE**, and **WebSocket** transports with health 
     "compaction": "qwen3.5-7b",
     "fallback": "qwen3.5-7b"
   },
-  "max_budget_usd": 5.00,
+  "skill_router": {
+    "enabled": true,
+    "tier_a": true,
+    "tier_b": true,
+    "tier_c": false,
+    "similarity_threshold": 0.3
+  },
   "thinking": { "mode": "adaptive", "budget_tokens": 10000 },
   "dream": { "enabled": true, "min_turns": 3 },
-  "hida": { "enabled": true },
   "hooks": [
     {"event": "post_tool_use", "tool_pattern": "write_*|edit_*", "command": "ruff format {path}"}
   ],
@@ -406,7 +427,6 @@ Supports **stdio**, **HTTP**, **SSE**, and **WebSocket** transports with health 
 | `/mcp` | Browse & install MCP servers |
 | `/memory` | View project memory |
 | `/memory consolidate` | Run DreamTask now |
-| `/memory history` | View consolidation history |
 | `/task` | Task lifecycle (new/verify/close) |
 | `/swarm` | Multi-agent (create/coordinate/stop) |
 | `/search <query>` | Search conversation history |
@@ -414,37 +434,35 @@ Supports **stdio**, **HTTP**, **SSE**, and **WebSocket** transports with health 
 | `/vim` | Toggle vim keybindings |
 | `/voice` | Toggle voice input |
 | `/image` | Paste/load an image |
+| `/copy` | Copy last response to clipboard |
 | `/cron` | Scheduled tasks |
 | `/vcr` | Session recording |
 | `/checkpoint` | Session checkpoints |
 | `/ide` | IDE connection status |
 | `/lsp` | Language Server Protocol status |
 | `/index` | Codebase indexing |
-| `/hida` | HIDA classification info |
 | `/cd <path>` | Change working directory |
 | `/mode <suggest\|normal\|plan>` | Switch interaction mode |
 | `/diff` | Show changes since last checkpoint |
 | `/undo [N]` | Undo last N file changes |
-| `/model route` | Show model routing table |
-| `/cancel` | Cancel running operation |
 | `/cost` | Token usage + cost |
 | `/budget <n>` | Set token budget |
 | `/clear` | Clear conversation |
-| `/exit`, `/quit` | Quit |
+| `/exit` | Quit |
 
 ---
 
 ## Architecture
 
 ```
-llm_code/               28,500+ lines Python
+llm_code/               29,000+ lines Python
 ├── api/                Provider abstraction (OpenAI-compat + Anthropic)
 ├── cli/                CLI entry point, TUI launcher, oneshot modes (-x/-q)
-├── runtime/            ReAct engine, memory layers, compression, hooks,
-│                       permissions, checkpoint, dream, VCR, speculative
-│                       execution, telemetry, file protection, sandbox,
-│                       prompt guard, secret scanner, conversation DB,
-│                       tree-sitter repo map, proactive compaction
+├── runtime/            ReAct engine, memory layers, skill router,
+│                       compression, hooks, permissions, checkpoint,
+│                       dream, VCR, speculative execution, telemetry,
+│                       file protection, sandbox, prompt guard, secret
+│                       scanner, conversation DB, tree-sitter repo map
 ├── tools/              30+ tools with deferred loading + security
 ├── task/               PLAN/DO/VERIFY/CLOSE state machine
 ├── hida/               Dynamic context loading (10-type classifier)
@@ -459,7 +477,7 @@ llm_code/               28,500+ lines Python
 ├── ide/                IDE bridge (WebSocket JSON-RPC server)
 ├── swarm/              Multi-agent (coordinator, tmux/subprocess, mailbox)
 ├── utils/              Notebook, diff, hyperlinks, search, text normalize
-tests/                  3,529 tests across 261 test files
+tests/                  3,578 tests across 263 test files
 ```
 
 ---
@@ -471,7 +489,7 @@ git clone https://github.com/DJFeu/llmcode
 cd llmcode
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest                  # 3,529 tests
+pytest                  # 3,578 tests
 ruff check llm_code/    # lint
 ```
 
