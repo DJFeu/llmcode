@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from llm_code.analysis.cache import load_results, save_results
+from llm_code.analysis.go_rules import register_go_rules
 from llm_code.analysis.js_rules import register_js_rules
 from llm_code.analysis.python_rules import check_circular_import, register_python_rules
 from llm_code.analysis.rules import AnalysisResult, RuleRegistry, Violation
@@ -28,7 +29,8 @@ _SKIP_DIRS = frozenset({
 
 _PYTHON_EXTS = frozenset({".py"})
 _JS_EXTS = frozenset({".js", ".ts", ".jsx", ".tsx"})
-_ANALYSABLE_EXTS = _PYTHON_EXTS | _JS_EXTS
+_GO_EXTS = frozenset({".go"})
+_ANALYSABLE_EXTS = _PYTHON_EXTS | _JS_EXTS | _GO_EXTS
 _MAX_FILES = 500
 
 
@@ -54,6 +56,8 @@ def _language_for_file(path: Path) -> str:
         return "python"
     if path.suffix in _JS_EXTS:
         return "javascript"
+    if path.suffix in _GO_EXTS:
+        return "go"
     return "other"
 
 
@@ -63,6 +67,7 @@ def _build_registry() -> RuleRegistry:
     register_universal_rules(registry)
     register_python_rules(registry)
     register_js_rules(registry)
+    register_go_rules(registry)
     return registry
 
 
