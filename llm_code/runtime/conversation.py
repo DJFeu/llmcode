@@ -217,7 +217,7 @@ class ConversationRuntime:
         if self._permission_future is not None and not self._permission_future.done():
             self._permission_future.set_result(response)
 
-    async def run_turn(self, user_input: str, images: list | None = None) -> AsyncIterator[StreamEvent]:
+    async def run_turn(self, user_input: str, images: list | None = None, active_skill_content: str | None = None) -> AsyncIterator[StreamEvent]:
         """Run one user turn (may involve multiple LLM calls for tool use)."""
         logger.debug("Starting turn: %s", user_input[:80])
         _turn_start = time.monotonic()
@@ -352,6 +352,7 @@ class ConversationRuntime:
                 tools=tool_defs,
                 native_tools=use_native,
                 skills=self._skills,
+                active_skill_content=active_skill_content,
                 mcp_instructions=_mcp_instructions,
                 memory_entries=_memory_entries,
                 task_manager=self._task_manager,

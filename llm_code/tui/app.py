@@ -847,7 +847,10 @@ class LLMCodeTUI(App):
             event.stop()
 
     async def _run_turn(self, user_input: str, images: list | None = None) -> None:
-        """Run a conversation turn with full streaming event handling."""
+        """Run a conversation turn with full streaming event handling.
+
+        If _active_skill is set, its content is injected into the system prompt.
+        """
         import asyncio
         import time
         from llm_code.api.types import (
@@ -912,7 +915,15 @@ class LLMCodeTUI(App):
         self._runtime.plan_mode = self._plan_mode
 
         try:
-            async for event in self._runtime.run_turn(user_input, images=images):
+            # Consume active skill content (one-shot injection)
+            _skill_content = None
+            if hasattr(self, "_active_skill") and self._active_skill is not None:
+                _skill_content = self._active_skill.content
+                self._active_skill = None
+
+            async for event in self._runtime.run_turn(
+                user_input, images=images, active_skill_content=_skill_content,
+            ):
                 # Clean up permission widget from previous iteration
                 if self._permission_pending and not isinstance(event, StreamPermissionRequest):
                     self._permission_pending = False
@@ -1147,20 +1158,40 @@ class LLMCodeTUI(App):
         handler = getattr(self, f"_cmd_{name}", None)
         if handler is not None:
             handler(args)
+            return
+
+        # Check loaded skills — superpowers etc. register as command skills
+        if self._skills:
+            for skill in self._skills.command_skills:
+                if skill.trigger == name:
+                    # Activate the skill: inject its content as context for the next turn
+                    chat = self.query_one(ChatScrollView)
+                    chat.add_entry(AssistantText(f"Activated skill: {skill.name}"))
+                    # Run as a turn with the skill content as system context
+                    prompt = args if args else f"Using skill: {skill.name}"
+                    self._active_skill = skill
+                    images = list(self._pending_images)
+                    self._pending_images.clear()
+                    self.query_one(InputBar).pending_image_count = 0
+                    self.run_worker(self._run_turn(prompt, images=images), name="run_turn")
+                    return
+
+        chat = self.query_one(ChatScrollView)
+        # Suggest closest matching command or skill
+        from difflib import get_close_matches
+        from llm_code.cli.commands import KNOWN_COMMANDS
+        all_names = set(KNOWN_COMMANDS)
+        if self._skills:
+            all_names.update(s.trigger for s in self._skills.command_skills if s.trigger)
+        matches = get_close_matches(name, all_names, n=1, cutoff=0.5)
+        if matches:
+            chat.add_entry(AssistantText(
+                f"Unknown command: /{name} — did you mean /{matches[0]}?"
+            ))
         else:
-            chat = self.query_one(ChatScrollView)
-            # Suggest closest matching command
-            from difflib import get_close_matches
-            from llm_code.cli.commands import KNOWN_COMMANDS
-            matches = get_close_matches(name, KNOWN_COMMANDS, n=1, cutoff=0.5)
-            if matches:
-                chat.add_entry(AssistantText(
-                    f"Unknown command: /{name} — did you mean /{matches[0]}?"
-                ))
-            else:
-                chat.add_entry(AssistantText(
-                    f"Unknown command: /{name} — type /help for help"
-                ))
+            chat.add_entry(AssistantText(
+                f"Unknown command: /{name} — type /help for help"
+            ))
 
     def _cmd_exit(self, args: str) -> None:
         import asyncio
