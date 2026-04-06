@@ -1,49 +1,63 @@
-"""Slash command parsing for the CLI layer."""
+"""Slash command registry — single source of truth."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-KNOWN_COMMANDS = frozenset({
-    "help",
-    "clear",
-    "model",
-    "session",
-    "config",
-    "cd",
-    "image",
-    "cost",
-    "exit",
-    "quit",
-    "plugin",
-    "skill",
-    "undo",
-    "memory",
-    "index",
-    "lsp",
-    "mcp",
-    "budget",
-    "thinking",
-    "cron",
-    "vim",
-    "voice",
-    "ide",
-    "swarm",
-    "search",
-    "vcr",
-    "hida",
-    "task",
-    "checkpoint",
-    "cancel",
-    "analyze",
-    "diff_check",
-    "plan",
-    "dump",
-    "map",
-    "harness",
-    "knowledge",
-    "diff",
-    "mode",
-})
+
+@dataclass(frozen=True)
+class CommandDef:
+    """Definition of a single slash command."""
+
+    name: str
+    description: str
+    no_arg: bool = False  # True = execute immediately on selection
+
+
+# Canonical command list — all other files import from here.
+COMMAND_REGISTRY: tuple[CommandDef, ...] = (
+    CommandDef("help", "Show help", no_arg=True),
+    CommandDef("clear", "Clear conversation", no_arg=True),
+    CommandDef("model", "Switch model"),
+    CommandDef("cost", "Token usage", no_arg=True),
+    CommandDef("budget", "Set token budget"),
+    CommandDef("undo", "Undo last change"),
+    CommandDef("cd", "Change directory"),
+    CommandDef("config", "Runtime config", no_arg=True),
+    CommandDef("thinking", "Toggle thinking"),
+    CommandDef("vim", "Toggle vim mode", no_arg=True),
+    CommandDef("image", "Attach image"),
+    CommandDef("search", "Search history"),
+    CommandDef("index", "Project index"),
+    CommandDef("session", "Sessions"),
+    CommandDef("skill", "Browse skills", no_arg=True),
+    CommandDef("plugin", "Browse plugins", no_arg=True),
+    CommandDef("mcp", "MCP servers", no_arg=True),
+    CommandDef("memory", "Project memory"),
+    CommandDef("cron", "Scheduled tasks"),
+    CommandDef("task", "Task lifecycle"),
+    CommandDef("swarm", "Swarm coordination"),
+    CommandDef("voice", "Voice input"),
+    CommandDef("ide", "IDE bridge"),
+    CommandDef("vcr", "VCR recording"),
+    CommandDef("checkpoint", "Checkpoints"),
+    CommandDef("diff", "Diff since checkpoint"),
+    CommandDef("hida", "HIDA classification", no_arg=True),
+    CommandDef("lsp", "LSP status", no_arg=True),
+    CommandDef("cancel", "Cancel generation", no_arg=True),
+    CommandDef("plan", "Plan/Act mode"),
+    CommandDef("mode", "Switch mode (suggest/normal/plan)"),
+    CommandDef("analyze", "Code analysis"),
+    CommandDef("diff_check", "Diff analysis"),
+    CommandDef("dump", "Dump context"),
+    CommandDef("map", "Repo map"),
+    CommandDef("harness", "Harness controls"),
+    CommandDef("knowledge", "Knowledge base"),
+    CommandDef("exit", "Quit", no_arg=True),
+    CommandDef("quit", "Quit", no_arg=True),
+)
+
+# Derived sets for backward compatibility
+KNOWN_COMMANDS: frozenset[str] = frozenset(c.name for c in COMMAND_REGISTRY)
 
 
 @dataclass(frozen=True)

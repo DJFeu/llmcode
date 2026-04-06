@@ -1228,43 +1228,12 @@ class LLMCodeTUI(App):
         skills = self._skills
         app_ref = self
 
+        from llm_code.cli.commands import COMMAND_REGISTRY
+
         _COMMANDS = [
-            ("/help", "Show this help"),
-            ("/clear", "Clear conversation"),
-            ("/model", "Switch model"),
-            ("/cost", "Token usage & costs"),
-            ("/budget", "Set token budget"),
-            ("/undo", "Undo last file change"),
-            ("/cd", "Change directory"),
-            ("/config", "Show runtime config"),
-            ("/thinking", "Toggle extended thinking"),
-            ("/vim", "Toggle vim mode"),
-            ("/plan", "Toggle plan/act mode (read-only when ON)"),
-            ("/harness", "Show/configure harness quality controls"),
-            ("/knowledge", "View or rebuild project knowledge base"),
-            ("/dump", "Dump codebase to .llmcode/dump.txt for external LLM use"),
-            ("/map", "Repo map"),
-            ("/analyze", "Run code analysis rules on the codebase"),
-            ("/diff_check", "Show new/fixed violations vs last analysis"),
-            ("/image", "Attach image"),
-            ("/search", "Search conversation"),
-            ("/index", "Project index"),
-            ("/session", "Session management"),
-            ("/skill", "Browse & manage skills"),
-            ("/plugin", "Browse & manage plugins"),
-            ("/mcp", "Browse & manage MCP servers"),
-            ("/memory", "Project memory"),
-            ("/cron", "Scheduled tasks"),
-            ("/task", "Task lifecycle"),
-            ("/swarm", "Swarm coordination"),
-            ("/voice", "Voice input"),
-            ("/ide", "IDE bridge"),
-            ("/vcr", "VCR recording"),
-            ("/checkpoint", "Session checkpoints"),
-            ("/hida", "HIDA classification"),
-            ("/lsp", "LSP status"),
-            ("/cancel", "Cancel generation"),
-            ("/exit", "Quit"),
+            (f"/{c.name}", c.description)
+            for c in COMMAND_REGISTRY
+            if c.name not in ("quit",)  # skip duplicate of /exit
         ]
 
         _custom_cmds: list[tuple[str, str]] = []

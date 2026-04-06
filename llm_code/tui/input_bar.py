@@ -11,65 +11,17 @@ from textual.widget import Widget
 from textual.app import RenderResult
 from rich.text import Text
 
+from llm_code.cli.commands import COMMAND_REGISTRY
 from llm_code.tui.keybindings import KeybindingManager, load_keybindings
 
-SLASH_COMMANDS = sorted([
-    "/help", "/clear", "/exit", "/quit", "/model", "/cost", "/budget",
-    "/undo", "/cd", "/config", "/thinking", "/vim", "/image", "/search",
-    "/index", "/session", "/skill", "/plugin", "/mcp", "/memory",
-    "/lsp", "/cancel", "/cron", "/task", "/swarm", "/voice", "/ide",
-    "/vcr", "/hida", "/checkpoint",
-    "/diff", "/plan", "/analyze", "/diff_check", "/dump", "/map",
-    "/harness", "/knowledge",
-    "/mode",
-])
+# Derived from the single-source registry in commands.py
+SLASH_COMMANDS = sorted(f"/{c.name}" for c in COMMAND_REGISTRY)
 
 # Commands that execute immediately (no arguments needed)
-_NO_ARG_COMMANDS = frozenset({
-    "/help", "/clear", "/cost", "/config", "/vim", "/skill", "/plugin",
-    "/mcp", "/lsp", "/cancel", "/exit", "/quit", "/hida",
-})
+_NO_ARG_COMMANDS = frozenset(f"/{c.name}" for c in COMMAND_REGISTRY if c.no_arg)
 
 SLASH_COMMAND_DESCS: list[tuple[str, str]] = [
-    ("/help", "Show help"),
-    ("/clear", "Clear conversation"),
-    ("/model", "Switch model"),
-    ("/cost", "Token usage"),
-    ("/budget", "Set token budget"),
-    ("/undo", "Undo last change"),
-    ("/cd", "Change directory"),
-    ("/config", "Runtime config"),
-    ("/thinking", "Toggle thinking"),
-    ("/vim", "Toggle vim mode"),
-    ("/image", "Attach image"),
-    ("/search", "Search history"),
-    ("/index", "Project index"),
-    ("/session", "Sessions"),
-    ("/skill", "Browse skills"),
-    ("/plugin", "Browse plugins"),
-    ("/mcp", "MCP servers"),
-    ("/memory", "Project memory"),
-    ("/cron", "Scheduled tasks"),
-    ("/task", "Task lifecycle"),
-    ("/swarm", "Swarm coordination"),
-    ("/voice", "Voice input"),
-    ("/ide", "IDE bridge"),
-    ("/vcr", "VCR recording"),
-    ("/checkpoint", "Checkpoints"),
-    ("/diff", "Diff since checkpoint"),
-    ("/hida", "HIDA classification"),
-    ("/lsp", "LSP status"),
-    ("/cancel", "Cancel generation"),
-    ("/exit", "Quit"),
-    ("/quit", "Quit"),
-    ("/plan", "Plan/Act mode"),
-    ("/analyze", "Code analysis"),
-    ("/diff_check", "Diff analysis"),
-    ("/dump", "Dump context"),
-    ("/map", "Repo map"),
-    ("/harness", "Harness controls"),
-    ("/knowledge", "Knowledge base"),
-    ("/mode", "Switch mode (suggest/normal/plan)"),
+    (f"/{c.name}", c.description) for c in COMMAND_REGISTRY
 ]
 
 

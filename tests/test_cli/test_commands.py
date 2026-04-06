@@ -1,8 +1,53 @@
-"""Tests for CLI slash command parsing."""
+"""Tests for CLI slash command parsing and registry."""
 from __future__ import annotations
 
 
-from llm_code.cli.commands import SlashCommand, parse_slash_command
+from llm_code.cli.commands import (
+    CommandDef,
+    COMMAND_REGISTRY,
+    KNOWN_COMMANDS,
+    SlashCommand,
+    parse_slash_command,
+)
+
+
+class TestCommandRegistry:
+    """Tests for the single-source-of-truth command registry."""
+
+    def test_registry_is_tuple_of_command_defs(self) -> None:
+        assert isinstance(COMMAND_REGISTRY, tuple)
+        for entry in COMMAND_REGISTRY:
+            assert isinstance(entry, CommandDef)
+
+    def test_known_commands_derived_from_registry(self) -> None:
+        expected = frozenset(c.name for c in COMMAND_REGISTRY)
+        assert KNOWN_COMMANDS == expected
+
+    def test_no_duplicate_names(self) -> None:
+        names = [c.name for c in COMMAND_REGISTRY]
+        # "quit" is intentionally a duplicate of "exit", so exclude it
+        non_alias = [n for n in names if n != "quit"]
+        assert len(non_alias) == len(set(non_alias))
+
+    def test_all_defs_frozen(self) -> None:
+        for entry in COMMAND_REGISTRY:
+            assert entry.__dataclass_params__.frozen  # type: ignore[attr-defined]
+
+    def test_exit_and_quit_present(self) -> None:
+        names = {c.name for c in COMMAND_REGISTRY}
+        assert "exit" in names
+        assert "quit" in names
+
+    def test_no_arg_commands_have_flag(self) -> None:
+        no_arg_names = {c.name for c in COMMAND_REGISTRY if c.no_arg}
+        for name in ("help", "clear", "cost", "config", "vim", "skill",
+                      "plugin", "mcp", "lsp", "cancel", "exit", "quit", "hida"):
+            assert name in no_arg_names, f"{name} should be no_arg=True"
+
+    def test_arg_commands_have_no_flag(self) -> None:
+        arg_names = {c.name for c in COMMAND_REGISTRY if not c.no_arg}
+        for name in ("model", "budget", "cd", "image", "search", "memory"):
+            assert name in arg_names, f"{name} should be no_arg=False"
 
 
 class TestParseSlashCommand:
