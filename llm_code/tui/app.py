@@ -159,6 +159,7 @@ class LLMCodeTUI(App):
             ("Quick start", "/help · /skill · /mcp"),
             ("Multiline", "Shift+Enter"),
             ("Images", paste_key),
+            ("Scroll", "PageUp/Down · Shift+↑/↓"),
         ]:
             text.append(f"  {label:<14}", style="dim")
             text.append(f" {value}\n", style="white")
