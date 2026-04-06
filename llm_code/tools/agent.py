@@ -68,7 +68,7 @@ class AgentTool(Tool):
 
     @property
     def required_permission(self) -> PermissionLevel:
-        return PermissionLevel.FULL_ACCESS
+        return PermissionLevel.READ_ONLY
 
     def is_concurrency_safe(self, args: dict) -> bool:
         # Each sub-agent has its own session
