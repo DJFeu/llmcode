@@ -150,6 +150,17 @@ class ConversationRuntime:
         self._recovery_checkpoint = recovery_checkpoint
         self._cost_tracker = cost_tracker
         self._skills = skills
+        self._skill_router = None
+        if skills and skills.auto_skills:
+            from llm_code.runtime.skill_router import SkillRouter
+            from llm_code.runtime.config import SkillRouterConfig
+            router_cfg = getattr(config, "skill_router", SkillRouterConfig())
+            self._skill_router = SkillRouter(
+                skills=skills.auto_skills,
+                config=router_cfg,
+                provider=provider,
+                model=getattr(config, "model", ""),
+            )
         self._mcp_manager = mcp_manager
         self._memory_store = memory_store
         self._task_manager = task_manager
@@ -362,6 +373,11 @@ class ConversationRuntime:
                 except Exception:
                     pass
 
+            # Route auto-skills based on user intent
+            _routed: tuple = ()
+            if self._skill_router is not None:
+                _routed = tuple(self._skill_router.route(user_input))
+
             system_prompt = self._prompt_builder.build(
                 self._context,
                 tools=tool_defs,
@@ -372,6 +388,7 @@ class ConversationRuntime:
                 memory_entries=_memory_entries,
                 task_manager=self._task_manager,
                 project_index=self._project_index,
+                routed_skills=_routed,
             )
             if _deferred_hint:
                 system_prompt = system_prompt + "\n\n" + _deferred_hint
@@ -426,6 +443,7 @@ class ConversationRuntime:
                         memory_entries=_memory_entries,
                         task_manager=self._task_manager,
                         project_index=self._project_index,
+                        routed_skills=_routed,
                     )
                     request = MessageRequest(
                         model=self._active_model,

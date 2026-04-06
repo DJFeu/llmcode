@@ -1,13 +1,12 @@
 """WriteFileTool — writes content to a file, auto-creating parent directories."""
 from __future__ import annotations
 
-import pathlib
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
 from llm_code.runtime.file_protection import check_write
-from llm_code.tools.base import PermissionLevel, Tool, ToolResult
+from llm_code.tools.base import PermissionLevel, Tool, ToolResult, resolve_path
 from llm_code.utils.errors import friendly_error
 
 if TYPE_CHECKING:
@@ -48,7 +47,7 @@ class WriteFileTool(Tool):
         return WriteFileInput
 
     def execute(self, args: dict, overlay: "OverlayFS | None" = None) -> ToolResult:
-        path = pathlib.Path(args["path"])
+        path = resolve_path(args["path"])
         content: str = args["content"]
 
         protection = check_write(str(path))

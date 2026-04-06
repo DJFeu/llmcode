@@ -40,17 +40,23 @@ def test_plugin_with_skills_loaded(tmp_path):
 
 
 def test_skills_in_prompt():
-    """Auto skills appear in system prompt, command skills don't."""
+    """Routed skills appear in system prompt, command skills don't."""
     builder = SystemPromptBuilder()
     ctx = ProjectContext(cwd=Path("/tmp"), is_git_repo=False, git_status="", instructions="")
+    auto_skill = Skill(name="auto-one", description="auto", content="AUTO CONTENT", auto=True, trigger="a")
+    cmd_skill = Skill(name="cmd-one", description="cmd", content="CMD CONTENT", auto=False, trigger="c")
     skills = SkillSet(
-        auto_skills=(Skill(name="auto-one", description="auto", content="AUTO CONTENT", auto=True, trigger="a"),),
-        command_skills=(Skill(name="cmd-one", description="cmd", content="CMD CONTENT", auto=False, trigger="c"),),
+        auto_skills=(auto_skill,),
+        command_skills=(cmd_skill,),
     )
-    prompt = builder.build(ctx, skills=skills)
+    # With routed_skills, only those skills are injected
+    prompt = builder.build(ctx, skills=skills, routed_skills=(auto_skill,))
     assert "AUTO CONTENT" in prompt
     assert "CMD CONTENT" not in prompt
     assert "CACHE BOUNDARY" in prompt
+    # Without routed_skills, no auto-skills appear
+    prompt_empty = builder.build(ctx, skills=skills)
+    assert "AUTO CONTENT" not in prompt_empty
 
 
 def test_prefix_cache_order():

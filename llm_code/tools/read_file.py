@@ -8,7 +8,7 @@ import pathlib
 from pydantic import BaseModel
 
 from llm_code.runtime.file_protection import check_read
-from llm_code.tools.base import PermissionLevel, Tool, ToolResult
+from llm_code.tools.base import PermissionLevel, Tool, ToolResult, resolve_path
 from llm_code.utils.errors import friendly_error
 
 
@@ -78,7 +78,7 @@ class ReadFileTool(Tool):
         return True
 
     def execute(self, args: dict) -> ToolResult:
-        path = pathlib.Path(args["path"])
+        path = resolve_path(args["path"])
         offset: int = int(args.get("offset", 1))
         limit: int = int(args.get("limit", 2000))
 

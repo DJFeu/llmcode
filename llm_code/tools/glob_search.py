@@ -1,12 +1,11 @@
 """GlobSearchTool — find files matching a glob pattern, sorted by mtime."""
 from __future__ import annotations
 
-import pathlib
 from typing import Callable
 
 from pydantic import BaseModel
 
-from llm_code.tools.base import PermissionLevel, Tool, ToolProgress, ToolResult
+from llm_code.tools.base import PermissionLevel, Tool, ToolProgress, ToolResult, resolve_path
 
 _MAX_RESULTS = 100
 _PROGRESS_INTERVAL = 50  # emit a progress event every N files scanned
@@ -59,7 +58,7 @@ class GlobSearchTool(Tool):
 
     def execute(self, args: dict) -> ToolResult:
         pattern: str = args["pattern"]
-        search_path = pathlib.Path(args.get("path", "."))
+        search_path = resolve_path(args.get("path", "."))
 
         try:
             matches = list(search_path.glob(pattern))
@@ -81,7 +80,7 @@ class GlobSearchTool(Tool):
         on_progress: Callable[[ToolProgress], None],
     ) -> ToolResult:
         pattern: str = args["pattern"]
-        search_path = pathlib.Path(args.get("path", "."))
+        search_path = resolve_path(args.get("path", "."))
 
         try:
             all_matches = list(search_path.glob(pattern))

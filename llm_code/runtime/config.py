@@ -185,6 +185,19 @@ class EnterpriseConfig:
 
 
 @dataclass(frozen=True)
+class SkillRouterConfig:
+    """Configuration for the 3-tier skill router."""
+
+    enabled: bool = True
+    tier_a: bool = True            # keyword matching
+    tier_b: bool = True            # TF-IDF similarity
+    tier_c: bool = False           # LLM classifier (adds latency)
+    similarity_threshold: float = 0.3
+    max_skills_per_turn: int = 2
+    tier_c_model: str = ""         # empty = use same model
+
+
+@dataclass(frozen=True)
 class RuntimeConfig:
     model: str = ""
     provider_base_url: str | None = None
@@ -230,6 +243,7 @@ class RuntimeConfig:
     lsp_auto_diagnose: bool = True
     harness: HarnessConfig = field(default_factory=HarnessConfig)
     knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
+    skill_router: SkillRouterConfig = field(default_factory=lambda: SkillRouterConfig())
 
 
 class ConfigSchema(BaseModel):

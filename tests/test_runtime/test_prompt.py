@@ -168,7 +168,7 @@ class TestSystemPromptBuilderCacheAndSkills:
         auto_skill = self._make_skill(name="linter", auto=True)
         skill_set = SkillSet(auto_skills=(auto_skill,), command_skills=())
         ctx = self._make_context(tmp_path)
-        result = SystemPromptBuilder().build(ctx, skills=skill_set)
+        result = SystemPromptBuilder().build(ctx, skills=skill_set, routed_skills=(auto_skill,))
         boundary_idx = result.index(self._CACHE_MARKER)
         assert "Content of linter" in result
         assert result.index("Content of linter") < boundary_idx

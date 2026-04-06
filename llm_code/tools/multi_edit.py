@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 
 from llm_code.runtime.file_protection import check_write
-from llm_code.tools.base import PermissionLevel, Tool, ToolResult
+from llm_code.tools.base import PermissionLevel, Tool, ToolResult, resolve_path
 from llm_code.tools.edit_file import _apply_edit
 
 if TYPE_CHECKING:
@@ -78,6 +78,10 @@ class MultiEditTool(Tool):
             )
 
         edits = [SingleEdit(**e) if isinstance(e, dict) else e for e in edits_raw]
+
+        # Resolve paths (handles LLM absolute-path mistakes)
+        for edit in edits:
+            edit.path = str(resolve_path(edit.path))
 
         # Phase 1: Pre-validate (existence + write permission)
         errors: list[str] = []

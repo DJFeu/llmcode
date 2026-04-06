@@ -26,7 +26,9 @@ class LLMCodeTUI(App):
 
     TITLE = "llm-code"
     CSS = APP_CSS
-    ENABLE_MOUSE_SUPPORT = False  # CRITICAL: allow terminal mouse selection + copy
+    BINDINGS = [
+        ("ctrl+d", "quit_app", "Quit"),
+    ]
 
     def __init__(
         self,
@@ -717,8 +719,13 @@ class LLMCodeTUI(App):
 
         self.run_worker(_start(), name=f"mcp_start_{name}")
 
-    def _paste_clipboard_image(self) -> None:
-        """Try to capture an image from the system clipboard."""
+    def _paste_clipboard_image(self, *, silent: bool = False) -> None:
+        """Try to capture an image from the system clipboard.
+
+        Args:
+            silent: If True, don't show error when no image is found.
+                    Used by on_paste fallback; Ctrl+I sets silent=False.
+        """
         chat = self.query_one(ChatScrollView)
         input_bar = self.query_one(InputBar)
         try:
@@ -727,12 +734,14 @@ class LLMCodeTUI(App):
             if img is not None:
                 self._pending_images.append(img)
                 input_bar.insert_image_marker()
-            else:
+            elif not silent:
                 chat.add_entry(AssistantText("No image found in clipboard."))
         except (ImportError, FileNotFoundError, OSError):
-            chat.add_entry(AssistantText("Clipboard not available (install pngpaste: brew install pngpaste)."))
+            if not silent:
+                chat.add_entry(AssistantText("Clipboard not available (install pngpaste: brew install pngpaste)."))
         except Exception as exc:
-            chat.add_entry(AssistantText(f"Clipboard error: {exc}"))
+            if not silent:
+                chat.add_entry(AssistantText(f"Clipboard error: {exc}"))
 
     def on_paste(self, event) -> None:
         """Handle terminal paste events — insert text and check for images.
@@ -754,8 +763,8 @@ class LLMCodeTUI(App):
                 input_bar._cursor += len(paste_text)
                 input_bar.refresh()
                 return  # text paste — don't check for image
-        # No text pasted — check clipboard for image
-        self._paste_clipboard_image()
+        # No text pasted — silently check clipboard for image
+        self._paste_clipboard_image(silent=True)
 
     def on_screen_resume(self) -> None:
         """Return focus to InputBar after any modal screen closes."""
@@ -809,19 +818,6 @@ class LLMCodeTUI(App):
 
     def on_key(self, event: "events.Key") -> None:
         """Handle single-key permission responses (y/n/a), image paste, and scroll."""
-        # Ctrl+D — quit (with dream consolidation)
-        if event.key == "ctrl+d":
-            import asyncio
-            asyncio.ensure_future(self._graceful_exit())
-            return
-
-        # Ctrl+V / Ctrl+I — paste image from clipboard
-        if event.key in ("ctrl+v", "ctrl+i"):
-            self._paste_clipboard_image()
-            event.prevent_default()
-            event.stop()
-            return
-
         # Page Up / Page Down for chat scrolling
         if event.key == "pageup":
             chat = self.query_one(ChatScrollView)
@@ -1194,14 +1190,21 @@ class LLMCodeTUI(App):
             ))
 
     def _cmd_exit(self, args: str) -> None:
-        import asyncio
-        asyncio.ensure_future(self._graceful_exit())
+        self.run_worker(self._graceful_exit(), name="graceful_exit")
 
     _cmd_quit = _cmd_exit
 
+    def action_quit_app(self) -> None:
+        """Textual action bound to Ctrl+D."""
+        self.run_worker(self._graceful_exit(), name="graceful_exit")
+
     async def _graceful_exit(self) -> None:
-        """Dream consolidation + session save before exit."""
-        await self._dream_on_exit()
+        """Dream consolidation (best-effort) + exit."""
+        import asyncio as _aio
+        try:
+            await _aio.wait_for(self._dream_on_exit(), timeout=5.0)
+        except Exception:
+            pass
         self.exit()
 
     async def _dream_on_exit(self) -> None:

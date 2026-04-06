@@ -42,6 +42,9 @@ Rules:
 - Report results honestly — do not claim something works without verifying
 - Keep responses concise — lead with the answer, not the reasoning
 - For code changes, show the minimal diff needed
+- Do NOT use the agent tool unless the user explicitly asks for it or the task genuinely \
+requires parallel sub-tasks. For normal questions, conversations, or simple tasks, \
+respond directly without spawning agents.
 """
 
 _XML_TOOL_INSTRUCTIONS = """\
@@ -93,6 +96,7 @@ class SystemPromptBuilder:
         mcp_instructions: dict[str, str] | None = None,
         governance_rules: "tuple[GovernanceRule, ...] | None" = None,
         task_manager: "TaskLifecycleManager | None" = None,
+        routed_skills: tuple = (),
     ) -> str:
         sections: list[PromptSection] = []
 
@@ -126,15 +130,15 @@ class SystemPromptBuilder:
                 tool_lines.append(f"  - {t.name}: {t.description}  schema={schema_str}")
             sections.append(PromptSection(content="\n".join(tool_lines), scope="global", priority=21))
 
-        # Auto skills are relatively stable and treated as global
-        if skills and skills.auto_skills:
+        # Routed skills — only the skill(s) matched by the skill router
+        if routed_skills:
             auto_parts = [
                 "## Active Skills\n\n"
                 "These skills are **conversational guidance** — follow them directly in your "
                 "responses. Do NOT spawn an agent or use the agent tool to handle them. "
                 "They describe how YOU should approach the conversation, not tasks to delegate.",
             ]
-            for skill in skills.auto_skills:
+            for skill in routed_skills:
                 auto_parts.append(f"### {skill.name}\n{skill.content}")
             sections.append(PromptSection(content="\n\n".join(auto_parts), scope="global", priority=30))
 

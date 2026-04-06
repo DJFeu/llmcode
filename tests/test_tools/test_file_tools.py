@@ -3,11 +3,64 @@ from __future__ import annotations
 
 import base64
 
-
-from llm_code.tools.base import PermissionLevel
+from llm_code.tools.base import PermissionLevel, resolve_path
 from llm_code.tools.read_file import ReadFileTool
 from llm_code.tools.write_file import WriteFileTool
 from llm_code.tools.edit_file import EditFileTool
+
+
+# ---------------------------------------------------------------------------
+# resolve_path
+# ---------------------------------------------------------------------------
+
+class TestResolvePath:
+    def test_existing_absolute_path_returned_as_is(self, tmp_path):
+        f = tmp_path / "hello.txt"
+        f.write_text("hi")
+        assert resolve_path(str(f)) == f
+
+    def test_relative_path_returned_as_is(self, tmp_path):
+        """Relative paths are returned unchanged (pathlib resolves against cwd)."""
+        result = resolve_path("some/relative/path.txt")
+        assert str(result) == "some/relative/path.txt"
+
+    def test_wrong_absolute_path_resolved_under_cwd(self, tmp_path, monkeypatch):
+        """When LLM builds a wrong absolute path, resolve_path finds the file under cwd."""
+        # Create: tmp_path/project/src/main.py
+        (tmp_path / "project" / "src").mkdir(parents=True)
+        real_file = tmp_path / "project" / "src" / "main.py"
+        real_file.write_text("print('hello')")
+
+        # Set cwd to tmp_path/project
+        monkeypatch.chdir(tmp_path / "project")
+
+        # LLM mistakenly builds: /wrong/prefix/src/main.py
+        wrong_path = "/wrong/prefix/src/main.py"
+        resolved = resolve_path(wrong_path)
+        assert resolved == tmp_path / "project" / "src" / "main.py"
+        assert resolved.exists()
+
+    def test_nonexistent_absolute_path_returned_as_is(self, tmp_path, monkeypatch):
+        """If no suffix matches under cwd, return the original path."""
+        monkeypatch.chdir(tmp_path)
+        result = resolve_path("/totally/fake/no/match.txt")
+        assert str(result) == "/totally/fake/no/match.txt"
+
+    def test_confusing_hyphen_underscore_dir_name(self, tmp_path, monkeypatch):
+        """Simulates the llm-code vs llm_code confusion."""
+        # Real structure: tmp_path/llm-code/llm_code/harness/config.py
+        (tmp_path / "llm-code" / "llm_code" / "harness").mkdir(parents=True)
+        real_file = tmp_path / "llm-code" / "llm_code" / "harness" / "config.py"
+        real_file.write_text("cfg = True")
+
+        # cwd = tmp_path/llm-code
+        monkeypatch.chdir(tmp_path / "llm-code")
+
+        # LLM wrongly produces: tmp_path/llm_code/harness/config.py (missing llm-code/)
+        wrong_path = str(tmp_path / "llm_code" / "harness" / "config.py")
+        resolved = resolve_path(wrong_path)
+        assert resolved == real_file
+        assert resolved.exists()
 
 
 # ---------------------------------------------------------------------------

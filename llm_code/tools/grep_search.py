@@ -1,13 +1,12 @@
 """GrepSearchTool — regex search across files."""
 from __future__ import annotations
 
-import pathlib
 import re
 from typing import Callable
 
 from pydantic import BaseModel
 
-from llm_code.tools.base import PermissionLevel, Tool, ToolProgress, ToolResult
+from llm_code.tools.base import PermissionLevel, Tool, ToolProgress, ToolResult, resolve_path
 
 _MAX_MATCHES = 100
 _MAX_FILES_SCANNED = 500
@@ -86,7 +85,7 @@ class GrepSearchTool(Tool):
         on_progress: Callable[[ToolProgress], None] | None,
     ) -> ToolResult:
         pattern_str: str = args["pattern"]
-        search_path = pathlib.Path(args.get("path", "."))
+        search_path = resolve_path(args.get("path", "."))
         glob_filter: str = args.get("glob", "**/*")
         context_lines: int = int(args.get("context", 0))
 

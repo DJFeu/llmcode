@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import json
-import pathlib
 
 from pydantic import BaseModel
 
-from llm_code.tools.base import PermissionLevel, Tool, ToolResult
+from llm_code.tools.base import PermissionLevel, Tool, ToolResult, resolve_path
 from llm_code.utils.notebook import edit_notebook, validate_notebook
 
 
@@ -68,7 +67,7 @@ class NotebookEditTool(Tool):
         return NotebookEditInput
 
     def execute(self, args: dict) -> ToolResult:
-        path = pathlib.Path(args["path"])
+        path = resolve_path(args["path"])
         command: str = args["command"]
         cell_index: int = int(args["cell_index"])
         source: str | None = args.get("source")

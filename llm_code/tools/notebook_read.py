@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import json
-import pathlib
 
 from pydantic import BaseModel
 
-from llm_code.tools.base import PermissionLevel, Tool, ToolResult
+from llm_code.tools.base import PermissionLevel, Tool, ToolResult, resolve_path
 from llm_code.utils.notebook import format_cells, parse_notebook, validate_notebook
 
 
@@ -52,7 +51,7 @@ class NotebookReadTool(Tool):
         return True
 
     def execute(self, args: dict) -> ToolResult:
-        path = pathlib.Path(args["path"])
+        path = resolve_path(args["path"])
 
         if not path.exists():
             return ToolResult(output=f"Notebook not found: {path}", is_error=True)

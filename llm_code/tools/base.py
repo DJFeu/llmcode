@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import pathlib
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Callable
@@ -9,6 +10,33 @@ from typing import Callable
 from pydantic import BaseModel
 
 from llm_code.api.types import ToolDefinition
+
+
+def resolve_path(raw: str) -> pathlib.Path:
+    """Resolve a tool path argument to an existing file/directory.
+
+    Handles the common LLM mistake of constructing wrong absolute paths
+    (e.g. confusing directory name ``llm-code`` with package ``llm_code``).
+
+    Resolution order:
+    1. If the literal path exists, return it.
+    2. If it's absolute and doesn't exist, try it as a relative path under cwd.
+    3. Otherwise return the original Path (caller decides how to handle).
+    """
+    p = pathlib.Path(raw)
+    if p.exists():
+        return p
+    # Absolute path that doesn't exist — try stripping the prefix and
+    # interpreting the tail relative to cwd.
+    if p.is_absolute():
+        cwd = pathlib.Path.cwd()
+        # Walk each suffix of the path parts to find the longest match under cwd.
+        parts = p.parts
+        for i in range(1, len(parts)):
+            candidate = cwd / pathlib.Path(*parts[i:])
+            if candidate.exists():
+                return candidate
+    return p  # return as-is; caller will report file-not-found
 
 
 class PermissionLevel(Enum):

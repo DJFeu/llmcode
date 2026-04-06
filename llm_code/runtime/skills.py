@@ -29,6 +29,7 @@ class Skill:
     trigger: str = ""
     version: str = ""
     tags: tuple[str, ...] = ()
+    keywords: tuple[str, ...] = ()
     model: str = ""
     depends: tuple[SkillDependency, ...] = ()
     min_version: str = ""
@@ -93,6 +94,9 @@ class SkillLoader:
         tags_raw = meta.get("tags", [])
         tags = tuple(str(t) for t in tags_raw) if isinstance(tags_raw, list) else ()
 
+        keywords_raw = meta.get("keywords", [])
+        keywords = tuple(str(k).lower() for k in keywords_raw) if isinstance(keywords_raw, list) else ()
+
         depends_raw = meta.get("depends", [])
         depends: tuple[SkillDependency, ...] = ()
         if isinstance(depends_raw, list):
@@ -113,6 +117,7 @@ class SkillLoader:
             trigger=trigger,
             version=version,
             tags=tags,
+            keywords=keywords,
             model=model,
             depends=depends,
             min_version=min_version,
