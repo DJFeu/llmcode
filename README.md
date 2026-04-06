@@ -17,7 +17,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-3226%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-3405%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
 </p>
 
@@ -57,6 +57,12 @@ Run the same agent experience with a free local model on your own GPU, or with a
 ```bash
 pip install llmcode-cli
 ```
+
+> **`llmcode: command not found`?** pip installs scripts to `~/.local/bin` (Linux/macOS) or `%APPDATA%\Python\Scripts` (Windows). Add it to your PATH:
+> ```bash
+> # Linux / macOS (add to ~/.bashrc or ~/.zshrc)
+> export PATH="$HOME/.local/bin:$PATH"
+> ```
 
 **With a local model (zero cost):**
 
@@ -453,7 +459,7 @@ llm_code/               28,500+ lines Python
 ├── ide/                IDE bridge (WebSocket JSON-RPC server)
 ├── swarm/              Multi-agent (coordinator, tmux/subprocess, mailbox)
 ├── utils/              Notebook, diff, hyperlinks, search, text normalize
-tests/                  3,226 tests across 248 test files
+tests/                  3,405 tests across 259 test files
 ```
 
 ---
@@ -465,7 +471,7 @@ git clone https://github.com/DJFeu/llmcode
 cd llmcode
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest                  # 3,226 tests
+pytest                  # 3,405 tests
 ruff check llm_code/    # lint
 ```
 

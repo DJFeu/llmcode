@@ -23,7 +23,7 @@ class TestCronCreateTool:
 
     def test_permission(self):
         tool = CronCreateTool.__new__(CronCreateTool)
-        assert tool.required_permission == PermissionLevel.FULL_ACCESS
+        assert tool.required_permission == PermissionLevel.WORKSPACE_WRITE
 
     def test_creates_task(self, storage):
         tool = CronCreateTool(storage)
@@ -96,7 +96,7 @@ class TestCronDeleteTool:
 
     def test_permission(self):
         tool = CronDeleteTool.__new__(CronDeleteTool)
-        assert tool.required_permission == PermissionLevel.FULL_ACCESS
+        assert tool.required_permission == PermissionLevel.WORKSPACE_WRITE
 
     def test_deletes_task(self, storage):
         task = storage.add(cron="0 9 * * *", prompt="bye", recurring=True, permanent=False)

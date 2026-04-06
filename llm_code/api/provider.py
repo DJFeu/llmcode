@@ -33,3 +33,10 @@ class LLMProvider(ABC):
     def supports_images(self) -> bool:
         """Return True if the provider supports image inputs."""
         ...
+
+    def supports_reasoning(self) -> bool:
+        """Return True if the provider supports reasoning/thinking mode.
+
+        Default implementation returns False.  Subclasses may override.
+        """
+        return False

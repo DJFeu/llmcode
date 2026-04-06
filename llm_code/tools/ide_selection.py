@@ -37,8 +37,11 @@ class IDESelectionTool(Tool):
         return True
 
     def execute(self, args: dict) -> ToolResult:
-        loop = asyncio.get_event_loop()
-        sel = loop.run_until_complete(self._bridge.get_selection())
+        loop = asyncio.new_event_loop()
+        try:
+            sel = loop.run_until_complete(self._bridge.get_selection())
+        finally:
+            loop.close()
 
         if sel is None:
             return ToolResult(output="No selection — no IDE connected or nothing selected.")

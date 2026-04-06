@@ -113,6 +113,9 @@ async def test_write_file_via_agent(tmp_path: Path) -> None:
         def supports_images(self) -> bool:
             return False
 
+        def supports_reasoning(self) -> bool:
+            return False
+
     provider = _Provider()
     runtime = _build_runtime(provider, tmp_path)
 
@@ -173,6 +176,9 @@ async def test_read_then_edit(tmp_path: Path) -> None:
             return False
 
         def supports_images(self) -> bool:
+            return False
+
+        def supports_reasoning(self) -> bool:
             return False
 
     provider = _Provider()

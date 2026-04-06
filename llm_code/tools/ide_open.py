@@ -49,8 +49,11 @@ class IDEOpenTool(Tool):
 
         path = args["path"]
         line = args.get("line")
-        loop = asyncio.get_event_loop()
-        ok = loop.run_until_complete(self._bridge.open_file(path, line=line))
+        loop = asyncio.new_event_loop()
+        try:
+            ok = loop.run_until_complete(self._bridge.open_file(path, line=line))
+        finally:
+            loop.close()
 
         if ok:
             line_str = f" at line {line}" if line else ""

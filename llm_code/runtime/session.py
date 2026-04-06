@@ -17,6 +17,20 @@ from llm_code.api.types import (
     ToolUseBlock,
 )
 
+# ---------------------------------------------------------------------------
+# Token counting (tiktoken when available, else chars // 4)
+# ---------------------------------------------------------------------------
+
+try:
+    import tiktoken as _tiktoken
+    _tokenizer = _tiktoken.get_encoding("cl100k_base")
+
+    def _count_tokens(text: str) -> int:
+        return len(_tokenizer.encode(text, disallowed_special=()))
+except ImportError:
+    def _count_tokens(text: str) -> int:
+        return len(text) // 4
+
 
 # ---------------------------------------------------------------------------
 # Serialization helpers
@@ -129,17 +143,27 @@ class Session:
         return dataclasses.replace(self, total_usage=new_usage, updated_at=now)
 
     def estimated_tokens(self) -> int:
-        """Rough token estimate: total character count divided by 4."""
-        char_count = 0
+        """Rough token estimate for pre-turn context size check.
+
+        Uses tiktoken (cl100k_base) when available for accurate counts,
+        otherwise falls back to chars/4.  Adds a fixed overhead for the
+        system prompt and tool definitions not included in messages.
+        After the first API call, conversation.py uses the actual
+        API-reported input_tokens instead of this estimate.
+        """
+        _SYSTEM_OVERHEAD = 4000  # system prompt + tool schemas
+        parts: list[str] = []
         for msg in self.messages:
             for block in msg.content:
                 if isinstance(block, TextBlock):
-                    char_count += len(block.text)
+                    parts.append(block.text)
                 elif isinstance(block, ToolResultBlock):
-                    char_count += len(block.content)
+                    parts.append(block.content)
                 elif isinstance(block, ToolUseBlock):
-                    char_count += len(block.name) + len(str(block.input))
-        return char_count // 4
+                    parts.append(block.name)
+                    parts.append(str(block.input))
+        text = "".join(parts)
+        return _count_tokens(text) + _SYSTEM_OVERHEAD
 
     def to_dict(self) -> dict:
         return {

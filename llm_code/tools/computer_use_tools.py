@@ -94,7 +94,7 @@ class MouseClickTool(_ComputerUseTool):
 
     @property
     def required_permission(self) -> PermissionLevel:
-        return PermissionLevel.FULL_ACCESS
+        return PermissionLevel.WORKSPACE_WRITE
 
     def execute(self, args: dict) -> ToolResult:
         err = self._check_enabled()
@@ -133,7 +133,7 @@ class KeyboardTypeTool(_ComputerUseTool):
 
     @property
     def required_permission(self) -> PermissionLevel:
-        return PermissionLevel.FULL_ACCESS
+        return PermissionLevel.WORKSPACE_WRITE
 
     def execute(self, args: dict) -> ToolResult:
         err = self._check_enabled()
@@ -172,7 +172,7 @@ class KeyPressTool(_ComputerUseTool):
 
     @property
     def required_permission(self) -> PermissionLevel:
-        return PermissionLevel.FULL_ACCESS
+        return PermissionLevel.WORKSPACE_WRITE
 
     def execute(self, args: dict) -> ToolResult:
         err = self._check_enabled()
@@ -212,7 +212,7 @@ class ScrollTool(_ComputerUseTool):
 
     @property
     def required_permission(self) -> PermissionLevel:
-        return PermissionLevel.FULL_ACCESS
+        return PermissionLevel.WORKSPACE_WRITE
 
     def execute(self, args: dict) -> ToolResult:
         err = self._check_enabled()
@@ -259,7 +259,7 @@ class MouseDragTool(_ComputerUseTool):
 
     @property
     def required_permission(self) -> PermissionLevel:
-        return PermissionLevel.FULL_ACCESS
+        return PermissionLevel.WORKSPACE_WRITE
 
     def execute(self, args: dict) -> ToolResult:
         err = self._check_enabled()

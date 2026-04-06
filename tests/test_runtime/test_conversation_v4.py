@@ -50,6 +50,7 @@ class _Config:
     max_tokens = 4096
     temperature = 0.7
     native_tools = True
+    compact_after_tokens = 80000
 
 
 class MockProvider:
@@ -65,6 +66,9 @@ class MockProvider:
         return True
 
     def supports_images(self) -> bool:
+        return False
+
+    def supports_reasoning(self) -> bool:
         return False
 
 

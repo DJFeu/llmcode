@@ -30,6 +30,7 @@ def _make_runtime(tmp_path: Path) -> ConversationRuntime:
         temperature = 0.0
         model = "test"
         native_tools = True
+        compact_after_tokens = 80000
 
     return ConversationRuntime(
         provider=MagicMock(),

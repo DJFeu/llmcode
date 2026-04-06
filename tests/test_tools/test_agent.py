@@ -48,7 +48,7 @@ def test_description():
 
 def test_permission():
     tool = AgentTool(runtime_factory=lambda m: None)
-    assert tool.required_permission == PermissionLevel.FULL_ACCESS
+    assert tool.required_permission == PermissionLevel.READ_ONLY
 
 
 def test_is_concurrency_safe():

@@ -63,12 +63,12 @@ class TestMouseClickTool:
         result = tool.execute({"x": 100, "y": 200, "button": "left"})
         assert result.is_error is False
 
-    def test_permission_is_full_access(self):
+    def test_permission_is_workspace_write(self):
         from llm_code.tools.computer_use_tools import MouseClickTool
         from llm_code.runtime.config import ComputerUseConfig
 
         tool = MouseClickTool(ComputerUseConfig(enabled=True))
-        assert tool.required_permission == PermissionLevel.FULL_ACCESS
+        assert tool.required_permission == PermissionLevel.WORKSPACE_WRITE
 
 
 class TestKeyboardTypeTool:
@@ -83,12 +83,12 @@ class TestKeyboardTypeTool:
         result = tool.execute({"text": "hello"})
         assert result.is_error is False
 
-    def test_permission_is_full_access(self):
+    def test_permission_is_workspace_write(self):
         from llm_code.tools.computer_use_tools import KeyboardTypeTool
         from llm_code.runtime.config import ComputerUseConfig
 
         tool = KeyboardTypeTool(ComputerUseConfig(enabled=True))
-        assert tool.required_permission == PermissionLevel.FULL_ACCESS
+        assert tool.required_permission == PermissionLevel.WORKSPACE_WRITE
 
 
 class TestKeyPressTool:
@@ -103,12 +103,12 @@ class TestKeyPressTool:
         result = tool.execute({"keys": ["ctrl", "c"]})
         assert result.is_error is False
 
-    def test_permission_is_full_access(self):
+    def test_permission_is_workspace_write(self):
         from llm_code.tools.computer_use_tools import KeyPressTool
         from llm_code.runtime.config import ComputerUseConfig
 
         tool = KeyPressTool(ComputerUseConfig(enabled=True))
-        assert tool.required_permission == PermissionLevel.FULL_ACCESS
+        assert tool.required_permission == PermissionLevel.WORKSPACE_WRITE
 
 
 class TestScrollTool:
@@ -123,12 +123,12 @@ class TestScrollTool:
         result = tool.execute({"clicks": 3})
         assert result.is_error is False
 
-    def test_permission_is_full_access(self):
+    def test_permission_is_workspace_write(self):
         from llm_code.tools.computer_use_tools import ScrollTool
         from llm_code.runtime.config import ComputerUseConfig
 
         tool = ScrollTool(ComputerUseConfig(enabled=True))
-        assert tool.required_permission == PermissionLevel.FULL_ACCESS
+        assert tool.required_permission == PermissionLevel.WORKSPACE_WRITE
 
 
 class TestMouseDragTool:
@@ -146,12 +146,12 @@ class TestMouseDragTool:
         })
         assert result.is_error is False
 
-    def test_permission_is_full_access(self):
+    def test_permission_is_workspace_write(self):
         from llm_code.tools.computer_use_tools import MouseDragTool
         from llm_code.runtime.config import ComputerUseConfig
 
         tool = MouseDragTool(ComputerUseConfig(enabled=True))
-        assert tool.required_permission == PermissionLevel.FULL_ACCESS
+        assert tool.required_permission == PermissionLevel.WORKSPACE_WRITE
 
 
 class TestDisabledTools:

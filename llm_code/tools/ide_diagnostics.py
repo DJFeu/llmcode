@@ -41,8 +41,11 @@ class IDEDiagnosticsTool(Tool):
 
     def execute(self, args: dict) -> ToolResult:
         path = args["path"]
-        loop = asyncio.get_event_loop()
-        diags = loop.run_until_complete(self._bridge.get_diagnostics(path))
+        loop = asyncio.new_event_loop()
+        try:
+            diags = loop.run_until_complete(self._bridge.get_diagnostics(path))
+        finally:
+            loop.close()
 
         if not diags:
             return ToolResult(output=f"No diagnostics for {path}.")

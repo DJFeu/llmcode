@@ -113,6 +113,9 @@ def _make_provider(xml_tool_call_str: str):
         def supports_images(self) -> bool:
             return False
 
+        def supports_reasoning(self) -> bool:
+            return False
+
     return _Provider()
 
 

@@ -108,23 +108,25 @@ class TestSessionUpdateUsage:
 # ---------------------------------------------------------------------------
 
 class TestEstimatedTokens:
+    _OVERHEAD = 4000  # _SYSTEM_OVERHEAD constant in session.py
+
     def test_empty_session(self, tmp_path: Path) -> None:
         s = Session.create(tmp_path)
-        assert s.estimated_tokens() == 0
+        assert s.estimated_tokens() == self._OVERHEAD
 
     def test_counts_text_blocks(self, tmp_path: Path) -> None:
         s = Session.create(tmp_path)
-        # "hello" = 5 chars // 4 = 1
+        # "hello" = 5 chars // 4 = 1, plus system overhead
         msg = Message(role="user", content=(TextBlock(text="hello"),))
         s = s.add_message(msg)
-        assert s.estimated_tokens() == 5 // 4
+        assert s.estimated_tokens() == (5 // 4) + self._OVERHEAD
 
     def test_longer_text(self, tmp_path: Path) -> None:
         text = "a" * 400
         s = Session.create(tmp_path)
         msg = Message(role="user", content=(TextBlock(text=text),))
         s = s.add_message(msg)
-        assert s.estimated_tokens() == 100
+        assert s.estimated_tokens() == 100 + self._OVERHEAD
 
 
 # ---------------------------------------------------------------------------

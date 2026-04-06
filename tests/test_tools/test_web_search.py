@@ -20,7 +20,7 @@ class TestWebSearchToolProperties:
         assert self.tool.name == "web_search"
 
     def test_required_permission(self) -> None:
-        assert self.tool.required_permission == PermissionLevel.FULL_ACCESS
+        assert self.tool.required_permission == PermissionLevel.READ_ONLY
 
     def test_is_read_only(self) -> None:
         assert self.tool.is_read_only({}) is False
@@ -242,3 +242,80 @@ class TestWebSearchToolExecute:
             self.tool.execute({"query": "test", "backend": "duckduckgo"})
 
         mock_create.assert_called_once_with("duckduckgo")
+
+
+# ---------------------------------------------------------------------------
+# DuckDuckGo rate limit and fallback
+# ---------------------------------------------------------------------------
+
+
+class TestDuckDuckGoRateLimit:
+    """Test DDG rate limit detection and fallback chain behavior."""
+
+    def test_http_429_raises_rate_limit_error(self) -> None:
+        from llm_code.tools.search_backends import RateLimitError
+        from llm_code.tools.search_backends.duckduckgo import DuckDuckGoBackend
+
+        backend = DuckDuckGoBackend()
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        mock_response.text = ""
+
+        with patch("httpx.get", return_value=mock_response):
+            with pytest.raises(RateLimitError):
+                backend.search("test query")
+
+    def test_bot_detection_raises_rate_limit_error(self) -> None:
+        from llm_code.tools.search_backends import RateLimitError
+        from llm_code.tools.search_backends.duckduckgo import DuckDuckGoBackend
+
+        backend = DuckDuckGoBackend()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "<html><body>If you are not a bot, please try again.</body></html>"
+
+        with patch("httpx.get", return_value=mock_response):
+            with pytest.raises(RateLimitError):
+                backend.search("test query")
+
+    def test_normal_empty_results_no_error(self) -> None:
+        from llm_code.tools.search_backends.duckduckgo import DuckDuckGoBackend
+
+        backend = DuckDuckGoBackend()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "<html><body>No results found</body></html>"
+
+        with patch("httpx.get", return_value=mock_response):
+            results = backend.search("very obscure query")
+            assert results == ()
+
+    def test_fallback_continues_after_rate_limit(self) -> None:
+        from llm_code.tools.search_backends import RateLimitError
+
+        tool = WebSearchTool()
+        call_count = 0
+        fallback_results = (
+            SearchResult(title="Fallback", url="https://fallback.com", snippet="Got it"),
+        )
+
+        def mock_create(name, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            mock = MagicMock()
+            if name == "duckduckgo":
+                mock.search.side_effect = RateLimitError("rate limited")
+            else:
+                mock.search.return_value = fallback_results
+            return mock
+
+        with patch("llm_code.tools.web_search.create_backend", side_effect=mock_create):
+            with patch.dict("os.environ", {"BRAVE_API_KEY": "test-key"}):
+                results = tool._search_with_fallback("test", 10, MagicMock(
+                    brave_api_key_env="BRAVE_API_KEY",
+                    searxng_base_url="",
+                    tavily_api_key_env="TAVILY_API_KEY",
+                ))
+        assert len(results) == 1
+        assert results[0].title == "Fallback"
+        assert call_count >= 2

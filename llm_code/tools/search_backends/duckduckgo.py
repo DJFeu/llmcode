@@ -6,7 +6,7 @@ from html.parser import HTMLParser
 
 import httpx
 
-from llm_code.tools.search_backends import SearchResult
+from llm_code.tools.search_backends import RateLimitError, SearchResult
 
 _DDG_LITE_URL = "https://html.duckduckgo.com/html/"
 _RATE_LIMIT_SECONDS = 1.0
@@ -107,12 +107,18 @@ class DuckDuckGoBackend:
         except httpx.RequestError:
             return ()
 
+        if response.status_code == 429:
+            raise RateLimitError("DuckDuckGo rate limited (HTTP 429)")
         if response.status_code not in (200, 202):
             return ()
 
         parser = _DDGLiteParser()
         parser.feed(response.text)
         raw = parser.get_results()
+
+        # DDG sometimes returns 200 with a CAPTCHA/block page instead of results
+        if not raw and "bot" in response.text.lower():
+            raise RateLimitError("DuckDuckGo returned empty results (possible rate limit)")
 
         results = tuple(
             SearchResult(

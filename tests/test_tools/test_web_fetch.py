@@ -16,7 +16,7 @@ class TestWebFetchToolProperties:
 
     def test_required_permission(self) -> None:
         tool = WebFetchTool()
-        assert tool.required_permission == PermissionLevel.FULL_ACCESS
+        assert tool.required_permission == PermissionLevel.READ_ONLY
 
     def test_is_read_only_false(self) -> None:
         tool = WebFetchTool()

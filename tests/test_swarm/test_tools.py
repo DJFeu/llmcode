@@ -30,7 +30,7 @@ class TestSwarmCreateTool:
 
     def test_permission_full_access(self, manager):
         tool = SwarmCreateTool(manager)
-        assert tool.required_permission == PermissionLevel.FULL_ACCESS
+        assert tool.required_permission == PermissionLevel.WORKSPACE_WRITE
 
     def test_execute_calls_create_member(self, manager):
         tool = SwarmCreateTool(manager)
@@ -107,7 +107,7 @@ class TestSwarmDeleteTool:
 
     def test_permission_full_access(self, manager):
         tool = SwarmDeleteTool(manager)
-        assert tool.required_permission == PermissionLevel.FULL_ACCESS
+        assert tool.required_permission == PermissionLevel.WORKSPACE_WRITE
 
     def test_execute_stop_all(self, manager):
         tool = SwarmDeleteTool(manager)

@@ -63,6 +63,9 @@ class MockProvider:
     def supports_images(self) -> bool:
         return False
 
+    def supports_reasoning(self) -> bool:
+        return False
+
 
 def _make_runtime(
     tmp_path: Path,
@@ -87,6 +90,7 @@ def _make_runtime(
         max_tokens = 4096
         temperature = 0.7
         native_tools = True
+        compact_after_tokens = 80000
 
     session = Session.create(tmp_path)
     context = _make_context(tmp_path)

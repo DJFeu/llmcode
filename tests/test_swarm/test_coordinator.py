@@ -260,9 +260,9 @@ class TestCoordinatorTool:
         tool = self._make_tool()
         assert tool.name == "coordinate"
 
-    def test_permission_full_access(self):
+    def test_permission_workspace_write(self):
         tool = self._make_tool()
-        assert tool.required_permission == PermissionLevel.FULL_ACCESS
+        assert tool.required_permission == PermissionLevel.WORKSPACE_WRITE
 
     def test_input_schema_has_task(self):
         tool = self._make_tool()

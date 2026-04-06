@@ -70,3 +70,38 @@ class TestSecretRedaction:
         cleaned, findings = scan_output(output)
         assert "xoxb-" not in cleaned
         assert "[REDACTED:slack_token]" in cleaned
+
+    def test_stripe_live_key_redacted(self) -> None:
+        key = "sk_live_" + "A" * 24
+        cleaned, findings = scan_output(f"STRIPE_KEY={key}")
+        assert key not in cleaned
+        assert "[REDACTED:stripe_key]" in cleaned
+
+    def test_stripe_test_key_redacted(self) -> None:
+        key = "sk_test_" + "B" * 24
+        cleaned, findings = scan_output(f"key={key}")
+        assert key not in cleaned
+
+    def test_sendgrid_key_redacted(self) -> None:
+        key = "SG." + "A" * 22 + "." + "B" * 22
+        cleaned, findings = scan_output(f"SENDGRID_API_KEY={key}")
+        assert key not in cleaned
+        assert "[REDACTED:sendgrid_key]" in cleaned
+
+    def test_gcp_service_account_redacted(self) -> None:
+        output = '{"type": "service_account", "project_id": "my-proj"}'
+        cleaned, findings = scan_output(output)
+        assert '"service_account"' not in cleaned
+        assert "[REDACTED:gcp_service_account]" in cleaned
+
+    def test_npm_token_redacted(self) -> None:
+        token = "npm_" + "A" * 36
+        cleaned, findings = scan_output(f"NPM_TOKEN is {token}")
+        assert token not in cleaned
+        assert "[REDACTED:" in cleaned
+
+    def test_pypi_token_redacted(self) -> None:
+        token = "pypi-" + "A" * 50
+        cleaned, findings = scan_output(f"password = {token}")
+        assert token not in cleaned
+        assert "[REDACTED:pypi_token]" in cleaned

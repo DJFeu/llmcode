@@ -27,6 +27,32 @@ class WebFetchInput(BaseModel):
         return v.strip()
 
 
+_MIN_USEFUL_CHARS = 200  # Content shorter than this after extraction is suspicious
+
+
+def _playwright_available() -> bool:
+    """Return True if playwright is installed."""
+    try:
+        import playwright  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _looks_unrendered(content: str) -> bool:
+    """Heuristic: return True if extracted content looks like an unrendered JS page.
+
+    Indicators: very short content, or dominated by JS framework boilerplate.
+    """
+    stripped = content.strip()
+    if len(stripped) < _MIN_USEFUL_CHARS:
+        return True
+    # Check for common SPA/JS-only markers in the extracted text
+    js_markers = ("__NEXT_DATA__", "window.__", "noscript", "enable JavaScript")
+    marker_count = sum(1 for m in js_markers if m in stripped)
+    return marker_count >= 2
+
+
 # Module-level cache shared across tool instances
 _cache = UrlCache(max_entries=50, ttl=900.0)
 
@@ -207,6 +233,23 @@ class WebFetchTool(Tool):
 
         # Extract content
         content = extract_content(body, content_type, raw=raw, max_length=max_length)
+
+        # Auto-retry with browser if httpx result looks like unrendered JS
+        if (
+            resolved_renderer == "default"
+            and "html" in content_type
+            and _looks_unrendered(content)
+            and _playwright_available()
+        ):
+            try:
+                body2, ct2, sc2 = self._fetch_with_browser(url)
+                content2 = extract_content(body2, ct2, raw=raw, max_length=max_length)
+                if len(content2) > len(content):
+                    content = content2
+                    status_code = sc2
+                    content_type = ct2
+            except Exception:
+                pass  # keep original content
 
         # Cache result
         self._cache.put(url, content)

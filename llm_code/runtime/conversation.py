@@ -45,14 +45,20 @@ if TYPE_CHECKING:
     from llm_code.tools.registry import ToolRegistry
 
 
-def build_thinking_extra_body(thinking_config, *, is_local: bool = False) -> dict | None:
+def build_thinking_extra_body(
+    thinking_config,
+    *,
+    is_local: bool = False,
+    provider_supports_reasoning: bool = False,
+) -> dict | None:
     """Build extra_body dict for thinking mode configuration.
 
     - "enabled": explicitly enable thinking (user opted in)
     - "disabled": explicitly disable thinking
-    - "adaptive" (default): disable for local models (vLLM without
-      --enable-reasoning mixes thinking into response text), let
-      cloud providers decide on their own
+    - "adaptive" (default): enable for local models that declare
+      reasoning support via ``provider.supports_reasoning()``;
+      disable otherwise (vLLM without --enable-reasoning mixes
+      thinking text into response); let cloud providers decide.
     """
     mode = thinking_config.mode
     if mode == "enabled":
@@ -67,8 +73,17 @@ def build_thinking_extra_body(thinking_config, *, is_local: bool = False) -> dic
         }
     if mode == "disabled":
         return {"chat_template_kwargs": {"enable_thinking": False}}
-    # adaptive: disable for local models to prevent thinking text leak
+    # adaptive: enable for local models that support reasoning;
+    # disable for those that don't (prevents thinking text leak)
     if is_local:
+        if provider_supports_reasoning:
+            budget = max(thinking_config.budget_tokens, 131072)
+            return {
+                "chat_template_kwargs": {
+                    "enable_thinking": True,
+                    "thinking_budget": budget,
+                }
+            }
         return {"chat_template_kwargs": {"enable_thinking": False}}
     return None
 
@@ -376,7 +391,11 @@ class ConversationRuntime:
                 tools=tool_defs if use_native else (),
                 max_tokens=_current_max_tokens,
                 temperature=self._config.temperature,
-                extra_body=build_thinking_extra_body(self._config.thinking, is_local=_is_local) if not use_native else None,
+                extra_body=build_thinking_extra_body(
+                    self._config.thinking,
+                    is_local=_is_local,
+                    provider_supports_reasoning=self._provider.supports_reasoning(),
+                ) if not use_native else None,
             )
 
             if self._vcr_recorder is not None:
@@ -415,7 +434,11 @@ class ConversationRuntime:
                         tools=(),
                         max_tokens=_current_max_tokens,
                         temperature=self._config.temperature,
-                        extra_body=build_thinking_extra_body(self._config.thinking, is_local=_is_local),
+                        extra_body=build_thinking_extra_body(
+                            self._config.thinking,
+                            is_local=_is_local,
+                            provider_supports_reasoning=self._provider.supports_reasoning(),
+                        ),
                     )
                     stream = await self._provider.stream_message(request)
                 elif (

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "llmcode-cli"
-version = "1.0.1"
+version = "1.0.2"
 description = "Open-source AI agent runtime for any LLM — production-grade coding agent with multi-layer memory, multi-agent orchestration, and defense-in-depth security"
 license = {text = "MIT"}
 authors = [{name = "Adam Hong"}]
@@ -50,6 +50,7 @@ telemetry = [
 web = ["readability-lxml>=0.8", "html2text>=2024.2"]
 web-browser = ["readability-lxml>=0.8", "html2text>=2024.2", "playwright>=1.40"]
 docs = ["mkdocs>=1.6", "mkdocs-material>=9.5"]
+tiktoken = ["tiktoken>=0.7"]
 treesitter = ["tree-sitter>=0.23", "tree-sitter-language-pack>=0.5"]
 dev = [
     "pytest>=8.0",

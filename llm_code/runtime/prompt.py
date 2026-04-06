@@ -128,7 +128,12 @@ class SystemPromptBuilder:
 
         # Auto skills are relatively stable and treated as global
         if skills and skills.auto_skills:
-            auto_parts = ["## Active Skills"]
+            auto_parts = [
+                "## Active Skills\n\n"
+                "These skills are **conversational guidance** — follow them directly in your "
+                "responses. Do NOT spawn an agent or use the agent tool to handle them. "
+                "They describe how YOU should approach the conversation, not tasks to delegate.",
+            ]
             for skill in skills.auto_skills:
                 auto_parts.append(f"### {skill.name}\n{skill.content}")
             sections.append(PromptSection(content="\n\n".join(auto_parts), scope="global", priority=30))

@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import fnmatch
+import logging
 import os
 from urllib.parse import urlparse
 
 from pydantic import BaseModel
 
 from llm_code.tools.base import PermissionLevel, Tool, ToolResult
-from llm_code.tools.search_backends import SearchResult, create_backend
+from llm_code.tools.search_backends import RateLimitError, SearchResult, create_backend
+
+logger = logging.getLogger(__name__)
 
 _VALID_BACKENDS = ("auto", "duckduckgo", "brave", "tavily", "searxng")
 
@@ -274,6 +277,9 @@ class WebSearchTool(Tool):
                 results = backend.search(query, max_results=max_results)
                 if results:
                     return results
+            except RateLimitError:
+                logger.warning("Search backend %s rate-limited, trying next", backend_name)
+                continue
             except Exception:
                 continue
 

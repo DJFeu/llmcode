@@ -178,3 +178,177 @@ class TestMemoryStore:
     def test_load_consolidated_summaries_empty(self, tmp_path):
         store = MemoryStore(tmp_path / "mem", Path("/project/a"))
         assert store.load_consolidated_summaries() == []
+
+
+# ---------------------------------------------------------------------------
+# find_related
+# ---------------------------------------------------------------------------
+
+class TestFindRelated:
+    def test_key_not_found_returns_empty(self, tmp_path):
+        store = MemoryStore(tmp_path / "mem", Path("/project/a"))
+        assert store.find_related("nonexistent") == []
+
+    def test_no_relations_returns_empty(self, tmp_path):
+        store = MemoryStore(tmp_path / "mem", Path("/project/a"))
+        store.store("lonely", "value")
+        assert store.find_related("lonely") == []
+
+    def test_forward_link(self, tmp_path):
+        store = MemoryStore(tmp_path / "mem", Path("/project/a"))
+        store.store("A", "concept A", relates_to=("B",))
+        store.store("B", "concept B")
+        related = store.find_related("A")
+        assert len(related) == 1
+        assert related[0].key == "B"
+
+    def test_backward_link(self, tmp_path):
+        """If B links to A, find_related(A) should include B."""
+        store = MemoryStore(tmp_path / "mem", Path("/project/a"))
+        store.store("A", "concept A")
+        store.store("B", "concept B", relates_to=("A",))
+        related = store.find_related("A")
+        assert len(related) == 1
+        assert related[0].key == "B"
+
+    def test_bidirectional_links(self, tmp_path):
+        store = MemoryStore(tmp_path / "mem", Path("/project/a"))
+        store.store("A", "concept A", relates_to=("B",))
+        store.store("B", "concept B", relates_to=("A",))
+        related = store.find_related("A")
+        assert len(related) == 1
+        assert related[0].key == "B"
+
+    def test_multiple_relations(self, tmp_path):
+        store = MemoryStore(tmp_path / "mem", Path("/project/a"))
+        store.store("A", "concept A", relates_to=("B", "C"))
+        store.store("B", "concept B")
+        store.store("C", "concept C")
+        related = store.find_related("A")
+        assert [e.key for e in related] == ["B", "C"]
+
+    def test_dangling_link_skipped(self, tmp_path):
+        """Forward link to non-existent key is silently ignored."""
+        store = MemoryStore(tmp_path / "mem", Path("/project/a"))
+        store.store("A", "concept A", relates_to=("ghost",))
+        assert store.find_related("A") == []
+
+    def test_results_sorted_by_key(self, tmp_path):
+        store = MemoryStore(tmp_path / "mem", Path("/project/a"))
+        store.store("center", "hub", relates_to=("z_node", "a_node"))
+        store.store("z_node", "z")
+        store.store("a_node", "a")
+        related = store.find_related("center")
+        assert [e.key for e in related] == ["a_node", "z_node"]
+
+
+# ---------------------------------------------------------------------------
+# find_by_tag
+# ---------------------------------------------------------------------------
+
+class TestFindByTag:
+    def test_no_matches_returns_empty(self, tmp_path):
+        store = MemoryStore(tmp_path / "mem", Path("/project/a"))
+        store.store("key1", "val", tags=("python",))
+        assert store.find_by_tag("rust") == []
+
+    def test_empty_store_returns_empty(self, tmp_path):
+        store = MemoryStore(tmp_path / "mem", Path("/project/a"))
+        assert store.find_by_tag("anything") == []
+
+    def test_single_match(self, tmp_path):
+        store = MemoryStore(tmp_path / "mem", Path("/project/a"))
+        store.store("key1", "val1", tags=("bug_fix",))
+        store.store("key2", "val2", tags=("feature",))
+        results = store.find_by_tag("bug_fix")
+        assert len(results) == 1
+        assert results[0].key == "key1"
+
+    def test_multiple_matches(self, tmp_path):
+        store = MemoryStore(tmp_path / "mem", Path("/project/a"))
+        store.store("a", "v1", tags=("shared",))
+        store.store("b", "v2", tags=("shared", "extra"))
+        store.store("c", "v3", tags=("other",))
+        results = store.find_by_tag("shared")
+        assert len(results) == 2
+        keys = {e.key for e in results}
+        assert keys == {"a", "b"}
+
+    def test_tag_is_case_sensitive(self, tmp_path):
+        store = MemoryStore(tmp_path / "mem", Path("/project/a"))
+        store.store("key1", "v", tags=("Bug",))
+        assert store.find_by_tag("bug") == []
+        assert len(store.find_by_tag("Bug")) == 1
+
+
+# ---------------------------------------------------------------------------
+# DreamTask._extract_episodes
+# ---------------------------------------------------------------------------
+
+class TestExtractEpisodes:
+    def _store(self, tmp_path):
+        return MemoryStore(tmp_path / "mem", Path("/project/a"))
+
+    def test_extracts_from_json_code_block(self, tmp_path):
+        from llm_code.runtime.dream import DreamTask
+        store = self._store(tmp_path)
+        summary = '''Some text
+```json
+[{"title": "Fixed auth bug", "type": "bug_fix", "tags": ["auth"], "relates_to": ["login"]}]
+```
+More text'''
+        DreamTask._extract_episodes(summary, store)
+        keys = store.list_keys()
+        assert len(keys) == 1
+        assert keys[0].startswith("episode:")
+        assert "Fixed auth bug" in keys[0]
+
+    def test_extracts_from_bare_json(self, tmp_path):
+        from llm_code.runtime.dream import DreamTask
+        store = self._store(tmp_path)
+        summary = 'Here is the result: [{"title": "Refactored DB"}]'
+        DreamTask._extract_episodes(summary, store)
+        assert len(store.list_keys()) == 1
+
+    def test_no_json_is_noop(self, tmp_path):
+        from llm_code.runtime.dream import DreamTask
+        store = self._store(tmp_path)
+        DreamTask._extract_episodes("Just plain text, no JSON.", store)
+        assert store.list_keys() == []
+
+    def test_malformed_json_is_noop(self, tmp_path):
+        from llm_code.runtime.dream import DreamTask
+        store = self._store(tmp_path)
+        DreamTask._extract_episodes('```json\n[{"broken}]\n```', store)
+        assert store.list_keys() == []
+
+    def test_type_becomes_tag(self, tmp_path):
+        from llm_code.runtime.dream import DreamTask
+        store = self._store(tmp_path)
+        summary = '[{"title": "Add cache", "type": "feature", "tags": ["perf"]}]'
+        DreamTask._extract_episodes(summary, store)
+        entry = list(store.get_all().values())[0]
+        assert "feature" in entry.tags
+        assert "perf" in entry.tags
+
+    def test_relates_to_stored(self, tmp_path):
+        from llm_code.runtime.dream import DreamTask
+        store = self._store(tmp_path)
+        summary = '[{"title": "API redesign", "relates_to": ["auth", "cache"]}]'
+        DreamTask._extract_episodes(summary, store)
+        entry = list(store.get_all().values())[0]
+        assert set(entry.relates_to) == {"auth", "cache"}
+
+    def test_skips_entries_without_title(self, tmp_path):
+        from llm_code.runtime.dream import DreamTask
+        store = self._store(tmp_path)
+        summary = '[{"type": "bug_fix"}, {"title": "Valid entry"}]'
+        DreamTask._extract_episodes(summary, store)
+        assert len(store.list_keys()) == 1
+
+    def test_multiple_episodes(self, tmp_path):
+        from llm_code.runtime.dream import DreamTask
+        store = self._store(tmp_path)
+        summary = '[{"title": "Episode 1"}, {"title": "Episode 2"}, {"title": "Episode 3"}]'
+        DreamTask._extract_episodes(summary, store)
+        assert len(store.list_keys()) == 3

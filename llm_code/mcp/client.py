@@ -27,7 +27,7 @@ class McpClient:
             "initialize",
             {
                 "protocolVersion": _PROTOCOL_VERSION,
-                "clientInfo": {"name": "llm-code", "version": "0.1.0"},
+                "clientInfo": {"name": "llm-code", "version": "1.0.2"},
                 "capabilities": {},
             },
         )

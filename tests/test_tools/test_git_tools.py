@@ -236,7 +236,7 @@ class TestGitPushTool:
         assert GitPushTool().name == "git_push"
 
     def test_permission(self):
-        assert GitPushTool().required_permission == PermissionLevel.FULL_ACCESS
+        assert GitPushTool().required_permission == PermissionLevel.WORKSPACE_WRITE
 
     def test_is_destructive(self):
         assert GitPushTool().is_destructive({}) is True

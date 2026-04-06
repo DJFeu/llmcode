@@ -34,6 +34,8 @@ def _session_texts(session: Session) -> list[str]:
 # ---------------------------------------------------------------------------
 
 class TestNeedsCompaction:
+    _OVERHEAD = 4000  # system prompt overhead in estimated_tokens()
+
     def test_false_for_small_session(self):
         from llm_code.runtime.compaction import needs_compaction
 
@@ -43,32 +45,32 @@ class TestNeedsCompaction:
     def test_true_for_large_session(self):
         from llm_code.runtime.compaction import needs_compaction
 
-        # Each char = 0.25 tokens, so 80001*4 chars = >80000 tokens
-        big_text = "x" * (80001 * 4)
+        # Each char = 0.25 tokens, need >80000 total (including 4000 overhead)
+        big_text = "x" * ((80001 - self._OVERHEAD) * 4)
         session = _make_session(big_text)
         assert needs_compaction(session) is True
 
     def test_custom_threshold(self):
         from llm_code.runtime.compaction import needs_compaction
 
-        # 100 chars = 25 tokens; threshold 10 → True
+        # 100 chars = 25 tokens + 4000 overhead = 4025
         session = _make_session("a" * 100)
         assert needs_compaction(session, threshold=10) is True
-        assert needs_compaction(session, threshold=100) is False
+        assert needs_compaction(session, threshold=5000) is False
 
     def test_exactly_at_threshold_is_false(self):
         from llm_code.runtime.compaction import needs_compaction
 
-        # estimated_tokens = len("x"*400) // 4 = 100; threshold=100 → not >100
+        # 400 chars // 4 = 100 + 4000 = 4100; threshold=4100 → not >4100
         session = _make_session("x" * 400)
-        assert needs_compaction(session, threshold=100) is False
+        assert needs_compaction(session, threshold=4100) is False
 
     def test_one_above_threshold_is_true(self):
         from llm_code.runtime.compaction import needs_compaction
 
-        # 404 chars // 4 = 101 tokens; threshold=100 → True
+        # 404 chars // 4 = 101 + 4000 = 4101; threshold=4100 → True
         session = _make_session("x" * 404)
-        assert needs_compaction(session, threshold=100) is True
+        assert needs_compaction(session, threshold=4100) is True
 
 
 # ---------------------------------------------------------------------------

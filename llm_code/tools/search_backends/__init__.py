@@ -14,6 +14,10 @@ class SearchResult:
     snippet: str
 
 
+class RateLimitError(Exception):
+    """Raised when a search backend is rate-limited."""
+
+
 @runtime_checkable
 class SearchBackend(Protocol):
     """Protocol for search backends."""

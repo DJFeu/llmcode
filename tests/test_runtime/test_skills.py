@@ -288,3 +288,70 @@ class TestSkillLoaderExtendedFrontmatter:
         assert skill.model == ""
         assert skill.depends == ()
         assert skill.min_version == ""
+
+
+# ---------------------------------------------------------------------------
+# Command skill loading and classification
+# ---------------------------------------------------------------------------
+
+
+class TestCommandSkillLoading:
+    """Verify that command skills (like TDD, debugging) load correctly."""
+
+    def test_command_skill_classified_correctly(self, tmp_path) -> None:
+        _make_skill_dir(tmp_path, "tdd", content=(
+            "---\nname: test-driven-development\n"
+            "description: Use when implementing any feature\n"
+            "auto: false\n---\nRed-Green-Refactor cycle\n"
+        ))
+        skill_set = SkillLoader.load_from_dirs([tmp_path])
+        assert len(skill_set.command_skills) == 1
+        assert skill_set.command_skills[0].name == "test-driven-development"
+        assert len(skill_set.auto_skills) == 0
+
+    def test_auto_skill_detected_by_description_pattern(self, tmp_path) -> None:
+        _make_skill_dir(tmp_path, "starter", content=(
+            "---\nname: starter\n"
+            "description: Use when starting any conversation\n"
+            "---\nSetup instructions\n"
+        ))
+        skill_set = SkillLoader.load_from_dirs([tmp_path])
+        assert len(skill_set.auto_skills) == 1
+
+    def test_command_skill_trigger_defaults_to_name(self, tmp_path) -> None:
+        _make_skill_dir(tmp_path, "debug", content=(
+            "---\nname: systematic-debugging\n"
+            "description: Use when encountering any bug\n"
+            "---\n4 phases\n"
+        ))
+        skill = SkillLoader.load_skill(tmp_path / "debug" / "SKILL.md")
+        assert skill.trigger == "systematic-debugging"
+
+    def test_command_skill_custom_trigger(self, tmp_path) -> None:
+        _make_skill_dir(tmp_path, "tdd", content=(
+            "---\nname: test-driven-development\n"
+            "description: TDD workflow\n"
+            "trigger: tdd\n---\nRed-Green-Refactor\n"
+        ))
+        skill = SkillLoader.load_skill(tmp_path / "tdd" / "SKILL.md")
+        assert skill.trigger == "tdd"
+
+    def test_mixed_auto_and_command_skills(self, tmp_path) -> None:
+        _make_skill_dir(tmp_path, "auto1", content=_AUTO_SKILL_MD)
+        _make_skill_dir(tmp_path, "cmd1", content=_COMMAND_SKILL_MD)
+        _make_skill_dir(tmp_path, "cmd2", content=(
+            "---\nname: debugging\n"
+            "description: Debug workflow\nauto: false\n---\nSteps\n"
+        ))
+        skill_set = SkillLoader.load_from_dirs([tmp_path])
+        assert len(skill_set.auto_skills) == 1
+        assert len(skill_set.command_skills) == 2
+
+    def test_skill_content_preserved(self, tmp_path) -> None:
+        body = "# TDD Workflow\n\n1. Write failing test\n2. Make it pass\n3. Refactor"
+        _make_skill_dir(tmp_path, "tdd", content=(
+            f"---\nname: tdd\ndescription: TDD\n---\n{body}\n"
+        ))
+        skill = SkillLoader.load_skill(tmp_path / "tdd" / "SKILL.md")
+        assert "Write failing test" in skill.content
+        assert "Refactor" in skill.content

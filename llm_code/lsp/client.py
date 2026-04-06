@@ -171,7 +171,7 @@ class LspClient:
             "initialize",
             {
                 "processId": None,
-                "clientInfo": {"name": "llm-code", "version": "0.1.0"},
+                "clientInfo": {"name": "llm-code", "version": "1.0.2"},
                 "rootUri": root_uri,
                 "capabilities": {},
             },

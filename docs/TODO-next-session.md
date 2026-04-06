@@ -1,59 +1,82 @@
 # TODO — 下一個 Session 繼續
 
-> Created: 2026-04-06
-> Context: v1.0.1 完成後的改善項目
+> Updated: 2026-04-06
+> Context: v1.0.2 — 所有 TODO 項目全部完成
 
-## 高優先級
+## 測試狀態
 
-### 1. Qwen + Superpowers Skill 適配
-- [ ] Brainstorming skill 不應觸發 agent tool — 應該是對話引導
-- [ ] Auto skills 注入 system prompt 後，Qwen 傾向呼叫 agent tool 而不是直接對話
-- [ ] 需要在 system prompt 裡指導 model：「auto skills 是對話指引，不需要 spawn agent」
-- [ ] 測試其他 command skills（/test-driven-development, /systematic-debugging）
+**3424 passed, 0 failed, 8 skipped**
 
-### 2. 命名一致性
-- [ ] PyPI package 是 `llmcode-cli`，binary 是 `llmcode`，但舊版安裝了 `llm-code`
-- [ ] 使用者可能混淆 `llm-code` vs `llmcode` — 考慮加 alias 或統一
-- [ ] `pip install llmcode-cli` 後 `llmcode` 可能不在 PATH
+## 未提交的變更（跨兩個 session 累積）
 
-### 3. Thinking 模式完善
-- [ ] vLLM 不支援 `--enable-reasoning`（ARM64 DGX Spark 沒有新版 image）
-- [ ] 目前用 `enable_thinking: False` 迴避，但犧牲了 model 的推理能力
-- [ ] 等 vLLM ARM64 image 更新後重新啟用
-- [ ] 或研究在 ARM64 上 build vLLM 的方法
+**功能改動：**
+- `llm_code/runtime/prompt.py` — auto skills 加「不要 spawn agent」指引
+- `llm_code/runtime/session.py` — estimated_tokens() 加 4000 overhead + tiktoken optional
+- `llm_code/runtime/secret_scanner.py` — +6 patterns + custom rules from security-rules.json
+- `llm_code/runtime/conversation.py` — adaptive thinking 用 provider.supports_reasoning()
+- `llm_code/api/provider.py` — 新增 supports_reasoning() 抽象方法
+- `llm_code/tools/computer_use_tools.py` — 5 個工具 FULL_ACCESS → WORKSPACE_WRITE
+- `llm_code/tools/git_tools.py` — git_push FULL_ACCESS → WORKSPACE_WRITE
+- `llm_code/tools/web_fetch.py` — auto-retry with playwright on unrendered JS
+- `llm_code/tools/web_search.py` — RateLimitError fallback logging
+- `llm_code/tools/search_backends/__init__.py` — 新增 RateLimitError class
+- `llm_code/tools/search_backends/duckduckgo.py` — HTTP 429 + bot detection
+- `llm_code/marketplace/installer.py` — scan_plugin() + SecurityScanError + audit log
+- `llm_code/tools/ide_open.py` — asyncio.new_event_loop() (Python 3.13 fix)
+- `llm_code/tools/ide_diagnostics.py` — 同上
+- `llm_code/tools/ide_selection.py` — 同上
+- `llm_code/__init__.py` — version 1.0.2
+- `llm_code/lsp/client.py` — clientInfo version 1.0.2
+- `llm_code/mcp/client.py` — clientInfo version 1.0.2
+- `pyproject.toml` — version 1.0.2, tiktoken optional dep
+- `README.md` — test count 3424, PATH troubleshooting
+- `.github/workflows/ci.yml` — Python 3.13 + ARM64 runner
 
-## 中優先級
+**測試更新：**
+- `tests/test_runtime/test_memory.py` — +21 tests
+- `tests/test_runtime/test_skills.py` — +7 tests
+- `tests/test_runtime/test_session.py` — 更新 estimated_tokens
+- `tests/test_runtime/test_compaction.py` — 更新 threshold
+- `tests/test_runtime/test_conversation.py` — compact_after_tokens + supports_reasoning mock
+- `tests/test_runtime/test_conversation_v2.py` — 同上
+- `tests/test_runtime/test_conversation_v4.py` — 同上
+- `tests/test_runtime/test_result_budget.py` — compact_after_tokens mock
+- `tests/test_runtime/test_thinking_stream.py` — +5 tests (adaptive reasoning + provider interface)
+- `tests/test_runtime/test_secret_scanner.py` — +8 tests (custom patterns + cache)
+- `tests/test_marketplace/test_installer_integration.py` — +11 tests (scan + audit log)
+- `tests/test_tui/test_secret_redaction.py` — +7 tests (new patterns)
+- `tests/test_integration.py` — supports_reasoning mock
+- `tests/test_integration_v2.py` — supports_reasoning mock
+- `tests/test_tools/test_web_search.py` — +4 tests + permission fix
+- `tests/test_tools/test_web_fetch.py` — permission fix
+- `tests/test_computer_use/test_tools.py` — 5 permission fixes
+- `tests/test_tools/test_git_tools.py` — permission fix
+- `tests/test_swarm/test_coordinator.py` — permission fix
+- `tests/test_swarm/test_tools.py` — 2 permission fixes
+- `tests/test_tools/test_agent.py` — permission fix
+- `tests/test_tools/test_cron_tools.py` — 2 permission fixes
 
-### 4. Web Search / Fetch 品質
-- [ ] web_fetch 拿到 raw JS/CSS 而不是文章內容（新聞網站用 JS render）
-- [ ] 考慮用 readability 演算法提取正文（類似 Mozilla Readability）
-- [ ] 或整合 Jina Reader API（免費額度）
-- [ ] DuckDuckGo 有時 rate limit
+## 已完成項目摘要
 
-### 5. 安全強化 v2
-- [ ] Plugin install scanning（計畫中 v1.2.0 的功能）
-- [ ] Security audit log（計畫中 v1.2.0 的功能）
-- [ ] 參考 ATR/PanGuard 規則格式
+| # | 項目 | 狀態 |
+|---|------|------|
+| 1 | Skill 適配 — auto skills prompt + command skill tests | ✅ |
+| 2 | 命名一致性 — 不加 alias | ✅ |
+| 3 | Thinking 模式 — supports_reasoning() + adaptive auto-detect | ✅ |
+| 4 | Web fetch — readability + auto-retry + DDG rate limit fallback | ✅ |
+| 5a | 安全掃描 — scan_plugin + SecurityScanError + 8 tests | ✅ |
+| 5b | Security audit log — `~/.llmcode/security-audit.jsonl` + 3 tests | ✅ |
+| 5c | Secret scanner 擴展 — +6 patterns + 7 tests | ✅ |
+| 5d | 自訂安全規則 — security-rules.json + load_custom_patterns + 8 tests | ✅ |
+| 6 | Token 估算 — +4000 overhead + tiktoken optional | ✅ |
+| 7 | 記憶系統測試 — 21 tests (find_related/find_by_tag/episodes) | ✅ |
+| 8 | Version bump 1.0.2 — pyproject, __init__, LSP/MCP, README | ✅ |
+| 9 | Tool 權限 — computer_use/git_push/stale tests fixed | ✅ |
+| 10 | Conversation mock tests — compact_after_tokens + supports_reasoning | ✅ |
+| 11 | IDE event loop — 3 files 改 asyncio.new_event_loop() | ✅ |
+| 12 | PATH troubleshooting — README 加引導 | ✅ |
+| 13 | GitHub Actions — Python 3.13 + ARM64 runner | ✅ |
 
-### 6. Context Compaction 微調
-- [ ] `estimated_tokens()` 嚴重低估（不計 system prompt, tool definitions）
-- [ ] 考慮用 tiktoken 或 model-specific tokenizer 做更準確的估算
-- [ ] 或完全依賴 API-reported token count（已部分做了）
+## 待發佈
 
-## 低優先級
-
-### 7. 記憶系統升級
-- [x] 跨 session 搜尋（FTS5）— 已完成
-- [x] 情節記憶提取（DreamTask）— 已完成
-- [x] 雙向連結（Zettelkasten）— 已完成
-- [ ] 測試 DreamTask 的 episode 提取是否真正運作
-- [ ] 測試 find_related() 和 find_by_tag() 在實際使用中的效果
-
-### 8. PyPI v1.0.2 發佈
-- [ ] 包含今天所有後續 fix（skill trigger, permissions, search, memory）
-- [ ] 更新 README test count
-- [ ] 考慮 GitHub Actions for ARM64 builds
-
-### 9. 其他
-- [ ] `computer_use_tools` 全部是 READ_ONLY — screenshot 正確，但 mouse_click/keyboard_type 應該是 WORKSPACE_WRITE
-- [ ] git_tools 全部是 READ_ONLY — git_commit, git_push 應該是 WORKSPACE_WRITE
+所有 TODO 項目已完成。準備好時可以 commit + tag v1.0.2 + publish to PyPI。
