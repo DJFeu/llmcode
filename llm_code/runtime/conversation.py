@@ -6,6 +6,7 @@ import dataclasses
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from pydantic import ValidationError
@@ -145,8 +146,25 @@ class ConversationRuntime:
         self._task_manager = task_manager
         self._project_index = project_index
         self._lsp_manager = lsp_manager
-        self.plan_mode: bool = False
-        self.analysis_context: str | None = None
+        # Harness Engine — unified quality controls
+        from llm_code.harness.engine import HarnessEngine
+        from llm_code.harness.config import HarnessConfig
+        from llm_code.harness.templates import detect_template, default_controls
+        cwd = Path(self._context.cwd) if self._context and hasattr(self._context, "cwd") else Path.cwd()
+        harness_cfg = getattr(config, "harness", HarnessConfig())
+        if harness_cfg.template == "auto" and not harness_cfg.controls:
+            template = detect_template(cwd)
+            resolved_controls = default_controls(template)
+            harness_cfg = HarnessConfig(template=template, controls=resolved_controls)
+        elif harness_cfg.template == "auto":
+            template = detect_template(cwd)
+            harness_cfg = HarnessConfig(template=template, controls=harness_cfg.controls)
+        self._harness = HarnessEngine(config=harness_cfg, cwd=cwd)
+        self._harness.lsp_manager = lsp_manager
+        if hasattr(config, "auto_commit") and not config.auto_commit:
+            self._harness.disable("auto_commit")
+        if hasattr(config, "lsp_auto_diagnose") and not config.lsp_auto_diagnose:
+            self._harness.disable("lsp_diagnose")
         self._permission_future: asyncio.Future[str] | None = None
         self._has_attempted_reactive_compact = False
         self._consecutive_failures: int = 0
@@ -166,6 +184,26 @@ class ConversationRuntime:
                 self._hida_engine = HidaEngine()
             except ImportError:
                 pass
+
+    # ------------------------------------------------------------------
+    # Backward-compatible properties delegating to HarnessEngine
+    # ------------------------------------------------------------------
+
+    @property
+    def plan_mode(self) -> bool:
+        return self._harness.plan_mode
+
+    @plan_mode.setter
+    def plan_mode(self, value: bool) -> None:
+        self._harness.plan_mode = value
+
+    @property
+    def analysis_context(self) -> str | None:
+        return self._harness.analysis_context
+
+    @analysis_context.setter
+    def analysis_context(self, value: str | None) -> None:
+        self._harness.analysis_context = value
 
     def _fire_hook(self, event: str, context: dict | None = None) -> None:
         """Fire a hook event if the hook runner supports the generic fire() method."""
@@ -291,21 +329,10 @@ class ConversationRuntime:
             if _deferred_hint:
                 system_prompt = system_prompt + "\n\n" + _deferred_hint
 
-            # Inject repo map if available
-            try:
-                from pathlib import Path as _Path
-                from llm_code.runtime.repo_map import build_repo_map
-                if self._context and hasattr(self._context, "cwd"):
-                    repo_map = build_repo_map(_Path(self._context.cwd))
-                    compact = repo_map.to_compact(max_tokens=2000)
-                    if compact:
-                        system_prompt = system_prompt + "\n\n# Repo Map\n" + compact
-            except Exception:
-                pass  # Don't fail conversation for repo map issues
-
-            # Inject analysis context if available
-            if self.analysis_context:
-                system_prompt = system_prompt + "\n\n" + self.analysis_context
+            # Inject harness guide context (repo map, analysis, etc.)
+            for injection in self._harness.pre_turn():
+                if injection:
+                    system_prompt = system_prompt + "\n\n" + injection
 
             self._fire_hook("prompt_compile", {"prompt_length": len(system_prompt), "tool_count": len(tool_defs)})
 
@@ -678,15 +705,13 @@ class ConversationRuntime:
         else:
             effective = tool.required_permission
 
-        # 4a. Plan mode — deny write tools
-        _PLAN_DENIED_TOOLS = frozenset({
-            "write_file", "edit_file", "bash", "git_commit", "git_push", "notebook_edit",
-        })
-        if self.plan_mode and call.name in _PLAN_DENIED_TOOLS:
+        # 4a. Plan mode — deny write tools (via harness)
+        denial_msg = self._harness.check_pre_tool(call.name)
+        if denial_msg:
             self._fire_hook("tool_denied", {"tool_name": call.name})
             yield ToolResultBlock(
                 tool_use_id=call.id,
-                content=f"Plan mode: read-only. Tool '{call.name}' denied. Use /plan to switch to Act mode.",
+                content=denial_msg,
                 is_error=True,
             )
             return
@@ -840,45 +865,22 @@ class ConversationRuntime:
             if hasattr(post_result, "__await__"):
                 await post_result
 
-        # 7b. Auto-commit checkpoint after write/edit tools
-        if (
-            hasattr(self._config, "auto_commit")
-            and self._config.auto_commit
-            and call.name in ("write_file", "edit_file")
-            and not tool_result.is_error
-        ):
-            try:
-                from pathlib import Path
-                from llm_code.runtime.auto_commit import auto_commit_file
-                file_path = args.get("file_path") or args.get("path", "")
-                if file_path:
-                    auto_commit_file(Path(file_path), call.name)
-            except Exception:
-                pass  # Never block tool flow for checkpoint failure
-
-        # 7c. LSP auto-diagnose after write/edit tools
-        if (
-            hasattr(self._config, "lsp_auto_diagnose")
-            and self._config.lsp_auto_diagnose
-            and call.name in ("write_file", "edit_file")
-            and not tool_result.is_error
-        ):
-            try:
-                from pathlib import Path
-                from llm_code.runtime.auto_diagnose import auto_diagnose
-                file_path = args.get("file_path") or args.get("path", "")
-                if file_path and self._lsp_manager is not None:
-                    diag_errors = await auto_diagnose(self._lsp_manager, file_path)
-                    if diag_errors:
-                        diag_text = "\n".join(diag_errors)
-                        # Inject as system message for agent to see
-                        yield StreamToolProgress(
-                            tool_name="lsp_auto_diagnose",
-                            message=f"LSP found errors in {Path(file_path).name}:\n{diag_text}",
-                            percent=None,
-                        )
-            except Exception:
-                pass  # Never block tool flow for diagnostic failure
+        # 7b. Run harness sensors (auto-commit, LSP diagnose, code rules)
+        try:
+            findings = await self._harness.post_tool(
+                tool_name=call.name,
+                file_path=args.get("file_path") or args.get("path", ""),
+                is_error=tool_result.is_error,
+            )
+            for finding in findings:
+                if finding.severity == "error":
+                    yield StreamToolProgress(
+                        tool_name=finding.sensor,
+                        message=f"{finding.sensor} found issues in {Path(finding.file_path).name}:\n{finding.message}",
+                        percent=None,
+                    )
+        except Exception:
+            pass  # Never block tool flow for harness failure
 
         # 8. Emit tool execution result event
         if self._vcr_recorder is not None:
