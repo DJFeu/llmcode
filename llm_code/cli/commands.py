@@ -52,6 +52,7 @@ COMMAND_REGISTRY: tuple[CommandDef, ...] = (
     CommandDef("map", "Repo map"),
     CommandDef("harness", "Harness controls"),
     CommandDef("knowledge", "Knowledge base"),
+    CommandDef("gain", "Token savings report", no_arg=True),
     CommandDef("exit", "Quit", no_arg=True),
     CommandDef("quit", "Quit", no_arg=True),
 )

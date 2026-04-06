@@ -348,7 +348,7 @@ class LLMCodeTUI(App):
             ReadFileTool(),
             WriteFileTool(),
             EditFileTool(),
-            BashTool(default_timeout=_bash_timeout),
+            BashTool(default_timeout=_bash_timeout, compress_output=self._config.output_compression),
             GlobSearchTool(),
             GrepSearchTool(),
             NotebookReadTool(),
@@ -1447,6 +1447,14 @@ class LLMCodeTUI(App):
     def _cmd_cost(self, args: str) -> None:
         cost = self._cost_tracker.format_cost() if self._cost_tracker else "No cost data"
         self.query_one(ChatScrollView).add_entry(AssistantText(cost))
+
+    def _cmd_gain(self, args: str) -> None:
+        from llm_code.tools.token_tracker import TokenTracker
+        days = int(args) if args.strip().isdigit() else 30
+        tracker = TokenTracker()
+        report = tracker.format_report(days)
+        tracker.close()
+        self.query_one(ChatScrollView).add_entry(AssistantText(report))
 
     def _cmd_cd(self, args: str) -> None:
         chat = self.query_one(ChatScrollView)

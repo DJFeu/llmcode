@@ -225,6 +225,7 @@ class RuntimeConfig:
     compressor: CompressorConfig = field(default_factory=CompressorConfig)
     bash_rules: BashRulesConfig = field(default_factory=BashRulesConfig)
     enterprise: EnterpriseConfig = field(default_factory=EnterpriseConfig)
+    output_compression: bool = True
     auto_commit: bool = False
     lsp_auto_diagnose: bool = True
     harness: HarnessConfig = field(default_factory=HarnessConfig)
@@ -491,6 +492,7 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         telemetry=telemetry,
         max_budget_usd=data.get("max_budget_usd", None),
         enterprise=enterprise,
+        output_compression=data.get("output_compression", True),
         auto_commit=data.get("auto_commit", False),
         lsp_auto_diagnose=data.get("lsp_auto_diagnose", True),
         harness=harness,

@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from llm_code.runtime.secret_scanner import scan_output
 from llm_code.tools.base import PermissionLevel, Tool, ToolProgress, ToolResult
+from llm_code.tools.output_compressor import compress as compress_output
 from llm_code.utils.errors import friendly_error
 
 # ---------------------------------------------------------------------------
@@ -411,9 +412,10 @@ def classify_command(
 
 
 class BashTool(Tool):
-    def __init__(self, default_timeout: int = 30, max_output: int = 8000) -> None:
+    def __init__(self, default_timeout: int = 30, max_output: int = 8000, *, compress_output: bool = True) -> None:
         self._default_timeout = default_timeout
         self._max_output = max_output
+        self._compress_output = compress_output
 
     @property
     def name(self) -> str:
@@ -572,6 +574,9 @@ class BashTool(Tool):
             _log.warning("Secrets redacted from bash output: %s", findings)
 
         is_error = proc.returncode != 0
+        if self._compress_output:
+            result = compress_output(command, output, is_error=is_error)
+            output = result.output
         return ToolResult(output=output, is_error=is_error)
 
     def _run(self, command: str, timeout: int) -> ToolResult:
@@ -600,6 +605,9 @@ class BashTool(Tool):
                 _log.warning("Secrets redacted from bash output: %s", findings)
 
             is_error = proc.returncode != 0
+            if self._compress_output:
+                result = compress_output(command, output, is_error=is_error)
+                output = result.output
             return ToolResult(output=output, is_error=is_error)
 
         except subprocess.TimeoutExpired as exc:
