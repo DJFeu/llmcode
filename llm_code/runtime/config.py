@@ -49,6 +49,14 @@ class DreamConfig:
 
 
 @dataclass(frozen=True)
+class KnowledgeConfig:
+    enabled: bool = True
+    compile_on_exit: bool = True
+    max_context_tokens: int = 3000
+    compile_model: str = ""
+
+
+@dataclass(frozen=True)
 class VoiceConfig:
     enabled: bool = False
     backend: str = "whisper"  # "whisper" | "google" | "anthropic"
@@ -220,6 +228,7 @@ class RuntimeConfig:
     auto_commit: bool = False
     lsp_auto_diagnose: bool = True
     harness: HarnessConfig = field(default_factory=HarnessConfig)
+    knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
 
 
 class ConfigSchema(BaseModel):
@@ -421,6 +430,15 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         audit=enterprise_audit,
     )
 
+    # Knowledge config
+    knowledge_raw = data.get("knowledge", {})
+    knowledge = KnowledgeConfig(
+        enabled=knowledge_raw.get("enabled", True),
+        compile_on_exit=knowledge_raw.get("compile_on_exit", True),
+        max_context_tokens=knowledge_raw.get("max_context_tokens", 3000),
+        compile_model=knowledge_raw.get("compile_model", ""),
+    )
+
     # Harness config
     harness_data = data.get("harness", {})
     harness_controls: list[HarnessControl] = []
@@ -476,6 +494,7 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         auto_commit=data.get("auto_commit", False),
         lsp_auto_diagnose=data.get("lsp_auto_diagnose", True),
         harness=harness,
+        knowledge=knowledge,
     )
 
 
