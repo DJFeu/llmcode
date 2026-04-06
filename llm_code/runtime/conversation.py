@@ -657,6 +657,18 @@ class ConversationRuntime:
                 )
                 self.session = self.session.add_message(tool_result_msg)
 
+                # Compact after tool results to prevent context overflow
+                est = self.session.estimated_tokens()
+                if est > _context_limit:
+                    logger.info(
+                        "Post-tool compaction: %d tokens > %d limit",
+                        est, _context_limit,
+                    )
+                    _compressor = ContextCompressor()
+                    self.session = _compressor.compress(
+                        self.session, int(_context_limit * 0.6),
+                    )
+
             # 10. Loop back for LLM to process results
 
         # Update session usage
