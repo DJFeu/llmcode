@@ -1,4 +1,4 @@
-# llm-code
+# llmcode
 
 <p align="center">
   <strong>Open-source AI agent runtime for any LLM</strong><br>
@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="#quick-start">Quick Start</a> ·
-  <a href="#why-llm-code">Why llm-code</a> ·
+  <a href="#why-llmcode">Why llmcode</a> ·
   <a href="#features">Features</a> ·
   <a href="#marketplace">Marketplace</a> ·
   <a href="#configuration">Configuration</a> ·
@@ -23,9 +23,9 @@
 
 ---
 
-## Why llm-code?
+## Why llmcode?
 
-Most AI coding tools lock you into a single provider. **llm-code doesn't.**
+Most AI coding tools lock you into a single provider. **llmcode doesn't.**
 
 Run the same agent experience with a free local model on your own GPU, or with any cloud API. Switch between them with one config change. No API key required for local models.
 
@@ -55,7 +55,7 @@ Run the same agent experience with a free local model on your own GPU, or with a
 ## Quick Start
 
 ```bash
-pip install llm-code
+pip install llmcode-cli
 ```
 
 **With a local model (zero cost):**
@@ -71,7 +71,7 @@ cat > ~/.llm-code/config.json << 'EOF'
 }
 EOF
 
-llm-code
+llmcode
 ```
 
 **With a cloud API:**
@@ -87,28 +87,28 @@ cat > ~/.llm-code/config.json << 'EOF'
 }
 EOF
 
-llm-code
+llmcode
 ```
 
 ### Modes
 
 ```bash
-llm-code                       # Default: Fullscreen TUI (Python Textual)
-llm-code --provider ollama     # Auto-detect Ollama + interactive model selector
-llm-code --serve --port 8765   # Remote WebSocket server
-llm-code --connect host:8765   # Connect to remote agent
-llm-code --ssh user@host       # SSH tunnel + auto-connect
-llm-code --replay <file>       # Replay a recorded session
-llm-code --resume              # Resume from checkpoint
+llmcode                       # Default: Fullscreen TUI (Python Textual)
+llmcode --provider ollama     # Auto-detect Ollama + interactive model selector
+llmcode --serve --port 8765   # Remote WebSocket server
+llmcode --connect host:8765   # Connect to remote agent
+llmcode --ssh user@host       # SSH tunnel + auto-connect
+llmcode --replay <file>       # Replay a recorded session
+llmcode --resume              # Resume from checkpoint
 ```
 
 ### Optional Features
 
 ```bash
-pip install llm-code[voice]          # Voice input via STT
-pip install llm-code[computer-use]   # GUI automation
-pip install llm-code[ide]            # IDE integration
-pip install llm-code[telemetry]      # OpenTelemetry tracing
+pip install llmcode-cli[voice]          # Voice input via STT
+pip install llmcode-cli[computer-use]   # GUI automation
+pip install llmcode-cli[ide]            # IDE integration
+pip install llmcode-cli[telemetry]      # OpenTelemetry tracing
 ```
 
 ---
@@ -272,7 +272,7 @@ PLAN --> DO --> VERIFY --> CLOSE --> DONE
 
 ### IDE Integration
 
-llm-code runs a WebSocket JSON-RPC server that any IDE can connect to:
+llmcode runs a WebSocket JSON-RPC server that any IDE can connect to:
 
 - **Open files** at specific lines in your editor
 - **Read diagnostics** (lint errors, type errors) from the IDE
@@ -442,8 +442,8 @@ tests/                  2,861 tests across 170+ test files
 ## Contributing
 
 ```bash
-git clone https://github.com/DJFeu/llm-code
-cd llm-code
+git clone https://github.com/DJFeu/llmcode
+cd llmcode
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 pytest                  # 2,861 tests
