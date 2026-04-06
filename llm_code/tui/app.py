@@ -735,12 +735,26 @@ class LLMCodeTUI(App):
             chat.add_entry(AssistantText(f"Clipboard error: {exc}"))
 
     def on_paste(self, event) -> None:
-        """Handle terminal paste events — check clipboard for images.
+        """Handle terminal paste events — insert text and check for images.
 
         When user presses Cmd+V (macOS) or Ctrl+V (Linux), the terminal
-        pastes text via bracket paste mode.  We also check the system
-        clipboard for an image — if found, attach it silently.
+        pastes text via bracket paste mode.  We insert the text into
+        InputBar, and also check the clipboard for an image.
         """
+        # Insert pasted text into InputBar
+        paste_text = getattr(event, "text", "")
+        if paste_text:
+            input_bar = self.query_one(InputBar)
+            if not input_bar.disabled:
+                input_bar.value = (
+                    input_bar.value[:input_bar._cursor]
+                    + paste_text
+                    + input_bar.value[input_bar._cursor:]
+                )
+                input_bar._cursor += len(paste_text)
+                input_bar.refresh()
+                return  # text paste — don't check for image
+        # No text pasted — check clipboard for image
         self._paste_clipboard_image()
 
     def on_screen_resume(self) -> None:
