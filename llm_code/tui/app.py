@@ -173,6 +173,34 @@ class LLMCodeTUI(App):
             return False
         return all(re.match(r'^[a-zA-Z0-9_.-]+$', p) for p in parts)
 
+    def _install_from_marketplace(self, name: str, repo: str, subdir: str) -> None:
+        """Install a plugin from a marketplace repo subdirectory."""
+        import tempfile
+        chat = self.query_one(ChatScrollView)
+        dest = Path.home() / ".llmcode" / "plugins" / name
+        if dest.exists():
+            shutil.rmtree(dest)
+        chat.add_entry(AssistantText(f"Installing {name} from {repo}..."))
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                result = subprocess.run(
+                    ["git", "clone", "--depth", "1",
+                     f"https://github.com/{repo}.git", tmp],
+                    capture_output=True, text=True, timeout=60,
+                )
+                if result.returncode != 0:
+                    chat.add_entry(AssistantText(f"Clone failed: {result.stderr[:120]}"))
+                    return
+                src = Path(tmp) / subdir
+                if not src.is_dir():
+                    chat.add_entry(AssistantText(f"Plugin directory not found: {subdir}"))
+                    return
+                shutil.copytree(src, dest)
+                self._reload_skills()
+                chat.add_entry(AssistantText(f"Installed {name}. Activated."))
+        except Exception as exc:
+            chat.add_entry(AssistantText(f"Install failed: {exc}"))
+
     def _detect_branch(self) -> str:
         try:
             r = subprocess.run(
@@ -2520,10 +2548,19 @@ class LLMCodeTUI(App):
 
         if action == "install":
             if item.source == "npm":
-                # MCP server install — show config instructions
                 self._cmd_mcp(f"install {item.name}")
             elif item.repo:
-                if item.source in ("official", "community"):
+                # If plugin has a subdir, install from marketplace repo subdirectory
+                subdir = getattr(item, "extra_data", {}).get("subdir", "") if hasattr(item, "extra_data") else ""
+                # Check registry for subdir info
+                from llm_code.marketplace.builtin_registry import get_all_known_plugins
+                for p in get_all_known_plugins():
+                    if p["name"] == item.name and p.get("subdir"):
+                        subdir = p["subdir"]
+                        break
+                if subdir:
+                    self._install_from_marketplace(item.name, item.repo, subdir)
+                elif item.source in ("official", "community"):
                     self._cmd_plugin(f"install {item.repo}")
                 else:
                     self._cmd_skill(f"install {item.repo}")

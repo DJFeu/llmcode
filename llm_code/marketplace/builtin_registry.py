@@ -1,46 +1,56 @@
-"""Built-in registry of known Claude Code plugins (official + community)."""
+"""Built-in registry of known Claude Code plugins (official + community).
+
+Claude Code's plugin architecture:
+  - Official plugins live in the anthropics/claude-plugins-official repo
+    - /plugins/{name} — Anthropic-maintained plugins
+    - /external_plugins/{name} — third-party plugins accepted into official marketplace
+  - Community plugins come from independent repos or other marketplaces
+  - superpowers (obra/superpowers) is a standalone plugin, NOT a container for others
+"""
 from __future__ import annotations
 
+# Marketplace repo that hosts most official plugins
+_OFFICIAL_MARKETPLACE = "anthropics/claude-plugins-official"
+
 OFFICIAL_PLUGINS = [
-    # Superpowers bundle (includes many sub-skills)
+    # ── Standalone repos (not in the official marketplace repo) ──
     {"name": "superpowers", "desc": "Core skills: TDD, debugging, collaboration, plans", "skills": 28, "repo": "obra/superpowers"},
-    # Standalone official plugins with known repos
-    {"name": "chrome-devtools-mcp", "desc": "Browser automation, debugging, performance analysis", "skills": 8, "repo": "anthropics/claude-code-chrome-devtools-mcp"},
-    {"name": "searchfit-seo", "desc": "AI-powered SEO toolkit — audit, content strategy", "skills": 22, "repo": "anthropics/searchfit-seo"},
-    {"name": "data-engineering", "desc": "Data warehouse exploration, pipeline audit, SQL", "skills": 46, "repo": "anthropics/data-engineering"},
-    {"name": "figma", "desc": "Figma MCP server + design-to-code skills", "skills": 7, "repo": "anthropics/claude-code-figma"},
-    {"name": "frontend-design", "desc": "UI/UX implementation for web frontends", "skills": 3, "repo": "anthropics/claude-code-frontend-design"},
-    # Sub-skills bundled inside superpowers (repo points to superpowers)
-    {"name": "remember", "desc": "Continuous memory — extract and persist context", "skills": 2, "repo": "obra/superpowers"},
-    {"name": "skill-creator", "desc": "Create, improve, and measure skill performance", "skills": 3, "repo": "obra/superpowers"},
-    {"name": "claude-code-setup", "desc": "Analyze codebases, recommend Claude Code automations", "skills": 1, "repo": "obra/superpowers"},
-    {"name": "claude-md-management", "desc": "Audit and improve CLAUDE.md files", "skills": 1, "repo": "obra/superpowers"},
-    {"name": "code-review", "desc": "Automated code review with specialized agents", "skills": 0, "repo": "obra/superpowers"},
-    {"name": "code-simplifier", "desc": "Simplify and refine code for clarity", "skills": 0, "repo": "obra/superpowers"},
-    {"name": "commit-commands", "desc": "Streamline git workflow — commit, push, PR", "skills": 0, "repo": "obra/superpowers"},
-    {"name": "feature-dev", "desc": "Feature development workflow with specialized agents", "skills": 0, "repo": "obra/superpowers"},
-    {"name": "pr-review-toolkit", "desc": "Comprehensive PR review with specialized agents", "skills": 0, "repo": "obra/superpowers"},
-    {"name": "agent-sdk-dev", "desc": "Claude Agent SDK development tools", "skills": 0, "repo": "obra/superpowers"},
-    {"name": "explanatory-output-style", "desc": "Educational insights about implementation choices", "skills": 0, "repo": "obra/superpowers"},
-    # Independent official plugins (MCP servers, not part of superpowers)
-    {"name": "context7", "desc": "Context7 MCP for up-to-date documentation lookup", "skills": 0, "repo": "upstash/context7"},
-    {"name": "playwright", "desc": "Browser automation and E2E testing (Microsoft)", "skills": 0, "repo": "anthropics/claude-code-playwright"},
-    {"name": "supabase", "desc": "Supabase MCP for database and auth operations", "skills": 0, "repo": "supabase-community/supabase-mcp"},
-    {"name": "semgrep", "desc": "Semgrep MCP for static analysis and SAST", "skills": 0, "repo": "semgrep/mcp"},
-    {"name": "security-guidance", "desc": "Security reminder hooks for safe coding", "skills": 0, "repo": ""},
-    {"name": "ralph-loop", "desc": "Continuous self-referential AI loops", "skills": 0, "repo": ""},
-    # LSP integrations (no standalone repos)
-    {"name": "clangd-lsp", "desc": "C/C++ language server integration", "skills": 0, "repo": ""},
-    {"name": "gopls-lsp", "desc": "Go language server integration", "skills": 0, "repo": ""},
-    {"name": "pyright-lsp", "desc": "Python language server integration", "skills": 0, "repo": ""},
-    {"name": "rust-analyzer-lsp", "desc": "Rust language server integration", "skills": 0, "repo": ""},
-    {"name": "typescript-lsp", "desc": "TypeScript language server integration", "skills": 0, "repo": ""},
+    {"name": "chrome-devtools-mcp", "desc": "Browser automation, debugging, performance analysis", "skills": 8, "repo": _OFFICIAL_MARKETPLACE, "subdir": "external_plugins/chrome-devtools-mcp"},
+    {"name": "figma", "desc": "Figma MCP server + design-to-code skills", "skills": 7, "repo": _OFFICIAL_MARKETPLACE, "subdir": "external_plugins/figma"},
+    # ── Internal plugins (in /plugins/ of the official marketplace) ──
+    {"name": "searchfit-seo", "desc": "AI-powered SEO toolkit — audit, content strategy", "skills": 22, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/searchfit-seo"},
+    {"name": "data-engineering", "desc": "Data warehouse exploration, pipeline audit, SQL", "skills": 46, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/data-engineering"},
+    {"name": "frontend-design", "desc": "UI/UX implementation for web frontends", "skills": 3, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/frontend-design"},
+    {"name": "remember", "desc": "Continuous memory — extract and persist context", "skills": 2, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/remember"},
+    {"name": "skill-creator", "desc": "Create, improve, and measure skill performance", "skills": 3, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/skill-creator"},
+    {"name": "claude-code-setup", "desc": "Analyze codebases, recommend Claude Code automations", "skills": 1, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/claude-code-setup"},
+    {"name": "claude-md-management", "desc": "Audit and improve CLAUDE.md files", "skills": 1, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/claude-md-management"},
+    {"name": "code-review", "desc": "Automated code review with specialized agents", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/code-review"},
+    {"name": "code-simplifier", "desc": "Simplify and refine code for clarity", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/code-simplifier"},
+    {"name": "commit-commands", "desc": "Streamline git workflow — commit, push, PR", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/commit-commands"},
+    {"name": "feature-dev", "desc": "Feature development workflow with specialized agents", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/feature-dev"},
+    {"name": "pr-review-toolkit", "desc": "Comprehensive PR review with specialized agents", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/pr-review-toolkit"},
+    {"name": "agent-sdk-dev", "desc": "Claude Agent SDK development tools", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/agent-sdk-dev"},
+    {"name": "explanatory-output-style", "desc": "Educational insights about implementation choices", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/explanatory-output-style"},
+    {"name": "security-guidance", "desc": "Security reminder hooks for safe coding", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/security-guidance"},
+    {"name": "ralph-loop", "desc": "Continuous self-referential AI loops", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/ralph-loop"},
+    # ── External plugins (in /external_plugins/ of the official marketplace) ──
+    {"name": "context7", "desc": "Context7 MCP for up-to-date documentation lookup", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "external_plugins/context7"},
+    {"name": "playwright", "desc": "Browser automation and E2E testing (Microsoft)", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "external_plugins/playwright"},
+    {"name": "supabase", "desc": "Supabase MCP for database and auth operations", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "external_plugins/supabase"},
+    {"name": "semgrep", "desc": "Semgrep MCP for static analysis and SAST", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "external_plugins/semgrep"},
+    # ── LSP integrations ──
+    {"name": "clangd-lsp", "desc": "C/C++ language server integration", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/clangd-lsp"},
+    {"name": "gopls-lsp", "desc": "Go language server integration", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/gopls-lsp"},
+    {"name": "pyright-lsp", "desc": "Python language server integration", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/pyright-lsp"},
+    {"name": "rust-analyzer-lsp", "desc": "Rust language server integration", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/rust-analyzer-lsp"},
+    {"name": "typescript-lsp", "desc": "TypeScript language server integration", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/typescript-lsp"},
 ]
 
 COMMUNITY_PLUGINS = [
     {"name": "ai-integration-architect", "desc": "Design and scaffold AI integration into enterprise systems", "skills": 1, "repo": ""},
     {"name": "claude-md-optimizer", "desc": "Optimize oversized CLAUDE.md using progressive disclosure", "skills": 1, "repo": ""},
-    {"name": "codex", "desc": "OpenAI Codex companion — rescue, review, second opinion", "skills": 5, "repo": ""},
+    {"name": "codex", "desc": "OpenAI Codex companion — rescue, review, second opinion", "skills": 5, "repo": "openai/codex-plugin-cc"},
     {"name": "devfleet", "desc": "Orchestrate parallel agents via DevFleet", "skills": 1, "repo": ""},
     {"name": "loop-operator", "desc": "Operate autonomous agent loops with monitoring", "skills": 3, "repo": ""},
     {"name": "chief-of-staff", "desc": "Triage email, Slack, LINE, Messenger communications", "skills": 1, "repo": ""},
