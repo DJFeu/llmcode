@@ -36,7 +36,6 @@ COMMUNITY_PLUGINS = [
     {"name": "ai-integration-architect", "desc": "Design and scaffold AI integration into enterprise systems", "skills": 1, "repo": ""},
     {"name": "claude-md-optimizer", "desc": "Optimize oversized CLAUDE.md using progressive disclosure", "skills": 1, "repo": ""},
     {"name": "codex", "desc": "OpenAI Codex companion — rescue, review, second opinion", "skills": 5, "repo": ""},
-    {"name": "searchfit-seo", "desc": "AI-powered SEO toolkit — audit, content strategy, schema markup", "skills": 22, "repo": ""},
     {"name": "devfleet", "desc": "Orchestrate parallel agents via DevFleet", "skills": 1, "repo": ""},
     {"name": "loop-operator", "desc": "Operate autonomous agent loops with monitoring", "skills": 3, "repo": ""},
     {"name": "chief-of-staff", "desc": "Triage email, Slack, LINE, Messenger communications", "skills": 1, "repo": ""},
@@ -59,12 +58,19 @@ COMMUNITY_PLUGINS = [
 
 
 def get_all_known_plugins() -> list[dict]:
-    """Return all known plugins (official + community) sorted by skill count."""
-    all_plugins = []
+    """Return all known plugins (official + community) sorted by skill count.
+
+    Official entries take precedence over community entries with the same name.
+    """
+    seen: set[str] = set()
+    all_plugins: list[dict] = []
     for p in OFFICIAL_PLUGINS:
+        seen.add(p["name"])
         all_plugins.append({**p, "source": "official"})
     for p in COMMUNITY_PLUGINS:
-        all_plugins.append({**p, "source": "community"})
+        if p["name"] not in seen:
+            seen.add(p["name"])
+            all_plugins.append({**p, "source": "community"})
     all_plugins.sort(key=lambda x: (-x["skills"], x["name"]))
     return all_plugins
 
