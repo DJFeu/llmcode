@@ -1067,6 +1067,13 @@ class LLMCodeTUI(App):
             assistant.append_text(_raw_text_buffer)
             _raw_text_buffer = ""
 
+        # If no text was ever displayed, show a hint
+        if not assistant_added and turn_output_tokens > 0:
+            chat.add_entry(AssistantText(
+                "(No text response generated — model may have exhausted output tokens "
+                "on thinking/tool calls. Try a simpler prompt or increase context window.)"
+            ))
+
         elapsed = time.monotonic() - start
         cost = self._cost_tracker.format_cost() if self._cost_tracker else ""
         chat.add_entry(TurnSummary.create(elapsed, turn_input_tokens, turn_output_tokens, cost))
