@@ -32,6 +32,10 @@ class LLMCodeTUI(App):
     CSS = APP_CSS
     BINDINGS = [
         ("ctrl+d", "quit_app", "Quit"),
+        ("pageup", "scroll_chat_up", "Scroll Up"),
+        ("pagedown", "scroll_chat_down", "Scroll Down"),
+        ("shift+up", "scroll_chat_up", "Scroll Up"),
+        ("shift+down", "scroll_chat_down", "Scroll Down"),
     ]
 
     def __init__(
@@ -822,20 +826,6 @@ class LLMCodeTUI(App):
 
     def on_key(self, event: "events.Key") -> None:
         """Handle single-key permission responses (y/n/a), image paste, and scroll."""
-        # Page Up / Page Down for chat scrolling
-        if event.key == "pageup":
-            chat = self.query_one(ChatScrollView)
-            chat.scroll_up(animate=False)
-            chat.pause_auto_scroll()
-            event.prevent_default()
-            return
-        if event.key == "pagedown":
-            chat = self.query_one(ChatScrollView)
-            chat.scroll_down(animate=False)
-            chat.resume_auto_scroll()
-            event.prevent_default()
-            return
-
         # Permission handling (y/n/a)
         if not self._permission_pending or self._runtime is None:
             return
@@ -1201,6 +1191,18 @@ class LLMCodeTUI(App):
     def action_quit_app(self) -> None:
         """Textual action bound to Ctrl+D."""
         self.run_worker(self._graceful_exit(), name="graceful_exit")
+
+    def action_scroll_chat_up(self) -> None:
+        """Scroll chat view up by one page."""
+        chat = self.query_one(ChatScrollView)
+        chat.scroll_page_up(animate=False)
+        chat.pause_auto_scroll()
+
+    def action_scroll_chat_down(self) -> None:
+        """Scroll chat view down by one page."""
+        chat = self.query_one(ChatScrollView)
+        chat.scroll_page_down(animate=False)
+        chat.resume_auto_scroll()
 
     async def _graceful_exit(self) -> None:
         """Dream consolidation (best-effort) + exit."""
