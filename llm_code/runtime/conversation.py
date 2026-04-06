@@ -48,17 +48,17 @@ if TYPE_CHECKING:
 def build_thinking_extra_body(thinking_config, *, is_local: bool = False) -> dict | None:
     """Build extra_body dict for thinking mode configuration.
 
-    Returns None for adaptive mode (let provider decide),
-    explicit enable/disable dict for other modes.
-
-    Local models get unlimited thinking budget (no cost concern).
+    - "enabled": explicitly enable thinking (user opted in)
+    - "disabled": explicitly disable thinking
+    - "adaptive" (default): disable for local models (vLLM without
+      --enable-reasoning mixes thinking into response text), let
+      cloud providers decide on their own
     """
     mode = thinking_config.mode
     if mode == "enabled":
-        # Local models: no budget cap; cloud: use configured budget
         budget = thinking_config.budget_tokens
         if is_local:
-            budget = max(budget, 131072)  # At least 128K tokens for local
+            budget = max(budget, 131072)
         return {
             "chat_template_kwargs": {
                 "enable_thinking": True,
@@ -67,15 +67,9 @@ def build_thinking_extra_body(thinking_config, *, is_local: bool = False) -> dic
         }
     if mode == "disabled":
         return {"chat_template_kwargs": {"enable_thinking": False}}
-    # adaptive: for local models, enable with generous budget; for cloud, let provider decide
+    # adaptive: disable for local models to prevent thinking text leak
     if is_local:
-        budget = max(thinking_config.budget_tokens, 131072)
-        return {
-            "chat_template_kwargs": {
-                "enable_thinking": True,
-                "thinking_budget": budget,
-            }
-        }
+        return {"chat_template_kwargs": {"enable_thinking": False}}
     return None
 
 
