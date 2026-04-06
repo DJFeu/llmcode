@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from llm_code.runtime.knowledge_compiler import KnowledgeCompiler
 from llm_code.runtime.repo_map import build_repo_map
 
 PLAN_DENIED_TOOLS: frozenset[str] = frozenset({
@@ -29,3 +30,12 @@ def plan_mode_denied_tools(active: bool) -> frozenset[str]:
     if active:
         return PLAN_DENIED_TOOLS
     return frozenset()
+
+
+def knowledge_guide(cwd: Path, max_tokens: int = 3000) -> str:
+    """Return compiled project knowledge for system prompt injection."""
+    try:
+        compiler = KnowledgeCompiler(cwd=cwd, llm_provider=None)
+        return compiler.query(max_tokens=max_tokens)
+    except Exception:
+        return ""

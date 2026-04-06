@@ -76,6 +76,9 @@ class HarnessEngine:
                 except OSError:
                     return ""
             return ""
+        if ctrl.name == "knowledge":
+            from llm_code.harness.guides import knowledge_guide
+            return knowledge_guide(cwd=self._cwd)
         return ""
 
     async def post_tool(

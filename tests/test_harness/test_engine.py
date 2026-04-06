@@ -168,3 +168,22 @@ def test_engine_enable_disable(tmp_path: Path):
     engine.enable("auto_commit")
     status = engine.status()
     assert status["sensors"][0]["enabled"] is True
+
+
+def test_engine_pre_turn_knowledge_guide(tmp_path: Path):
+    from llm_code.harness.engine import HarnessEngine
+
+    controls = (
+        HarnessControl(name="knowledge", category="guide", kind="computational", trigger="pre_turn"),
+    )
+    engine = HarnessEngine(config=HarnessConfig(controls=controls), cwd=tmp_path)
+
+    knowledge_dir = tmp_path / ".llm-code" / "knowledge"
+    knowledge_dir.mkdir(parents=True)
+    (knowledge_dir / "modules").mkdir()
+    (knowledge_dir / "index.md").write_text("# Knowledge Index\n\n- [Api](modules/api.md) — REST API\n")
+    (knowledge_dir / "modules" / "api.md").write_text("# API\n\nHandles requests.\n")
+
+    injections = engine.pre_turn()
+    combined = "\n".join(injections)
+    assert "API" in combined

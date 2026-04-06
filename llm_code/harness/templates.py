@@ -48,6 +48,7 @@ def default_controls(template: str) -> tuple[HarnessControl, ...]:
         "python-cli": (
             HarnessControl(name="repo_map", category="guide", kind="computational", trigger="pre_turn"),
             HarnessControl(name="analysis_context", category="guide", kind="computational", trigger="pre_turn"),
+            HarnessControl(name="knowledge", category="guide", kind="computational", trigger="pre_turn"),
             HarnessControl(name="plan_mode", category="guide", kind="computational", trigger="pre_tool"),
             HarnessControl(name="lsp_diagnose", category="sensor", kind="computational", trigger="post_tool"),
             HarnessControl(name="code_rules", category="sensor", kind="computational", trigger="post_tool"),
@@ -57,6 +58,7 @@ def default_controls(template: str) -> tuple[HarnessControl, ...]:
             HarnessControl(name="repo_map", category="guide", kind="computational", trigger="pre_turn"),
             HarnessControl(name="architecture_doc", category="guide", kind="computational", trigger="pre_turn"),
             HarnessControl(name="analysis_context", category="guide", kind="computational", trigger="pre_turn"),
+            HarnessControl(name="knowledge", category="guide", kind="computational", trigger="pre_turn"),
             HarnessControl(name="plan_mode", category="guide", kind="computational", trigger="pre_tool"),
             HarnessControl(name="lsp_diagnose", category="sensor", kind="computational", trigger="post_tool"),
             HarnessControl(name="code_rules", category="sensor", kind="computational", trigger="post_tool"),

@@ -59,3 +59,33 @@ def test_plan_mode_inactive_returns_empty():
 
     result = plan_mode_denied_tools(active=False)
     assert result == frozenset()
+
+
+def test_knowledge_guide_returns_content(tmp_path: Path):
+    from llm_code.harness.guides import knowledge_guide
+
+    knowledge_dir = tmp_path / ".llm-code" / "knowledge"
+    knowledge_dir.mkdir(parents=True)
+    (knowledge_dir / "modules").mkdir()
+    (knowledge_dir / "index.md").write_text(
+        "# Knowledge Index\n\n- [Api](modules/api.md) — REST API\n"
+    )
+    (knowledge_dir / "modules" / "api.md").write_text("# API\n\nHandles requests.\n")
+
+    result = knowledge_guide(cwd=tmp_path, max_tokens=3000)
+    assert "API" in result
+
+
+def test_knowledge_guide_empty(tmp_path: Path):
+    from llm_code.harness.guides import knowledge_guide
+
+    result = knowledge_guide(cwd=tmp_path, max_tokens=3000)
+    assert result == ""
+
+
+def test_knowledge_guide_handles_errors(tmp_path: Path):
+    from llm_code.harness.guides import knowledge_guide
+
+    with patch("llm_code.harness.guides.KnowledgeCompiler", side_effect=RuntimeError("boom")):
+        result = knowledge_guide(cwd=tmp_path, max_tokens=3000)
+    assert result == ""
