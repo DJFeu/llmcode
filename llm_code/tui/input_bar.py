@@ -257,9 +257,9 @@ class InputBar(Widget):
                 if selected_cmd in _NO_ARG_COMMANDS:
                     # Execute immediately
                     self.value = selected_cmd
-                    self._cursor = 0
                     self.post_message(self.Submitted(selected_cmd))
                     self.value = ""
+                    self._cursor = 0
                 else:
                     # Fill and wait for argument
                     self.value = selected_cmd + " "
@@ -314,6 +314,8 @@ class InputBar(Widget):
         if action:
             self._handle_action(action)
         elif event.character and len(event.character) == 1:
+            # Ensure cursor is valid before insertion
+            self._cursor = min(self._cursor, len(self.value))
             self.value = self.value[:self._cursor] + event.character + self.value[self._cursor:]
             self._cursor += 1
             event.prevent_default()
