@@ -35,6 +35,26 @@ OFFICIAL_PLUGINS = [
 COMMUNITY_PLUGINS = [
     {"name": "ai-integration-architect", "desc": "Design and scaffold AI integration into enterprise systems", "skills": 1, "repo": ""},
     {"name": "claude-md-optimizer", "desc": "Optimize oversized CLAUDE.md using progressive disclosure", "skills": 1, "repo": ""},
+    {"name": "codex", "desc": "OpenAI Codex companion — rescue, review, second opinion", "skills": 5, "repo": ""},
+    {"name": "searchfit-seo", "desc": "AI-powered SEO toolkit — audit, content strategy, schema markup", "skills": 22, "repo": ""},
+    {"name": "devfleet", "desc": "Orchestrate parallel agents via DevFleet", "skills": 1, "repo": ""},
+    {"name": "loop-operator", "desc": "Operate autonomous agent loops with monitoring", "skills": 3, "repo": ""},
+    {"name": "chief-of-staff", "desc": "Triage email, Slack, LINE, Messenger communications", "skills": 1, "repo": ""},
+    {"name": "sessions", "desc": "Manage session history, aliases, and metadata", "skills": 1, "repo": ""},
+    {"name": "pm2", "desc": "PM2 process manager integration", "skills": 1, "repo": ""},
+    {"name": "context-budget", "desc": "Analyze context window usage across agents and skills", "skills": 1, "repo": ""},
+    {"name": "harness-optimizer", "desc": "Optimize local agent harness for reliability and cost", "skills": 1, "repo": ""},
+    {"name": "performance-optimizer", "desc": "Identify bottlenecks, optimize slow code, reduce bundle size", "skills": 1, "repo": ""},
+    {"name": "database-reviewer", "desc": "PostgreSQL query optimization, schema design, security", "skills": 1, "repo": ""},
+    {"name": "kotlin-tools", "desc": "Kotlin/Gradle build, review, and TDD tools", "skills": 3, "repo": ""},
+    {"name": "cpp-tools", "desc": "C++ build, review, and TDD tools", "skills": 3, "repo": ""},
+    {"name": "go-tools", "desc": "Go build, review, and TDD tools", "skills": 3, "repo": ""},
+    {"name": "rust-tools", "desc": "Rust build, review, and TDD tools", "skills": 3, "repo": ""},
+    {"name": "e2e-runner", "desc": "End-to-end testing with Playwright and browser agents", "skills": 1, "repo": ""},
+    {"name": "doc-updater", "desc": "Update documentation and codemaps automatically", "skills": 2, "repo": ""},
+    {"name": "refactor-cleaner", "desc": "Dead code cleanup, consolidation, and safe removal", "skills": 1, "repo": ""},
+    {"name": "translate-book", "desc": "Translate books (PDF/DOCX/EPUB) with parallel agents", "skills": 1, "repo": ""},
+    {"name": "prompt-optimize", "desc": "Analyze and optimize prompts for better LLM output", "skills": 1, "repo": ""},
 ]
 
 

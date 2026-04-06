@@ -2377,16 +2377,18 @@ class LLMCodeTUI(App):
             except Exception:
                 pass
 
-            # Marketplace plugins with skills — not yet installed
+            # Marketplace plugins — not yet installed
             for p in get_all_known_plugins():
-                if p.get("skills", 0) > 0 and p["name"] not in installed_names:
+                if p["name"] not in installed_names:
+                    skill_count = p.get("skills", 0)
+                    extra = f"{skill_count} skills" if skill_count > 0 else p.get("type", "plugin")
                     items.append(MarketplaceItem(
                         name=p["name"],
                         description=p.get("desc", ""),
                         source=p.get("source", "official"),
                         installed=False,
                         repo=p.get("repo", ""),
-                        extra=f"{p['skills']} skills",
+                        extra=extra,
                     ))
 
             browser = MarketplaceBrowser("Skills Marketplace", items)
@@ -2490,7 +2492,7 @@ class LLMCodeTUI(App):
             for p in get_all_known_plugins():
                 if p["name"] not in installed_names:
                     skills_count = p.get("skills", 0)
-                    extra = f"{skills_count} skills" if skills_count else ""
+                    extra = f"{skills_count} skills" if skills_count > 0 else p.get("type", "plugin")
                     items.append(MarketplaceItem(
                         name=p["name"],
                         description=p.get("desc", ""),
