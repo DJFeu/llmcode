@@ -190,7 +190,7 @@ class RuntimeConfig:
     provider_base_url: str | None = None
     provider_api_key_env: str = "LLM_API_KEY"
     permission_mode: str = "prompt"
-    max_turn_iterations: int = 10
+    max_turn_iterations: int = 5
     max_tokens: int = 4096
     temperature: float = 0.7
     hooks: tuple[HookConfig, ...] = ()
@@ -244,7 +244,7 @@ class ConfigSchema(BaseModel):
     lspServers: dict = {}
     registries: dict = {}
     lsp_auto_detect: bool = True
-    max_turn_iterations: int = 10
+    max_turn_iterations: int = 5
     thinking: dict = {}
     max_tokens: int = 4096
     temperature: float = 0.7

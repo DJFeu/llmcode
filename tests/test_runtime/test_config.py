@@ -52,7 +52,7 @@ class TestRuntimeConfigDefaults:
         assert cfg.provider_base_url is None
         assert cfg.provider_api_key_env == "LLM_API_KEY"
         assert cfg.permission_mode == "prompt"
-        assert cfg.max_turn_iterations == 10
+        assert cfg.max_turn_iterations == 5
         assert cfg.max_tokens == 4096
         assert cfg.temperature == 0.7
         assert cfg.hooks == ()
