@@ -2424,7 +2424,8 @@ class LLMCodeTUI(App):
                 )
                 if result.returncode == 0:
                     installer.enable(name)
-                    chat.add_entry(AssistantText(f"Installed {name}. Restart to activate."))
+                    self._reload_skills()
+                    chat.add_entry(AssistantText(f"Installed {name}. Activated."))
                 else:
                     logger.warning("Plugin clone failed for %s: %s", repo, result.stderr[:200])
                     chat.add_entry(AssistantText("Clone failed. Check the repository URL."))
@@ -2436,6 +2437,7 @@ class LLMCodeTUI(App):
                 return
             try:
                 installer.enable(subargs)
+                self._reload_skills()
                 chat.add_entry(AssistantText(f"Enabled {subargs}"))
             except Exception as exc:
                 chat.add_entry(AssistantText(f"Enable failed: {exc}"))
@@ -2445,6 +2447,7 @@ class LLMCodeTUI(App):
                 return
             try:
                 installer.disable(subargs)
+                self._reload_skills()
                 chat.add_entry(AssistantText(f"Disabled {subargs}"))
             except Exception as exc:
                 chat.add_entry(AssistantText(f"Disable failed: {exc}"))
@@ -2454,6 +2457,7 @@ class LLMCodeTUI(App):
                 return
             try:
                 installer.uninstall(subargs)
+                self._reload_skills()
                 chat.add_entry(AssistantText(f"Removed {subargs}"))
             except Exception as exc:
                 chat.add_entry(AssistantText(f"Remove failed: {exc}"))
