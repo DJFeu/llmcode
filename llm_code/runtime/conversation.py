@@ -247,7 +247,39 @@ class ConversationRuntime:
         _is_local = any(h in _base_url for h in ("localhost", "127.0.0.1", "0.0.0.0", "192.168.", "10.", "172."))
         _TOKEN_UPGRADE_CAP = 0 if _is_local else 65536  # 0 means unlimited
 
+        # Determine effective context limit for proactive compaction
+        _context_limit = self._config.compact_after_tokens
+        # Auto-detect model context window (query /v1/models once)
+        if not hasattr(self, "_detected_context_window"):
+            self._detected_context_window = 0
+            try:
+                import httpx
+                resp = httpx.get(f"{_base_url.rstrip('/v1').rstrip('/')}/v1/models", timeout=3.0)
+                if resp.status_code == 200:
+                    for m in resp.json().get("data", []):
+                        mml = m.get("max_model_len", 0)
+                        if mml > 0:
+                            self._detected_context_window = mml
+                            break
+            except Exception:
+                pass
+        if self._detected_context_window > 0:
+            # Use 70% of model's context window as compaction threshold
+            _context_limit = min(_context_limit, int(self._detected_context_window * 0.7))
+
         for _iteration in range(self._config.max_turn_iterations):
+            # Proactive context compaction: compress before hitting model limit
+            est_tokens = self.session.estimated_tokens()
+            if est_tokens > _context_limit:
+                logger.info(
+                    "Proactive compaction: %d tokens > %d limit",
+                    est_tokens, _context_limit,
+                )
+                _compressor = ContextCompressor()
+                self.session = _compressor.compress(
+                    self.session, int(_context_limit * 0.6),
+                )
+
             # Budget enforcement: check before each LLM call
             if self._cost_tracker is not None:
                 try:
