@@ -960,13 +960,22 @@ class LLMCodeTUI(App):
                         continue
 
                     # Normal text — output to assistant
+                    # Hold back potential partial tags (e.g. "<thi" might become "<think>")
                     if _raw_text_buffer:
-                        if not assistant_added:
-                            await remove_spinner()
-                            chat.add_entry(assistant)
-                            assistant_added = True
-                        assistant.append_text(_raw_text_buffer)
-                        _raw_text_buffer = ""
+                        last_lt = _raw_text_buffer.rfind("<")
+                        if last_lt >= 0 and ">" not in _raw_text_buffer[last_lt:]:
+                            # Partial tag at end — flush everything before it
+                            flush = _raw_text_buffer[:last_lt]
+                            _raw_text_buffer = _raw_text_buffer[last_lt:]
+                        else:
+                            flush = _raw_text_buffer
+                            _raw_text_buffer = ""
+                        if flush:
+                            if not assistant_added:
+                                await remove_spinner()
+                                chat.add_entry(assistant)
+                                assistant_added = True
+                            assistant.append_text(flush)
                     chat.resume_auto_scroll()
 
                 elif isinstance(event, StreamThinkingDelta):
@@ -1042,10 +1051,18 @@ class LLMCodeTUI(App):
             input_bar.disabled = False
             status.is_streaming = False
 
-        if thinking_buffer:
-            elapsed = time.monotonic() - thinking_start
-            tokens = len(thinking_buffer) // 4
-            chat.add_entry(ThinkingBlock(thinking_buffer, elapsed, tokens))
+        # Flush any remaining buffers after stream ends
+        if thinking_buffer.strip():
+            elapsed_t = time.monotonic() - thinking_start
+            tokens_t = len(thinking_buffer) // 4
+            chat.add_entry(ThinkingBlock(thinking_buffer, elapsed_t, tokens_t))
+
+        if _raw_text_buffer.strip():
+            if not assistant_added:
+                chat.add_entry(assistant)
+                assistant_added = True
+            assistant.append_text(_raw_text_buffer)
+            _raw_text_buffer = ""
 
         elapsed = time.monotonic() - start
         cost = self._cost_tracker.format_cost() if self._cost_tracker else ""

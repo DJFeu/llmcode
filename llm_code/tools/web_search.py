@@ -63,7 +63,7 @@ class WebSearchTool(Tool):
 
     @property
     def required_permission(self) -> PermissionLevel:
-        return PermissionLevel.FULL_ACCESS
+        return PermissionLevel.READ_ONLY
 
     @property
     def input_model(self) -> type[WebSearchInput]:
