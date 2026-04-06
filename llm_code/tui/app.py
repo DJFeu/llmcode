@@ -1041,14 +1041,16 @@ class LLMCodeTUI(App):
         self.exit()
 
     async def _dream_on_exit(self) -> None:
-        """Fire DreamTask consolidation on session exit (best-effort, 30s timeout)."""
+        """Fire DreamTask consolidation + knowledge compilation on session exit."""
         import asyncio as _aio
         if not self._memory or not self._runtime:
             return
+
+        dream_summary = ""
         try:
             from llm_code.runtime.dream import DreamTask
             dream = DreamTask()
-            await _aio.wait_for(
+            dream_summary = await _aio.wait_for(
                 dream.consolidate(
                     self._runtime.session,
                     self._memory,
@@ -1059,6 +1061,29 @@ class LLMCodeTUI(App):
             )
         except Exception:
             pass
+
+        # Knowledge compilation (after DreamTask, best-effort)
+        if getattr(self._config, "knowledge", None) and self._config.knowledge.compile_on_exit:
+            try:
+                from llm_code.runtime.knowledge_compiler import KnowledgeCompiler
+                compile_model = self._config.knowledge.compile_model or getattr(
+                    self._config.model_routing, "compaction", ""
+                )
+                compiler = KnowledgeCompiler(
+                    cwd=self._cwd,
+                    llm_provider=self._runtime._provider,
+                    compile_model=compile_model,
+                )
+                facts = []
+                if dream_summary:
+                    for line in dream_summary.splitlines():
+                        stripped = line.strip()
+                        if stripped.startswith("- ") and not stripped.startswith("- ["):
+                            facts.append(stripped[2:])
+                ingest_data = compiler.ingest(facts=facts, since_commit=None)
+                await _aio.wait_for(compiler.compile(ingest_data), timeout=30.0)
+            except Exception:
+                pass
 
     def _cmd_help(self, args: str) -> None:
         from textual.screen import ModalScreen
@@ -1083,6 +1108,7 @@ class LLMCodeTUI(App):
             ("/vim", "Toggle vim mode"),
             ("/plan", "Toggle plan/act mode (read-only when ON)"),
             ("/harness", "Show/configure harness quality controls"),
+            ("/knowledge", "View or rebuild project knowledge base"),
             ("/dump", "Dump codebase to .llm-code/dump.txt for external LLM use"),
             ("/analyze", "Run code analysis rules on the codebase"),
             ("/diff_check", "Show new/fixed violations vs last analysis"),
@@ -1445,6 +1471,69 @@ class LLMCodeTUI(App):
                 "  /harness disable X    — disable control X\n"
                 "  /harness template Y   — switch to template Y"
             ))
+
+    def _cmd_knowledge(self, args: str) -> None:
+        """View or rebuild the project knowledge base."""
+        chat = self.query_one(ChatScrollView)
+
+        parts = args.strip().split()
+        action = parts[0] if parts else ""
+
+        if action == "rebuild":
+            import asyncio
+            asyncio.ensure_future(self._rebuild_knowledge())
+            return
+
+        # Show knowledge index
+        try:
+            from llm_code.runtime.knowledge_compiler import KnowledgeCompiler
+            compiler = KnowledgeCompiler(cwd=self._cwd, llm_provider=None)
+            entries = compiler.get_index()
+        except Exception:
+            chat.add_entry(AssistantText("Knowledge base not available."))
+            return
+
+        if not entries:
+            chat.add_entry(AssistantText(
+                "Knowledge base is empty.\n"
+                "It will be built automatically after your next session, "
+                "or run `/knowledge rebuild` to build now."
+            ))
+            return
+
+        lines = ["## Project Knowledge Base\n"]
+        for entry in entries:
+            lines.append(f"- **{entry.title}** — {entry.summary}")
+        lines.append(f"\n{len(entries)} articles. Use `/knowledge rebuild` to force recompilation.")
+        chat.add_entry(AssistantText("\n".join(lines)))
+
+    async def _rebuild_knowledge(self) -> None:
+        """Force full knowledge rebuild."""
+        chat = self.query_one(ChatScrollView)
+        if not self._runtime:
+            chat.add_entry(AssistantText("Runtime not available."))
+            return
+
+        chat.add_entry(AssistantText("Rebuilding knowledge base..."))
+        try:
+            from llm_code.runtime.knowledge_compiler import KnowledgeCompiler
+            compile_model = ""
+            if hasattr(self._config, "knowledge"):
+                compile_model = self._config.knowledge.compile_model
+            if not compile_model and hasattr(self._config, "model_routing"):
+                compile_model = self._config.model_routing.compaction
+            compiler = KnowledgeCompiler(
+                cwd=self._cwd,
+                llm_provider=self._runtime._provider,
+                compile_model=compile_model,
+            )
+            ingest_data = compiler.ingest(facts=[], since_commit=None)
+            import asyncio
+            await asyncio.wait_for(compiler.compile(ingest_data), timeout=60.0)
+            entries = compiler.get_index()
+            chat.add_entry(AssistantText(f"Knowledge base rebuilt: {len(entries)} articles."))
+        except Exception as exc:
+            chat.add_entry(AssistantText(f"Rebuild failed: {exc}"))
 
     def _cmd_dump(self, args: str) -> None:
         """Dump codebase for external LLM use (DAFC pattern)."""
