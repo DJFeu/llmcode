@@ -4,9 +4,9 @@
 
 | Location | Scope | Precedence |
 |----------|-------|------------|
-| `~/.llm-code/config.json` | User global | Low |
-| `.llm-code/config.json` | Project | Medium |
-| `.llm-code/config.local.json` | Local (gitignore) | High |
+| `~/.llmcode/config.json` | User global | Low |
+| `.llmcode/config.json` | Project | Medium |
+| `.llmcode/config.local.json` | Local (gitignore) | High |
 | CLI flags | Session | Highest |
 
 ## Full Reference

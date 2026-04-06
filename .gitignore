@@ -32,12 +32,12 @@ Thumbs.db
 *.pem
 
 # llm-code runtime
-.llm-code/config.local.json
-.llm-code/cron.lock
-.llm-code/result_cache/
-.llm-code/recordings/
-.llm-code/checkpoints/
-.llm-code/swarm/
+.llmcode/config.local.json
+.llmcode/cron.lock
+.llmcode/result_cache/
+.llmcode/recordings/
+.llmcode/checkpoints/
+.llmcode/swarm/
 
 # Node
 node_modules/

@@ -42,7 +42,7 @@ class TestProjectContextDiscover:
         assert ctx.git_status == ""
 
     def test_loads_instructions_file(self, tmp_path: Path) -> None:
-        instructions_dir = tmp_path / ".llm-code"
+        instructions_dir = tmp_path / ".llmcode"
         instructions_dir.mkdir()
         (instructions_dir / "INSTRUCTIONS.md").write_text("Do the thing.", encoding="utf-8")
         ctx = ProjectContext.discover(tmp_path)

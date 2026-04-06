@@ -79,11 +79,11 @@ def main(
         cli_overrides["model"] = selected_model
         cli_overrides.setdefault("provider", {})["base_url"] = base_url
 
-    user_dir = Path.home() / ".llm-code"
+    user_dir = Path.home() / ".llmcode"
     config = load_config(
         user_dir=user_dir,
         project_dir=cwd,
-        local_path=cwd / ".llm-code" / "config.json",
+        local_path=cwd / ".llmcode" / "config.json",
         cli_overrides=cli_overrides,
     )
 
@@ -121,7 +121,7 @@ def main(
     resume_session = None
     if resume:
         from llm_code.runtime.checkpoint_recovery import CheckpointRecovery
-        checkpoints_dir = Path.home() / ".llm-code" / "checkpoints"
+        checkpoints_dir = Path.home() / ".llmcode" / "checkpoints"
         recovery = CheckpointRecovery(checkpoints_dir)
         if resume == "last":
             resume_session = recovery.detect_last_checkpoint()

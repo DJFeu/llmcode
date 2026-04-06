@@ -1,0 +1,289 @@
+1	"""記帳資料儲存"""
+2	import json
+3	import os
+4	from datetime import datetime
+5	from pathlib import Path
+6	from typing import Dict, List, Optional
+7	from .types import Transaction, TransactionType, Category, Budget, Account
+8	
+9	
+10	class AccountingStorage:
+11	    """記帳資料儲存"""
+12	    
+13	    def __init__(self, data_dir: str = "~/.llm-code/accounting"):
+14	        self.data_dir = Path(os.path.expanduser(data_dir))
+15	        self.data_dir.mkdir(parents=True, exist_ok=True)
+16	        
+17	        self._transactions: Dict[str, Transaction] = {}
+18	        self._categories: Dict[str, Category] = {}
+19	        self._accounts: Dict[str, Account] = {}
+20	        self._budgets: Dict[str, Budget] = {}
+21	        
+22	        self._load_data()
+23	    
+24	    def _get_file_path(self, filename: str) -> Path:
+25	        return self.data_dir / f"{filename}.json"
+26	    
+27	    def _load_data(self):
+28	        """載入資料"""
+29	        self._load_transactions()
+30	        self._load_categories()
+31	        self._load_accounts()
+32	        self._load_budgets()
+33	    
+34	    def _load_transactions(self):
+35	        """載入交易記錄"""
+36	        file_path = self._get_file_path("transactions")
+37	        if not file_path.exists():
+38	            return
+39	        
+40	        with open(file_path, "r", encoding="utf-8") as f:
+41	            data = json.load(f)
+42	            for item in data:
+43	                transaction = Transaction(
+44	                    id=item["id"],
+45	                    amount=item["amount"],
+46	                    type=TransactionType(item["type"]),
+47	                    category_id=item["category_id"],
+48	                    account_id=item["account_id"],
+49	                    description=item.get("description", ""),
+50	                    date=datetime.fromisoformat(item["date"]) if item.get("date") else datetime.now(),
+51	                    tags=item.get("tags", []),
+52	                    notes=item.get("notes", ""),
+53	                )
+54	                self._transactions[transaction.id] = transaction
+55	    
+56	    def _load_categories(self):
+57	        """載入分類"""
+58	        file_path = self._get_file_path("categories")
+59	        if not file_path.exists():
+60	            # 預設分類
+61	            self._categories = self._get_default_categories()
+62	            return
+63	        
+64	        with open(file_path, "r", encoding="utf-8") as f:
+65	            data = json.load(f)
+66	            for item in data:
+67	                category = Category(
+68	                    id=item["id"],
+69	                    name=item["name"],
+70	                    type=TransactionType(item["type"]),
+71	                    icon=item.get("icon", ""),
+72	                    parent_id=item.get("parent_id"),
+73	                )
+74	                self._categories[category.id] = category
+75	    
+76	    def _load_accounts(self):
+77	        """載入帳戶"""
+78	        file_path = self._get_file_path("accounts")
+79	        if not file_path.exists():
+80	            # 預設帳戶
+81	            self._accounts = self._get_default_accounts()
+82	            return
+83	        
+84	        with open(file_path, "r", encoding="utf-8") as f:
+85	            data = json.load(f)
+86	            for item in data:
+87	                account = Account(
+88	                    id=item["id"],
+89	                    name=item["name"],
+90	                    type=item["type"],
+91	                    balance=item.get("balance", 0.0),
+92	                    currency=item.get("currency", "TWD"),
+93	                )
+94	                self._accounts[account.id] = account
+95	    
+96	    def _load_budgets(self):
+97	        """載入預算"""
+98	        file_path = self._get_file_path("budgets")
+99	        if not file_path.exists():
+100	            return
+101	        
+102	        with open(file_path, "r", encoding="utf-8") as f:
+103	            data = json.load(f)
+104	            for item in data:
+105	                budget = Budget(
+106	                    id=item["id"],
+107	                    category_id=item["category_id"],
+108	                    amount=item["amount"],
+109	                    period=item["period"],
+110	                    start_date=datetime.fromisoformat(item["start_date"]),
+111	                    end_date=datetime.fromisoformat(item["end_date"]) if item.get("end_date") else None,
+112	                )
+113	                self._budgets[budget.id] = budget
+114	    
+115	    def _save_transactions(self):
+116	        """儲存交易記錄"""
+117	        file_path = self._get_file_path("transactions")
+118	        data = []
+119	        for t in self._transactions.values():
+120	            data.append({
+121	                "id": t.id,
+122	                "amount": t.amount,
+123	                "type": t.type.value,
+124	                "category_id": t.category_id,
+125	                "account_id": t.account_id,
+126	                "description": t.description,
+127	                "date": t.date.isoformat(),
+128	                "tags": t.tags,
+129	                "notes": t.notes,
+130	            })
+131	        with open(file_path, "w", encoding="utf-8") as f:
+132	            json.dump(data, f, ensure_ascii=False, indent=2)
+133	    
+134	    def _save_categories(self):
+135	        """儲存分類"""
+136	        file_path = self._get_file_path("categories")
+137	        data = []
+138	        for c in self._categories.values():
+139	            data.append({
+140	                "id": c.id,
+141	                "name": c.name,
+142	                "type": c.type.value,
+143	                "icon": c.icon,
+144	                "parent_id": c.parent_id,
+145	            })
+146	        with open(file_path, "w", encoding="utf-8") as f:
+147	            json.dump(data, f, ensure_ascii=False, indent=2)
+148	    
+149	    def _save_accounts(self):
+150	        """儲存帳戶"""
+151	        file_path = self._get_file_path("accounts")
+152	        data = []
+153	        for a in self._accounts.values():
+154	            data.append({
+155	                "id": a.id,
+156	                "name": a.name,
+157	                "type": a.type,
+158	                "balance": a.balance,
+159	                "currency": a.currency,
+160	            })
+161	        with open(file_path, "w", encoding="utf-8") as f:
+162	            json.dump(data, f, ensure_ascii=False, indent=2)
+163	    
+164	    def _save_budgets(self):
+165	        """儲存預算"""
+166	        file_path = self._get_file_path("budgets")
+167	        data = []
+168	        for b in self._budgets.values():
+169	            data.append({
+170	                "id": b.id,
+171	                "category_id": b.category_id,
+172	                "amount": b.amount,
+173	                "period": b.period,
+174	                "start_date": b.start_date.isoformat(),
+175	                "end_date": b.end_date.isoformat() if b.end_date else None,
+176	            })
+177	        with open(file_path, "w", encoding="utf-8") as f:
+178	            json.dump(data, f, ensure_ascii=False, indent=2)
+179	    
+180	    def _get_default_categories(self) -> Dict[str, Category]:
+181	        """預設分類"""
+182	        categories = {
+183	            "food": Category(id="food", name="餐飲", type=TransactionType.EXPENSE, icon="🍜"),
+184	            "transport": Category(id="transport", name="交通", type=TransactionType.EXPENSE, icon="🚗"),
+185	            "shopping": Category(id="shopping", name="購物", type=TransactionType.EXPENSE, icon="🛒"),
+186	            "entertainment": Category(id="entertainment", name="娛樂", type=TransactionType.EXPENSE, icon="🎬"),
+187	            "utilities": Category(id="utilities", name="水電", type=TransactionType.EXPENSE, icon="💡"),
+188	            "salary": Category(id="salary", name="薪資", type=TransactionType.INCOME, icon="💰"),
+189	            "investment": Category(id="investment", name="投資", type=TransactionType.INCOME, icon="📈"),
+190	            "other_income": Category(id="other_income", name="其他收入", type=TransactionType.INCOME, icon="💵"),
+191	        }
+192	        return categories
+193	    
+194	    def _get_default_accounts(self) -> Dict[str, Account]:
+195	        """預設帳戶"""
+196	        return {
+197	            "cash": Account(id="cash", name="現金", type="cash", balance=0.0),
+198	            "bank": Account(id="bank", name="銀行帳戶", type="bank", balance=0.0),
+199	            "credit": Account(id="credit", name="信用卡", type="credit", balance=0.0),
+200	        }
+201	    
+202	    # Transaction methods
+203	    def add_transaction(self, transaction: Transaction) -> Transaction:
+204	        """新增交易"""
+205	        self._transactions[transaction.id] = transaction
+206	        self._save_transactions()
+207	        return transaction
+208	    
+209	    def get_transaction(self, transaction_id: str) -> Optional[Transaction]:
+210	        """取得交易"""
+211	        return self._transactions.get(transaction_id)
+212	    
+213	    def get_transactions(self, 
+214	                        start_date: Optional[datetime] = None,
+215	                        end_date: Optional[datetime] = None,
+216	                        category_id: Optional[str] = None,
+217	                        account_id: Optional[str] = None) -> List[Transaction]:
+218	        """查詢交易"""
+219	        result = list(self._transactions.values())
+220	        
+221	        if start_date:
+222	            result = [t for t in result if t.date >= start_date]
+223	        if end_date:
+224	            result = [t for t in result if t.date <= end_date]
+225	        if category_id:
+226	            result = [t for t in result if t.category_id == category_id]
+227	        if account_id:
+228	            result = [t for t in result if t.account_id == account_id]
+229	        
+230	        return sorted(result, key=lambda t: t.date, reverse=True)
+231	    
+232	    def update_transaction(self, transaction: Transaction) -> Transaction:
+233	        """更新交易"""
+234	        self._transactions[transaction.id] = transaction
+235	        self._save_transactions()
+236	        return transaction
+237	    
+238	    def delete_transaction(self, transaction_id: str) -> bool:
+239	        """刪除交易"""
+240	        if transaction_id in self._transactions:
+241	            del self._transactions[transaction_id]
+242	            self._save_transactions()
+243	            return True
+244	        return False
+245	    
+246	    # Category methods
+247	    def add_category(self, category: Category) -> Category:
+248	        """新增分類"""
+249	        self._categories[category.id] = category
+250	        self._save_categories()
+251	        return category
+252	    
+253	    def get_categories(self, type: Optional[TransactionType] = None) -> List[Category]:
+254	        """取得分類"""
+255	        if type:
+256	            return [c for c in self._categories.values() if c.type == type]
+257	        return list(self._categories.values())
+258	    
+259	    # Account methods
+260	    def add_account(self, account: Account) -> Account:
+261	        """新增帳戶"""
+262	        self._accounts[account.id] = account
+263	        self._save_accounts()
+264	        return account
+265	    
+266	    def get_accounts(self) -> List[Account]:
+267	        """取得帳戶"""
+268	        return list(self._accounts.values())
+269	    
+270	    def update_account_balance(self, account_id: str, balance: float) -> bool:
+271	        """更新帳戶餘額"""
+272	        if account_id in self._accounts:
+273	            self._accounts[account_id].balance = balance
+274	            self._save_accounts()
+275	            return True
+276	        return False
+277	    
+278	    # Budget methods
+279	    def add_budget(self, budget: Budget) -> Budget:
+280	        """新增預算"""
+281	        self._budgets[budget.id] = budget
+282	        self._save_budgets()
+283	        return budget
+284	    
+285	    def get_budgets(self, category_id: Optional[str] = None) -> List[Budget]:
+286	        """取得預算"""
+287	        if category_id:
+288	            return [b for b in self._budgets.values() if b.category_id == category_id]
+289	        return list(self._budgets.values())

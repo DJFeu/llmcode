@@ -28,7 +28,7 @@ class OIDCConfig:
 class OIDCProvider(AuthProvider):
     def __init__(self, config: OIDCConfig, token_dir: Path | None = None) -> None:
         self._config = config
-        self._token_dir = token_dir or Path.home() / ".llm-code" / "auth"
+        self._token_dir = token_dir or Path.home() / ".llmcode" / "auth"
         self._token_path = self._token_dir / "oidc_tokens.json"
         self._endpoints: dict[str, str] | None = None
 

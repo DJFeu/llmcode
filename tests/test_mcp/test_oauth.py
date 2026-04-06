@@ -112,7 +112,7 @@ class TestOAuthClientTokenPersistence:
             authorization_url="https://example.com/auth",
             token_url="https://example.com/token",
         )
-        # Override token dir to use tmp_path so tests don't touch ~/.llm-code
+        # Override token dir to use tmp_path so tests don't touch ~/.llmcode
         client._token_dir = tmp_path / "tokens"
         client._token_dir.mkdir(parents=True, exist_ok=True)
         return client

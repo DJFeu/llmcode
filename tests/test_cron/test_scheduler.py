@@ -13,12 +13,12 @@ from llm_code.cron.storage import CronStorage, CronTask
 
 @pytest.fixture
 def storage(tmp_path):
-    return CronStorage(tmp_path / ".llm-code" / "scheduled_tasks.json")
+    return CronStorage(tmp_path / ".llmcode" / "scheduled_tasks.json")
 
 
 @pytest.fixture
 def lock_path(tmp_path):
-    return tmp_path / ".llm-code" / "cron.lock"
+    return tmp_path / ".llmcode" / "cron.lock"
 
 
 class TestCronScheduler:

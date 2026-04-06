@@ -37,9 +37,9 @@ class RemoteServer:
         if not self._config:
             cwd = Path.cwd()
             self._config = load_config(
-                user_dir=Path.home() / ".llm-code",
+                user_dir=Path.home() / ".llmcode",
                 project_dir=cwd,
-                local_path=cwd / ".llm-code" / "config.json",
+                local_path=cwd / ".llmcode" / "config.json",
                 cli_overrides={},
             )
 

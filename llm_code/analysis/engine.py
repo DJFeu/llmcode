@@ -25,7 +25,7 @@ _SKIP_DIRS = frozenset({
     ".egg-info",
     ".tox",
     ".mypy_cache",
-    ".llm-code",
+    ".llmcode",
 })
 
 _PYTHON_EXTS = frozenset({".py"})

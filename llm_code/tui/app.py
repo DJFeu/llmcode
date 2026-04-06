@@ -206,7 +206,7 @@ class LLMCodeTUI(App):
             try:
                 from llm_code.runtime.checkpoint_recovery import CheckpointRecovery
                 recovery = CheckpointRecovery(
-                    Path.home() / ".llm-code" / "checkpoints"
+                    Path.home() / ".llmcode" / "checkpoints"
                 )
                 path = recovery.save_checkpoint(self._runtime.session)
                 session_id = self._runtime.session.id
@@ -359,7 +359,7 @@ class LLMCodeTUI(App):
         recovery_checkpoint = None
         try:
             from llm_code.runtime.checkpoint_recovery import CheckpointRecovery
-            recovery_checkpoint = CheckpointRecovery(Path.home() / ".llm-code" / "checkpoints")
+            recovery_checkpoint = CheckpointRecovery(Path.home() / ".llmcode" / "checkpoints")
         except Exception:
             pass
 
@@ -377,10 +377,10 @@ class LLMCodeTUI(App):
             from llm_code.runtime.skills import SkillLoader
             from llm_code.marketplace.installer import PluginInstaller
             skill_dirs: list[Path] = [
-                Path.home() / ".llm-code" / "skills",
-                self._cwd / ".llm-code" / "skills",
+                Path.home() / ".llmcode" / "skills",
+                self._cwd / ".llmcode" / "skills",
             ]
-            plugin_dir = Path.home() / ".llm-code" / "plugins"
+            plugin_dir = Path.home() / ".llmcode" / "plugins"
             if plugin_dir.is_dir():
                 pi = PluginInstaller(plugin_dir)
                 for p in pi.list_installed():
@@ -398,7 +398,7 @@ class LLMCodeTUI(App):
         # Memory
         try:
             from llm_code.runtime.memory import MemoryStore
-            memory_dir = Path.home() / ".llm-code" / "memory"
+            memory_dir = Path.home() / ".llmcode" / "memory"
             self._memory = MemoryStore(memory_dir, self._cwd)
         except Exception:
             self._memory = None
@@ -421,7 +421,7 @@ class LLMCodeTUI(App):
             from llm_code.tools.cron_create import CronCreateTool
             from llm_code.tools.cron_list import CronListTool
             from llm_code.tools.cron_delete import CronDeleteTool
-            cron_storage = CronStorage(self._cwd / ".llm-code" / "scheduled_tasks.json")
+            cron_storage = CronStorage(self._cwd / ".llmcode" / "scheduled_tasks.json")
             self._cron_storage = cron_storage
             for tool in (CronCreateTool(cron_storage), CronListTool(cron_storage), CronDeleteTool(cron_storage)):
                 try:
@@ -444,7 +444,7 @@ class LLMCodeTUI(App):
                 from llm_code.tools.coordinator_tool import CoordinatorTool
 
                 swarm_mgr = SwarmManager(
-                    swarm_dir=self._cwd / ".llm-code" / "swarm",
+                    swarm_dir=self._cwd / ".llmcode" / "swarm",
                     max_members=self._config.swarm.max_members,
                     backend_preference=self._config.swarm.backend,
                 )
@@ -474,8 +474,8 @@ class LLMCodeTUI(App):
             from llm_code.tools.task_verify import TaskVerifyTool
             from llm_code.tools.task_close import TaskCloseTool
 
-            task_dir = self._cwd / ".llm-code" / "tasks"
-            diag_dir = self._cwd / ".llm-code" / "diagnostics"
+            task_dir = self._cwd / ".llmcode" / "tasks"
+            diag_dir = self._cwd / ".llmcode" / "diagnostics"
             task_mgr = TaskLifecycleManager(task_dir=task_dir)
             verifier = Verifier(cwd=self._cwd)
             diagnostics = DiagnosticsEngine(diagnostics_dir=diag_dir)
@@ -1109,7 +1109,7 @@ class LLMCodeTUI(App):
             ("/plan", "Toggle plan/act mode (read-only when ON)"),
             ("/harness", "Show/configure harness quality controls"),
             ("/knowledge", "View or rebuild project knowledge base"),
-            ("/dump", "Dump codebase to .llm-code/dump.txt for external LLM use"),
+            ("/dump", "Dump codebase to .llmcode/dump.txt for external LLM use"),
             ("/analyze", "Run code analysis rules on the codebase"),
             ("/diff_check", "Show new/fixed violations vs last analysis"),
             ("/image", "Attach image"),
@@ -1555,7 +1555,7 @@ class LLMCodeTUI(App):
             return
 
         # Write to file
-        dump_path = self._cwd / ".llm-code" / "dump.txt"
+        dump_path = self._cwd / ".llmcode" / "dump.txt"
         dump_path.parent.mkdir(parents=True, exist_ok=True)
         dump_path.write_text(result.text, encoding="utf-8")
 
@@ -1776,7 +1776,7 @@ class LLMCodeTUI(App):
             try:
                 import uuid
                 from llm_code.runtime.vcr import VCRRecorder
-                recordings_dir = Path.home() / ".llm-code" / "recordings"
+                recordings_dir = Path.home() / ".llmcode" / "recordings"
                 recordings_dir.mkdir(parents=True, exist_ok=True)
                 session_id = uuid.uuid4().hex[:8]
                 path = recordings_dir / f"{session_id}.jsonl"
@@ -1796,7 +1796,7 @@ class LLMCodeTUI(App):
                 self._runtime._vcr_recorder = None
             chat.add_entry(AssistantText("VCR recording stopped."))
         elif sub == "list":
-            recordings_dir = Path.home() / ".llm-code" / "recordings"
+            recordings_dir = Path.home() / ".llmcode" / "recordings"
             if not recordings_dir.is_dir():
                 chat.add_entry(AssistantText("No recordings found."))
                 return
@@ -1831,7 +1831,7 @@ class LLMCodeTUI(App):
         except ImportError:
             chat.add_entry(AssistantText("Checkpoint recovery not available."))
             return
-        checkpoints_dir = Path.home() / ".llm-code" / "checkpoints"
+        checkpoints_dir = Path.home() / ".llmcode" / "checkpoints"
         recovery = CheckpointRecovery(checkpoints_dir)
         parts = args.strip().split(None, 1)
         sub = parts[0].lower() if parts else "list"
@@ -2010,7 +2010,7 @@ class LLMCodeTUI(App):
             pkg = subargs.strip()
             short_name = pkg.split("/")[-1] if "/" in pkg else pkg
             # Write to config.json
-            config_path = Path.home() / ".llm-code" / "config.json"
+            config_path = Path.home() / ".llmcode" / "config.json"
             try:
                 import json
                 config_data: dict = {}
@@ -2033,7 +2033,7 @@ class LLMCodeTUI(App):
                 chat.add_entry(AssistantText(f"Install failed: {exc}"))
         elif sub == "remove" and subargs:
             name = subargs.strip()
-            config_path = Path.home() / ".llm-code" / "config.json"
+            config_path = Path.home() / ".llmcode" / "config.json"
             try:
                 import json
                 if config_path.exists():
@@ -2172,7 +2172,7 @@ class LLMCodeTUI(App):
             import tempfile
             repo = source.replace("https://github.com/", "").rstrip("/")
             name = repo.split("/")[-1]
-            dest = Path.home() / ".llm-code" / "skills" / name
+            dest = Path.home() / ".llmcode" / "skills" / name
             if dest.exists():
                 shutil.rmtree(dest)
             chat.add_entry(AssistantText(f"Cloning {repo}..."))
@@ -2199,14 +2199,14 @@ class LLMCodeTUI(App):
             if not self._is_safe_name(subargs):
                 chat.add_entry(AssistantText("Invalid skill name."))
                 return
-            marker = Path.home() / ".llm-code" / "skills" / subargs / ".disabled"
+            marker = Path.home() / ".llmcode" / "skills" / subargs / ".disabled"
             marker.unlink(missing_ok=True)
             chat.add_entry(AssistantText(f"Enabled {subargs}"))
         elif sub == "disable" and subargs:
             if not self._is_safe_name(subargs):
                 chat.add_entry(AssistantText("Invalid skill name."))
                 return
-            marker = Path.home() / ".llm-code" / "skills" / subargs / ".disabled"
+            marker = Path.home() / ".llmcode" / "skills" / subargs / ".disabled"
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.touch()
             chat.add_entry(AssistantText(f"Disabled {subargs}"))
@@ -2214,7 +2214,7 @@ class LLMCodeTUI(App):
             if not self._is_safe_name(subargs):
                 chat.add_entry(AssistantText("Invalid skill name."))
                 return
-            d = Path.home() / ".llm-code" / "skills" / subargs
+            d = Path.home() / ".llmcode" / "skills" / subargs
             if d.is_dir():
                 shutil.rmtree(d)
                 chat.add_entry(AssistantText(f"Removed {subargs}"))
@@ -2241,7 +2241,7 @@ class LLMCodeTUI(App):
                     description=f"{mode}  ~{tokens} tokens",
                     source="installed",
                     installed=True,
-                    enabled=not (Path.home() / ".llm-code" / "skills" / s.name / ".disabled").exists(),
+                    enabled=not (Path.home() / ".llmcode" / "skills" / s.name / ".disabled").exists(),
                     repo="",
                     extra=mode,
                 ))
@@ -2249,7 +2249,7 @@ class LLMCodeTUI(App):
             # Installed plugins (check filesystem for newly installed)
             try:
                 from llm_code.marketplace.installer import PluginInstaller
-                pi = PluginInstaller(Path.home() / ".llm-code" / "plugins")
+                pi = PluginInstaller(Path.home() / ".llmcode" / "plugins")
                 for p in pi.list_installed():
                     if p.manifest.name not in installed_names:
                         installed_names.add(p.manifest.name)
@@ -2289,7 +2289,7 @@ class LLMCodeTUI(App):
         subargs = parts[1] if len(parts) > 1 else ""
         try:
             from llm_code.marketplace.installer import PluginInstaller
-            installer = PluginInstaller(Path.home() / ".llm-code" / "plugins")
+            installer = PluginInstaller(Path.home() / ".llmcode" / "plugins")
         except ImportError:
             chat.add_entry(AssistantText("Plugin system not available."))
             return
@@ -2300,7 +2300,7 @@ class LLMCodeTUI(App):
                 return
             repo = source.replace("https://github.com/", "").rstrip("/")
             name = repo.split("/")[-1]
-            dest = Path.home() / ".llm-code" / "plugins" / name
+            dest = Path.home() / ".llmcode" / "plugins" / name
             if dest.exists():
                 shutil.rmtree(dest)
             chat.add_entry(AssistantText(f"Cloning {repo}..."))

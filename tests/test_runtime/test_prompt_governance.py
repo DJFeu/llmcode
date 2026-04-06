@@ -30,7 +30,7 @@ class TestGovernanceInSystemPrompt:
             GovernanceRule(
                 category="style",
                 content="Use type annotations",
-                source=".llm-code/rules/style.md",
+                source=".llmcode/rules/style.md",
                 priority=5,
             ),
         )
@@ -66,7 +66,7 @@ class TestGovernanceInSystemPrompt:
             GovernanceRule(
                 category="style",
                 content="Use black",
-                source=".llm-code/rules/style.md",
+                source=".llmcode/rules/style.md",
                 priority=5,
             ),
         )

@@ -1,0 +1,100 @@
+200	            return None
+201	
+202	        latest = data.get("dist-tags", {}).get("latest", "")
+203	        version_data = data.get("versions", {}).get(latest, {})
+204	        return PluginDetails(
+205	            name=data.get("name", name),
+206	            description=data.get("description", ""),
+207	            version=latest,
+208	            repository=str(version_data.get("repository", {}).get("url", "")),
+209	            install_command=f"npm install {name}",
+210	        )
+211	
+212	
+213	# ---------------------------------------------------------------------------
+214	# GitHub marketplace registry
+215	# ---------------------------------------------------------------------------
+216	
+217	class GitHubRegistry(PluginRegistry):
+218	    """Adapter for a GitHub-hosted marketplace.json file."""
+219	
+220	    def __init__(self, repo: str) -> None:
+221	        """Initialize with a 'owner/repo' string."""
+222	        self._repo = repo
+223	
+224	    async def search(self, query: str, limit: int = 20) -> list[PluginSummary]:
+225	        url = f"https://raw.githubusercontent.com/{self._repo}/main/marketplace.json"
+226	        try:
+227	            async with httpx.AsyncClient() as client:
+228	                resp = await client.get(url, timeout=10.0)
+229	                resp.raise_for_status()
+230	                data = resp.json()
+231	        except Exception:
+232	            return []
+233	
+234	        results: list[PluginSummary] = []
+235	        for plugin in data.get("plugins", []):
+236	            name: str = plugin.get("name", "")
+237	            description: str = plugin.get("description", "")
+238	            if query.lower() in name.lower() or query.lower() in description.lower():
+239	                results.append(
+240	                    PluginSummary(
+241	                        name=name,
+242	                        description=description,
+243	                        registry="github",
+244	                        version=str(plugin.get("version", "")),
+245	                    )
+246	                )
+247	                if len(results) >= limit:
+248	                    break
+249	        return results
+250	
+251	    async def get_details(self, name: str) -> PluginDetails | None:
+252	        url = f"https://raw.githubusercontent.com/{self._repo}/main/marketplace.json"
+253	        try:
+254	            async with httpx.AsyncClient() as client:
+255	                resp = await client.get(url, timeout=10.0)
+256	                resp.raise_for_status()
+257	                data = resp.json()
+258	        except Exception:
+259	            return None
+260	
+261	        for plugin in data.get("plugins", []):
+262	            if plugin.get("name") == name:
+263	                return PluginDetails(
+264	                    name=plugin.get("name", ""),
+265	                    description=plugin.get("description", ""),
+266	                    version=str(plugin.get("version", "")),
+267	                    repository=str(plugin.get("repository", "")),
+268	                )
+269	        return None
+270	
+271	
+272	# ---------------------------------------------------------------------------
+273	# Custom URL registry
+274	# ---------------------------------------------------------------------------
+275	
+276	class CustomRegistry(PluginRegistry):
+277	    """Adapter for an arbitrary URL serving a plugins[] JSON payload."""
+278	
+279	    def __init__(self, url: str) -> None:
+280	        self._url = url
+281	
+282	    async def search(self, query: str, limit: int = 20) -> list[PluginSummary]:
+283	        try:
+284	            async with httpx.AsyncClient() as client:
+285	                resp = await client.get(self._url, timeout=10.0)
+286	                resp.raise_for_status()
+287	                data = resp.json()
+288	        except Exception:
+289	            return []
+290	
+291	        results: list[PluginSummary] = []
+292	        for plugin in data.get("plugins", []):
+293	            name: str = plugin.get("name", "")
+294	            description: str = plugin.get("description", "")
+295	            if query.lower() in name.lower() or query.lower() in description.lower():
+296	                results.append(
+297	                    PluginSummary(
+298	                        name=name,
+299	                        description=description,

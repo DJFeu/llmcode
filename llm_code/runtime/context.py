@@ -34,7 +34,7 @@ class ProjectContext:
                 pass
 
         instructions = ""
-        instructions_path = cwd / ".llm-code" / "INSTRUCTIONS.md"
+        instructions_path = cwd / ".llmcode" / "INSTRUCTIONS.md"
         if instructions_path.exists():
             try:
                 instructions = instructions_path.read_text(encoding="utf-8")

@@ -1,0 +1,134 @@
+1	"""簡易記帳引擎"""
+2	import uuid
+3	from datetime import datetime
+4	from typing import List, Optional
+5	from .types import Transaction, TransactionType, Category, Budget, Account, Summary
+6	from .storage import AccountingStorage
+7	
+8	
+9	class AccountingEngine:
+10	    """簡易記帳引擎"""
+11	    
+12	    def __init__(self, storage: Optional[AccountingStorage] = None):
+13	        self.storage = storage or AccountingStorage()
+14	    
+15	    # Account operations
+16	    def create_account(self, name: str, balance: float = 0.0) -> Account:
+17	        """建立帳戶"""
+18	        account = Account(
+19	            id=str(uuid.uuid4()),
+20	            name=name,
+21	            balance=balance
+22	        )
+23	        self.storage.add_account(account)
+24	        return account
+25	    
+26	    def get_account(self, account_id: str) -> Optional[Account]:
+27	        """取得帳戶"""
+28	        return self.storage.get_account(account_id)
+29	    
+30	    def get_all_accounts(self) -> List[Account]:
+31	        """取得所有帳戶"""
+32	        return self.storage.get_all_accounts()
+33	    
+34	    # Category operations
+35	    def create_category(self, name: str, type: TransactionType, icon: str = "") -> Category:
+36	        """建立分類"""
+37	        category = Category(
+38	            id=str(uuid.uuid4()),
+39	            name=name,
+40	            type=type,
+41	            icon=icon
+42	        )
+43	        self.storage.add_category(category)
+44	        return category
+45	    
+46	    def get_categories(self, type: Optional[TransactionType] = None) -> List[Category]:
+47	        """取得分類"""
+48	        if type:
+49	            return self.storage.get_categories_by_type(type)
+50	        return self.storage.get_categories_by_type(TransactionType.EXPENSE) + \
+51	               self.storage.get_categories_by_type(TransactionType.INCOME)
+52	    
+53	    # Transaction operations
+54	    def add_transaction(
+55	        self,
+56	        amount: float,
+57	        transaction_type: TransactionType,
+58	        category_id: str,
+59	        account_id: str,
+60	        description: str = "",
+61	        date: Optional[datetime] = None,
+62	        notes: str = ""
+63	    ) -> Transaction:
+64	        """新增交易記錄"""
+65	        transaction = Transaction(
+66	            id=str(uuid.uuid4()),
+67	            amount=amount,
+68	            type=transaction_type,
+69	            category_id=category_id,
+70	            account_id=account_id,
+71	            description=description,
+72	            date=date or datetime.now(),
+73	            notes=notes
+74	        )
+75	        self.storage.add_transaction(transaction)
+76	        
+77	        # 更新帳戶餘額
+78	        account = self.storage.get_account(account_id)
+79	        if account:
+80	            if transaction_type == TransactionType.INCOME:
+81	                account.balance += amount
+82	            else:
+83	                account.balance -= amount
+84	            self.storage.update_account_balance(account_id, account.balance)
+85	        
+86	        return transaction
+87	    
+88	    def get_transaction(self, transaction_id: str) -> Optional[Transaction]:
+89	        """取得交易記錄"""
+90	        return self.storage.get_transaction(transaction_id)
+91	    
+92	    def get_transactions(self, limit: int = 100, offset: int = 0) -> List[Transaction]:
+93	        """取得交易記錄列表"""
+94	        return self.storage.get_transactions(limit, offset)
+95	    
+96	    def get_transactions_by_date_range(self, start: datetime, end: datetime) -> List[Transaction]:
+97	        """取得指定日期範圍的交易"""
+98	        return self.storage.get_transactions_by_date_range(start, end)
+99	    
+100	    # Budget operations
+101	    def create_budget(self, category_id: str, amount: float, period: str = "monthly") -> Budget:
+102	        """建立預算"""
+103	        budget = Budget(
+104	            id=str(uuid.uuid4()),
+105	            category_id=category_id,
+106	            amount=amount,
+107	            period=period
+108	        )
+109	        self.storage.add_budget(budget)
+110	        return budget
+111	    
+112	    def get_budgets(self, category_id: Optional[str] = None) -> List[Budget]:
+113	        """取得預算"""
+114	        if category_id:
+115	            return self.storage.get_budgets_by_category(category_id)
+116	        return []  # 簡化版本暫不支援取得所有預算
+117	    
+118	    # Summary
+119	    def get_summary(self, start: Optional[datetime] = None, end: Optional[datetime] = None) -> Summary:
+120	        """取得統計摘要"""
+121	        if start and end:
+122	            transactions = self.storage.get_transactions_by_date_range(start, end)
+123	        else:
+124	            transactions = self.storage.get_transactions(limit=10000)
+125	        
+126	        total_income = sum(t.amount for t in transactions if t.type == TransactionType.INCOME)
+127	        total_expense = sum(t.amount for t in transactions if t.type == TransactionType.EXPENSE)
+128	        
+129	        return Summary(
+130	            total_income=total_income,
+131	            total_expense=total_expense,
+132	            balance=total_income - total_expense,
+133	            transaction_count=len(transactions)
+134	        )

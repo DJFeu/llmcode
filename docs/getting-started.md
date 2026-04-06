@@ -15,8 +15,8 @@ pip install llm-code
 
 ```bash
 # Set up config
-mkdir -p ~/.llm-code
-echo '{"model": "your-model", "provider": {"base_url": "http://localhost:8000/v1"}}' > ~/.llm-code/config.json
+mkdir -p ~/.llmcode
+echo '{"model": "your-model", "provider": {"base_url": "http://localhost:8000/v1"}}' > ~/.llmcode/config.json
 
 # Start interactive mode
 llm-code

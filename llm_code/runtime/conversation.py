@@ -908,7 +908,7 @@ class ConversationRuntime:
             return result
 
         # Save full output
-        cache_dir = self._context.cwd / ".llm-code" / "result_cache"
+        cache_dir = self._context.cwd / ".llmcode" / "result_cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
         cache_path = cache_dir / f"{call_id}.txt"
         cache_path.write_text(result.output, encoding="utf-8")

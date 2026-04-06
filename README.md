@@ -61,8 +61,8 @@ pip install llmcode-cli
 **With a local model (zero cost):**
 
 ```bash
-mkdir -p ~/.llm-code
-cat > ~/.llm-code/config.json << 'EOF'
+mkdir -p ~/.llmcode
+cat > ~/.llmcode/config.json << 'EOF'
 {
   "model": "qwen3.5",
   "provider": {
@@ -77,7 +77,7 @@ llmcode
 **With a cloud API:**
 
 ```bash
-cat > ~/.llm-code/config.json << 'EOF'
+cat > ~/.llmcode/config.json << 'EOF'
 {
   "model": "gpt-4o",
   "provider": {
@@ -202,7 +202,7 @@ Injection detection, newline attack prevention, pipe chain limits, interpreter R
 
 | Layer | Scope | Lifetime | Purpose |
 |-------|-------|----------|---------|
-| **L0 Governance** | Project | Permanent | Rules from CLAUDE.md + .llm-code/rules/ — always loaded |
+| **L0 Governance** | Project | Permanent | Rules from CLAUDE.md + .llmcode/rules/ — always loaded |
 | **L1 Working** | Session | Ephemeral | In-memory scratch space for current task |
 | **L2 Project** | Project | Long-term | DreamTask-consolidated knowledge with tag-based queries |
 | **L3 Task** | Cross-session | Until done | PLAN/DO/VERIFY/CLOSE state machine persisted as JSON |
@@ -333,9 +333,9 @@ Supports **stdio**, **HTTP**, **SSE**, and **WebSocket** transports with health 
 
 ### Config Locations (precedence low -> high)
 
-1. `~/.llm-code/config.json` — User global
-2. `.llm-code/config.json` — Project
-3. `.llm-code/config.local.json` — Local (gitignored)
+1. `~/.llmcode/config.json` — User global
+2. `.llmcode/config.json` — Project
+3. `.llmcode/config.local.json` — Local (gitignored)
 4. CLI flags / env vars — Highest
 
 ### Example Config

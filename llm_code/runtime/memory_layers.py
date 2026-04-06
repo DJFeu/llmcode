@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class GovernanceRule:
-    """A parsed governance rule from CLAUDE.md or .llm-code/rules/*.md."""
+    """A parsed governance rule from CLAUDE.md or .llmcode/rules/*.md."""
 
     category: str
     content: str
@@ -49,7 +49,7 @@ class TaskRecord:
 
 
 class GovernanceLayer:
-    """L0: Scans CLAUDE.md, .llm-code/rules/*.md, .llm-code/governance.md."""
+    """L0: Scans CLAUDE.md, .llmcode/rules/*.md, .llmcode/governance.md."""
 
     _PRIORITY_MAP = {
         "governance.md": 10,
@@ -69,14 +69,14 @@ class GovernanceLayer:
         if claude_md.is_file():
             rules.extend(self._parse_file(claude_md, priority=1))
 
-        # 2. .llm-code/rules/*.md
-        rules_dir = self._root / ".llm-code" / "rules"
+        # 2. .llmcode/rules/*.md
+        rules_dir = self._root / ".llmcode" / "rules"
         if rules_dir.is_dir():
             for md_file in sorted(rules_dir.glob("*.md")):
                 rules.extend(self._parse_file(md_file, priority=5))
 
-        # 3. .llm-code/governance.md
-        gov_md = self._root / ".llm-code" / "governance.md"
+        # 3. .llmcode/governance.md
+        gov_md = self._root / ".llmcode" / "governance.md"
         if gov_md.is_file():
             rules.extend(self._parse_file(gov_md, priority=10))
 
@@ -418,7 +418,7 @@ class SummaryMemory:
 class LayeredMemory:
     """Facade wrapping all 5 memory layers.
 
-    - L0 Governance: parsed rules from CLAUDE.md / .llm-code/rules/ / governance.md
+    - L0 Governance: parsed rules from CLAUDE.md / .llmcode/rules/ / governance.md
     - L1 Working: in-memory, session-scoped, not persisted
     - L2 Project: persistent, tag-based (wraps MemoryStore for backward compat)
     - L3 Task: per-task JSON files with status tracking

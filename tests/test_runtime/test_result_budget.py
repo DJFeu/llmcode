@@ -69,7 +69,7 @@ class TestResultBudget:
         large_output = "z" * 10_000
         result = ToolResult(output=large_output)
         runtime._budget_tool_result(result, "call3")
-        cache_path = tmp_path / ".llm-code" / "result_cache" / "call3.txt"
+        cache_path = tmp_path / ".llmcode" / "result_cache" / "call3.txt"
         assert cache_path.exists()
         assert cache_path.read_text(encoding="utf-8") == large_output
 
@@ -78,7 +78,7 @@ class TestResultBudget:
         large_output = "a" * 5_000
         result = ToolResult(output=large_output)
         runtime._budget_tool_result(result, "call4")
-        cache_dir = tmp_path / ".llm-code" / "result_cache"
+        cache_dir = tmp_path / ".llmcode" / "result_cache"
         assert cache_dir.is_dir()
 
     def test_error_result_preserved(self, tmp_path: Path) -> None:

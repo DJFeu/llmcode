@@ -20,7 +20,7 @@ class CheckpointRecovery:
     """Persist and restore full session state for crash recovery.
 
     Checkpoints are stored as JSON files under
-    ``~/.llm-code/checkpoints/<session_id>.json`` (or a custom *checkpoints_dir*).
+    ``~/.llmcode/checkpoints/<session_id>.json`` (or a custom *checkpoints_dir*).
     """
 
     def __init__(self, checkpoints_dir: Path) -> None:

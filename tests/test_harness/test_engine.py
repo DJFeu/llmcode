@@ -178,7 +178,7 @@ def test_engine_pre_turn_knowledge_guide(tmp_path: Path):
     )
     engine = HarnessEngine(config=HarnessConfig(controls=controls), cwd=tmp_path)
 
-    knowledge_dir = tmp_path / ".llm-code" / "knowledge"
+    knowledge_dir = tmp_path / ".llmcode" / "knowledge"
     knowledge_dir.mkdir(parents=True)
     (knowledge_dir / "modules").mkdir()
     (knowledge_dir / "index.md").write_text("# Knowledge Index\n\n- [Api](modules/api.md) — REST API\n")

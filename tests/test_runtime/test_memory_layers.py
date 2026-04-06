@@ -42,7 +42,7 @@ class TestGovernanceRule:
         rule = GovernanceRule(
             category="security",
             content="No hardcoded secrets",
-            source=".llm-code/rules/security.md",
+            source=".llmcode/rules/security.md",
             priority=10,
         )
         assert rule.priority == 10
@@ -126,7 +126,7 @@ class TestGovernanceLayer:
         assert all(r.source.endswith("CLAUDE.md") for r in rules)
 
     def test_scan_rules_directory(self, tmp_path):
-        rules_dir = tmp_path / ".llm-code" / "rules"
+        rules_dir = tmp_path / ".llmcode" / "rules"
         rules_dir.mkdir(parents=True)
         (rules_dir / "style.md").write_text("# Style\n\n- Use black formatter\n- Max line length 100\n")
         (rules_dir / "security.md").write_text("# Security\n\n- No hardcoded secrets\n")
@@ -138,7 +138,7 @@ class TestGovernanceLayer:
         assert any("security.md" in s for s in sources)
 
     def test_scan_governance_md(self, tmp_path):
-        gov_md = tmp_path / ".llm-code" / "governance.md"
+        gov_md = tmp_path / ".llmcode" / "governance.md"
         gov_md.parent.mkdir(parents=True)
         gov_md.write_text("# Governance\n\n- All PRs require review\n")
         layer = GovernanceLayer(project_root=tmp_path)
@@ -154,7 +154,7 @@ class TestGovernanceLayer:
         """governance.md rules get higher priority than CLAUDE.md."""
         claude_md = tmp_path / "CLAUDE.md"
         claude_md.write_text("- Rule from CLAUDE.md\n")
-        gov_md = tmp_path / ".llm-code" / "governance.md"
+        gov_md = tmp_path / ".llmcode" / "governance.md"
         gov_md.parent.mkdir(parents=True)
         gov_md.write_text("- Rule from governance.md\n")
         layer = GovernanceLayer(project_root=tmp_path)

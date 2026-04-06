@@ -31,7 +31,7 @@ Supports: Official MCP registry, Smithery, npm, GitHub, custom URLs.
 
 ## Skills
 
-Place SKILL.md files in `~/.llm-code/skills/` or `.llm-code/skills/`:
+Place SKILL.md files in `~/.llmcode/skills/` or `.llmcode/skills/`:
 
 ```markdown
 ---

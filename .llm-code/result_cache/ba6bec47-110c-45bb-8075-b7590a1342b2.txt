@@ -1,0 +1,102 @@
+1	"""Built-in registry of known Claude Code plugins (official + community)."""
+2	from __future__ import annotations
+3	
+4	OFFICIAL_PLUGINS = [
+5	    {"name": "superpowers", "desc": "Core skills: TDD, debugging, collaboration, plans", "skills": 28, "repo": "obra/superpowers"},
+6	    {"name": "data-engineering", "desc": "Data warehouse exploration, pipeline audit, SQL", "skills": 46, "repo": ""},
+7	    {"name": "searchfit-seo", "desc": "AI-powered SEO toolkit — audit, content strategy", "skills": 22, "repo": ""},
+8	    {"name": "chrome-devtools-mcp", "desc": "Browser automation, debugging, performance analysis", "skills": 8, "repo": "anthropics/claude-code-chrome-devtools-mcp"},
+9	    {"name": "figma", "desc": "Figma MCP server + design-to-code skills", "skills": 7, "repo": ""},
+10	    {"name": "frontend-design", "desc": "UI/UX implementation skill for web frontends", "skills": 3, "repo": ""},
+11	    {"name": "skill-creator", "desc": "Create, improve, and measure skill performance", "skills": 3, "repo": ""},
+12	    {"name": "remember", "desc": "Continuous memory — extract and persist context", "skills": 2, "repo": ""},
+13	    {"name": "claude-code-setup", "desc": "Analyze codebases, recommend Claude Code automations", "skills": 1, "repo": ""},
+14	    {"name": "claude-md-management", "desc": "Audit and improve CLAUDE.md files", "skills": 1, "repo": ""},
+15	    {"name": "agent-sdk-dev", "desc": "Claude Agent SDK development tools", "skills": 0, "repo": ""},
+16	    {"name": "code-review", "desc": "Automated code review with specialized agents", "skills": 0, "repo": ""},
+17	    {"name": "code-simplifier", "desc": "Simplify and refine code for clarity", "skills": 0, "repo": ""},
+18	    {"name": "commit-commands", "desc": "Streamline git workflow — commit, push, PR", "skills": 0, "repo": ""},
+19	    {"name": "context7", "desc": "Context7 MCP for up-to-date documentation lookup", "skills": 0, "repo": ""},
+20	    {"name": "explanatory-output-style", "desc": "Educational insights about implementation choices", "skills": 0, "repo": ""},
+21	    {"name": "feature-dev", "desc": "Feature development workflow with specialized agents", "skills": 0, "repo": ""},
+22	    {"name": "playwright", "desc": "Browser automation and E2E testing (Microsoft)", "skills": 0, "repo": ""},
+23	    {"name": "pr-review-toolkit", "desc": "Comprehensive PR review with specialized agents", "skills": 0, "repo": ""},
+24	    {"name": "ralph-loop", "desc": "Continuous self-referential AI loops", "skills": 0, "repo": ""},
+25	    {"name": "security-guidance", "desc": "Security reminder hooks for safe coding", "skills": 0, "repo": ""},
+26	    {"name": "semgrep", "desc": "Semgrep MCP for static analysis and SAST", "skills": 0, "repo": ""},
+27	    {"name": "supabase", "desc": "Supabase MCP for database and auth operations", "skills": 0, "repo": ""},
+28	    {"name": "clangd-lsp", "desc": "C/C++ language server integration", "skills": 0, "repo": ""},
+29	    {"name": "gopls-lsp", "desc": "Go language server integration", "skills": 0, "repo": ""},
+30	    {"name": "pyright-lsp", "desc": "Python language server integration", "skills": 0, "repo": ""},
+31	    {"name": "rust-analyzer-lsp", "desc": "Rust language server integration", "skills": 0, "repo": ""},
+32	    {"name": "typescript-lsp", "desc": "TypeScript language server integration", "skills": 0, "repo": ""},
+33	]
+34	
+35	COMMUNITY_PLUGINS = [
+36	    {"name": "ai-integration-architect", "desc": "Design and scaffold AI integration into enterprise systems", "skills": 1, "repo": ""},
+37	    {"name": "claude-md-optimizer", "desc": "Optimize oversized CLAUDE.md using progressive disclosure", "skills": 1, "repo": ""},
+38	]
+39	
+40	
+41	def get_all_known_plugins() -> list[dict]:
+42	    """Return all known plugins (official + community) sorted by skill count."""
+43	    all_plugins = []
+44	    for p in OFFICIAL_PLUGINS:
+45	        all_plugins.append({**p, "source": "official"})
+46	    for p in COMMUNITY_PLUGINS:
+47	        all_plugins.append({**p, "source": "community"})
+48	    all_plugins.sort(key=lambda x: (-x["skills"], x["name"]))
+49	    return all_plugins
+50	
+51	
+52	async def search_clawhub_skills(query: str = "", limit: int = 30) -> list[tuple[str, str]]:
+53	    """Search ClawHub.ai skill marketplace (44,000+ skills)."""
+54	    import httpx
+55	
+56	    # If no query, fetch popular categories to get a good mix
+57	    queries = [query] if query else ["code", "test", "review", "debug", "deploy", "security", "api", "frontend"]
+58	
+59	    results: list[tuple[str, str]] = []
+60	    seen_slugs: set[str] = set()
+61	
+62	    async with httpx.AsyncClient(timeout=8.0) as client:
+63	        for q in queries:
+64	            if len(results) >= limit:
+65	                break
+66	            try:
+67	                resp = await client.get(
+68	                    "https://clawhub.ai/api/search",
+69	                    params={"q": q, "limit": min(10, limit - len(results))},
+70	                )
+71	                resp.raise_for_status()
+72	                data = resp.json()
+73	                for item in data.get("results", []):
+74	                    slug = item.get("slug", "")
+75	                    if slug and slug not in seen_slugs:
+76	                        seen_slugs.add(slug)
+77	                        name = item.get("displayName") or slug
+78	                        summary = item.get("summary", "")[:60]
+79	                        results.append((slug, f"{name} — {summary}"))
+80	            except Exception:
+81	                continue
+82	
+83	    return results[:limit]
+84	
+85	
+86	async def search_clawhub_plugins(query: str, limit: int = 30) -> list[tuple[str, str]]:
+87	    """Search ClawHub.ai plugin marketplace."""
+88	    import httpx
+89	    async with httpx.AsyncClient(timeout=10.0) as client:
+90	        resp = await client.get(
+91	            "https://clawhub.ai/api/search",
+92	            params={"q": f"plugin {query}", "limit": limit},
+93	        )
+94	        resp.raise_for_status()
+95	        data = resp.json()
+96	    results = []
+97	    for item in data.get("results", []):
+98	        name = item.get("displayName") or item.get("slug", "")
+99	        slug = item.get("slug", "")
+100	        summary = item.get("summary", "")[:70]
+101	        results.append((slug, f"{name} — {summary}"))
+102	    return results

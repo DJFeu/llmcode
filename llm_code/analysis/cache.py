@@ -1,4 +1,4 @@
-"""Analysis result cache -- save/load to .llm-code/last_analysis.json."""
+"""Analysis result cache -- save/load to .llmcode/last_analysis.json."""
 from __future__ import annotations
 
 import json
@@ -9,8 +9,8 @@ from llm_code.analysis.rules import Violation
 
 
 def save_results(cwd: Path, violations: tuple[Violation, ...]) -> Path:
-    """Save violations to .llm-code/last_analysis.json."""
-    cache_dir = cwd / ".llm-code"
+    """Save violations to .llmcode/last_analysis.json."""
+    cache_dir = cwd / ".llmcode"
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cache_dir / "last_analysis.json"
     data = {
@@ -23,7 +23,7 @@ def save_results(cwd: Path, violations: tuple[Violation, ...]) -> Path:
 
 def load_results(cwd: Path) -> tuple[Violation, ...]:
     """Load cached violations. Returns empty tuple if no cache."""
-    cache_path = cwd / ".llm-code" / "last_analysis.json"
+    cache_path = cwd / ".llmcode" / "last_analysis.json"
     if not cache_path.exists():
         return ()
     try:

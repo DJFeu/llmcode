@@ -69,7 +69,7 @@ class HarnessEngine:
         if ctrl.name == "analysis_context":
             return analysis_context_guide(context=self.analysis_context)
         if ctrl.name == "architecture_doc":
-            doc_path = self._cwd / ".llm-code" / "architecture.md"
+            doc_path = self._cwd / ".llmcode" / "architecture.md"
             if doc_path.exists():
                 try:
                     return doc_path.read_text(encoding="utf-8")

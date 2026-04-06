@@ -41,7 +41,7 @@ Be concise and factual. Focus on architecture, not implementation details.
 class KnowledgeEntry:
     """A single entry in the knowledge index."""
 
-    path: str  # relative to .llm-code/knowledge/
+    path: str  # relative to .llmcode/knowledge/
     title: str
     summary: str  # one-line for index
     last_compiled: str  # ISO timestamp
@@ -63,7 +63,7 @@ class KnowledgeCompiler:
         self._cwd = cwd
         self._provider = llm_provider
         self._compile_model = compile_model
-        self._knowledge_dir = cwd / ".llm-code" / "knowledge"
+        self._knowledge_dir = cwd / ".llmcode" / "knowledge"
         self._knowledge_dir.mkdir(parents=True, exist_ok=True)
         (self._knowledge_dir / "modules").mkdir(exist_ok=True)
 

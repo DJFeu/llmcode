@@ -109,7 +109,7 @@ class InputBar(Widget):
         self._show_dropdown = False
         self._dropdown_items = []
         self._dropdown_cursor = 0
-        self._keybindings = load_keybindings(Path.home() / ".llm-code" / "keybindings.json")
+        self._keybindings = load_keybindings(Path.home() / ".llmcode" / "keybindings.json")
 
     class Submitted(Message):
         """Fired when user presses Enter."""

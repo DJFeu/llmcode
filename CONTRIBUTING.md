@@ -56,7 +56,7 @@ cli → runtime → {tools, api}
 
 ## Adding an MCP Server
 
-Add to `~/.llm-code/config.json`:
+Add to `~/.llmcode/config.json`:
 
 ```json
 {

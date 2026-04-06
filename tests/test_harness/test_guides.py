@@ -64,7 +64,7 @@ def test_plan_mode_inactive_returns_empty():
 def test_knowledge_guide_returns_content(tmp_path: Path):
     from llm_code.harness.guides import knowledge_guide
 
-    knowledge_dir = tmp_path / ".llm-code" / "knowledge"
+    knowledge_dir = tmp_path / ".llmcode" / "knowledge"
     knowledge_dir.mkdir(parents=True)
     (knowledge_dir / "modules").mkdir()
     (knowledge_dir / "index.md").write_text(

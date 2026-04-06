@@ -38,7 +38,7 @@ def test_compiler_init_creates_dirs(tmp_path: Path):
     from llm_code.runtime.knowledge_compiler import KnowledgeCompiler
 
     compiler = KnowledgeCompiler(cwd=tmp_path, llm_provider=None)
-    knowledge_dir = tmp_path / ".llm-code" / "knowledge"
+    knowledge_dir = tmp_path / ".llmcode" / "knowledge"
     assert knowledge_dir.exists()
     assert (knowledge_dir / "modules").exists()
 
@@ -55,7 +55,7 @@ def test_compiler_get_index_reads_files(tmp_path: Path):
     from llm_code.runtime.knowledge_compiler import KnowledgeCompiler
 
     compiler = KnowledgeCompiler(cwd=tmp_path, llm_provider=None)
-    knowledge_dir = tmp_path / ".llm-code" / "knowledge"
+    knowledge_dir = tmp_path / ".llmcode" / "knowledge"
 
     index_md = knowledge_dir / "index.md"
     index_md.write_text(
@@ -147,7 +147,7 @@ async def test_compile_generates_index(tmp_path: Path):
 
     await compiler.compile(ingest_data)
 
-    index_path = tmp_path / ".llm-code" / "knowledge" / "index.md"
+    index_path = tmp_path / ".llmcode" / "knowledge" / "index.md"
     assert index_path.exists()
     content = index_path.read_text()
     assert "api" in content.lower()
@@ -170,7 +170,7 @@ async def test_compile_creates_module_file(tmp_path: Path):
 
     await compiler.compile(ingest_data)
 
-    modules_dir = tmp_path / ".llm-code" / "knowledge" / "modules"
+    modules_dir = tmp_path / ".llmcode" / "knowledge" / "modules"
     md_files = list(modules_dir.glob("*.md"))
     assert len(md_files) >= 1
 
@@ -184,7 +184,7 @@ async def test_compile_skips_when_no_provider(tmp_path: Path):
 
     await compiler.compile(ingest_data)
 
-    index_path = tmp_path / ".llm-code" / "knowledge" / "index.md"
+    index_path = tmp_path / ".llmcode" / "knowledge" / "index.md"
     assert not index_path.exists()
 
 
@@ -221,7 +221,7 @@ def test_query_returns_relevant_knowledge(tmp_path: Path):
     from llm_code.runtime.knowledge_compiler import KnowledgeCompiler
 
     compiler = KnowledgeCompiler(cwd=tmp_path, llm_provider=None)
-    knowledge_dir = tmp_path / ".llm-code" / "knowledge"
+    knowledge_dir = tmp_path / ".llmcode" / "knowledge"
 
     (knowledge_dir / "index.md").write_text(
         "# Knowledge Index\n\n"
@@ -245,7 +245,7 @@ def test_query_respects_token_budget(tmp_path: Path):
     from llm_code.runtime.knowledge_compiler import KnowledgeCompiler
 
     compiler = KnowledgeCompiler(cwd=tmp_path, llm_provider=None)
-    knowledge_dir = tmp_path / ".llm-code" / "knowledge"
+    knowledge_dir = tmp_path / ".llmcode" / "knowledge"
 
     (knowledge_dir / "index.md").write_text("# Knowledge Index\n\n- [Big](modules/big.md) — Big module\n")
     (knowledge_dir / "modules" / "big.md").write_text("# Big\n\n" + "x " * 5000)

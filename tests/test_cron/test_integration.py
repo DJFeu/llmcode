@@ -14,8 +14,8 @@ class TestCronLifecycle:
     @pytest.mark.asyncio
     async def test_create_fire_expire(self, tmp_path):
         """Full lifecycle: create task -> fire it -> verify fired -> auto-expire."""
-        storage = CronStorage(tmp_path / ".llm-code" / "scheduled_tasks.json")
-        lock_path = tmp_path / ".llm-code" / "cron.lock"
+        storage = CronStorage(tmp_path / ".llmcode" / "scheduled_tasks.json")
+        lock_path = tmp_path / ".llmcode" / "cron.lock"
         fired_prompts: list[str] = []
 
         async def on_fire(prompt: str) -> None:
@@ -38,8 +38,8 @@ class TestCronLifecycle:
     @pytest.mark.asyncio
     async def test_one_shot_task_removed(self, tmp_path):
         """A non-recurring task fires once then is removed."""
-        storage = CronStorage(tmp_path / ".llm-code" / "scheduled_tasks.json")
-        lock_path = tmp_path / ".llm-code" / "cron.lock"
+        storage = CronStorage(tmp_path / ".llmcode" / "scheduled_tasks.json")
+        lock_path = tmp_path / ".llmcode" / "cron.lock"
         fired: list[str] = []
 
         async def on_fire(prompt: str) -> None:

@@ -79,7 +79,7 @@ class TestScopeOrdering:
 
     def test_project_sections_come_second(self, tmp_path: Path) -> None:
         """Project scope content appears after global but before session content."""
-        instructions_dir = tmp_path / ".llm-code"
+        instructions_dir = tmp_path / ".llmcode"
         instructions_dir.mkdir()
         (instructions_dir / "INSTRUCTIONS.md").write_text("Project rule: do X.", encoding="utf-8")
         ctx = ProjectContext.discover(tmp_path)
@@ -114,7 +114,7 @@ class TestScopeOrdering:
 class TestCacheBoundaries:
     def test_two_cache_boundaries_present_with_project_content(self, tmp_path: Path) -> None:
         """Two cache boundary markers appear when all three scopes have content."""
-        instructions_dir = tmp_path / ".llm-code"
+        instructions_dir = tmp_path / ".llmcode"
         instructions_dir.mkdir()
         (instructions_dir / "INSTRUCTIONS.md").write_text("Some project instruction.", encoding="utf-8")
         ctx = ProjectContext.discover(tmp_path)
@@ -134,7 +134,7 @@ class TestCacheBoundaries:
 
     def test_cache_control_marker_after_each_boundary(self, tmp_path: Path) -> None:
         """Each cache boundary is followed by a cache_control JSON marker."""
-        instructions_dir = tmp_path / ".llm-code"
+        instructions_dir = tmp_path / ".llmcode"
         instructions_dir.mkdir()
         (instructions_dir / "INSTRUCTIONS.md").write_text("project instructions", encoding="utf-8")
         ctx = ProjectContext.discover(tmp_path)
@@ -145,7 +145,7 @@ class TestCacheBoundaries:
 
     def test_boundaries_in_correct_order(self, tmp_path: Path) -> None:
         """First boundary is between global and project; second between project and session."""
-        instructions_dir = tmp_path / ".llm-code"
+        instructions_dir = tmp_path / ".llmcode"
         instructions_dir.mkdir()
         (instructions_dir / "INSTRUCTIONS.md").write_text("project note", encoding="utf-8")
         ctx = ProjectContext.discover(tmp_path)

@@ -13,7 +13,7 @@ from llm_code.tools.cron_delete import CronDeleteTool
 
 @pytest.fixture
 def storage(tmp_path):
-    return CronStorage(tmp_path / ".llm-code" / "scheduled_tasks.json")
+    return CronStorage(tmp_path / ".llmcode" / "scheduled_tasks.json")
 
 
 class TestCronCreateTool:

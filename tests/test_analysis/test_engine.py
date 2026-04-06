@@ -51,7 +51,7 @@ class TestCacheSaveLoad:
         assert result == ()
 
     def test_load_corrupt_json(self, tmp_path: Path) -> None:
-        cache_dir = tmp_path / ".llm-code"
+        cache_dir = tmp_path / ".llmcode"
         cache_dir.mkdir()
         (cache_dir / "last_analysis.json").write_text("not json", encoding="utf-8")
         result = load_results(tmp_path)
@@ -60,7 +60,7 @@ class TestCacheSaveLoad:
     def test_cache_contains_timestamp(self, tmp_path: Path) -> None:
         save_results(tmp_path, ())
         data = json.loads(
-            (tmp_path / ".llm-code" / "last_analysis.json").read_text(encoding="utf-8")
+            (tmp_path / ".llmcode" / "last_analysis.json").read_text(encoding="utf-8")
         )
         assert "timestamp" in data
         assert "violations" in data
@@ -155,7 +155,7 @@ class TestRunAnalysis:
     def test_caches_results(self, tmp_path: Path) -> None:
         (tmp_path / "ok.py").write_text("x = 1\n", encoding="utf-8")
         run_analysis(tmp_path)
-        cache_path = tmp_path / ".llm-code" / "last_analysis.json"
+        cache_path = tmp_path / ".llmcode" / "last_analysis.json"
         assert cache_path.exists()
 
     def test_detects_hardcoded_secret(self, tmp_path: Path) -> None:

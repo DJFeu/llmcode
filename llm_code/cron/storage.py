@@ -23,7 +23,7 @@ class CronTask:
 
 
 class CronStorage:
-    """Load/save cron tasks from a JSON file under .llm-code/."""
+    """Load/save cron tasks from a JSON file under .llmcode/."""
 
     def __init__(self, path: Path) -> None:
         self._path = Path(path)

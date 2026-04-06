@@ -18,7 +18,7 @@ _MAX_AGE_DAYS = 30
 
 _SKIP_DIRS = frozenset({
     ".git", "__pycache__", "node_modules", ".venv", "venv",
-    "dist", "build", ".egg-info", ".tox", ".mypy_cache", ".llm-code",
+    "dist", "build", ".egg-info", ".tox", ".mypy_cache", ".llmcode",
 })
 
 _CONTRADICTION_SYSTEM_PROMPT = """\

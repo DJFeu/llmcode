@@ -59,7 +59,7 @@ class OAuthClient:
         self._token_url = token_url
         self._redirect_uri = redirect_uri
         self._scope = scope
-        self._token_dir = Path.home() / ".llm-code" / "tokens"
+        self._token_dir = Path.home() / ".llmcode" / "tokens"
         self._token_dir.mkdir(parents=True, exist_ok=True)
 
     def get_token(self, server_name: str) -> OAuthToken | None:
