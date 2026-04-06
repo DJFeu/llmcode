@@ -45,6 +45,9 @@ ink-ui/node_modules/
 ink-ui/dist/
 .superpowers/
 
+# Superpowers plans & specs (development-only docs)
+docs/superpowers/
+
 # Test artifacts (from llm-code self-testing)
 test.txt
 test_output.log
