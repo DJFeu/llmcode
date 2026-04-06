@@ -70,6 +70,20 @@ class SkillLoader:
         description = str(meta.get("description", ""))
         auto_raw = meta.get("auto", False)
         auto = auto_raw is True or str(auto_raw).lower() in ("true", "yes", "1")
+
+        # Heuristic: detect auto skills from description keywords
+        # Superpowers skills use "Use when..." or "MUST use this before..." patterns
+        if not auto and description:
+            _desc_lower = description.lower()
+            _auto_patterns = (
+                "use when starting any",
+                "must use this before",
+                "you must use this",
+                "use this skill when",
+                "automatically activate",
+            )
+            if any(p in _desc_lower for p in _auto_patterns):
+                auto = True
         trigger = str(meta.get("trigger", ""))
 
         version = str(meta.get("version", ""))
