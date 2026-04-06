@@ -16,7 +16,7 @@ from llm_code.runtime.prompt_guard import sanitize_mcp_instructions
 if TYPE_CHECKING:
     from llm_code.runtime.indexer import ProjectIndex
     from llm_code.runtime.memory_layers import GovernanceRule
-    from llm_code.runtime.skills import SkillSet
+    from llm_code.runtime.skills import Skill, SkillSet
     from llm_code.task.manager import TaskLifecycleManager
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,9 @@ Rules:
 - Report results honestly — do not claim something works without verifying
 - Keep responses concise — lead with the answer, not the reasoning
 - For code changes, show the minimal diff needed
+"""
+
+_LOCAL_MODEL_RULES = """\
 - Do NOT use the agent tool unless the user explicitly asks for it or the task genuinely \
 requires parallel sub-tasks. For normal questions, conversations, or simple tasks, \
 respond directly without spawning agents.
@@ -96,7 +99,8 @@ class SystemPromptBuilder:
         mcp_instructions: dict[str, str] | None = None,
         governance_rules: "tuple[GovernanceRule, ...] | None" = None,
         task_manager: "TaskLifecycleManager | None" = None,
-        routed_skills: tuple = (),
+        routed_skills: "tuple[Skill, ...] | None" = None,
+        is_local_model: bool = False,
     ) -> str:
         sections: list[PromptSection] = []
 
@@ -121,6 +125,9 @@ class SystemPromptBuilder:
             sections.append(PromptSection(content="\n".join(gov_lines), scope="global", priority=5))
 
         sections.append(PromptSection(content=_BEHAVIOR_RULES, scope="global", priority=10))
+
+        if is_local_model:
+            sections.append(PromptSection(content=_LOCAL_MODEL_RULES, scope="global", priority=11))
 
         if not native_tools and tools:
             sections.append(PromptSection(content=_XML_TOOL_INSTRUCTIONS, scope="global", priority=20))

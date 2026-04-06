@@ -1411,6 +1411,19 @@ class LLMCodeTUI(App):
 
         self.push_screen(HelpScreen())
 
+    def _cmd_copy(self, args: str) -> None:
+        """Copy last assistant response to system clipboard."""
+        chat = self.query_one(ChatScrollView)
+        # Walk children in reverse to find last AssistantText
+        for child in reversed(list(chat.children)):
+            if isinstance(child, AssistantText):
+                text = child._text
+                if text:
+                    self.copy_to_clipboard(text)
+                    chat.add_entry(AssistantText("Copied to clipboard."))
+                    return
+        chat.add_entry(AssistantText("No response to copy."))
+
     def _cmd_clear(self, args: str) -> None:
         self.query_one(ChatScrollView).remove_children()
 

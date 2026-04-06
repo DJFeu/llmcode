@@ -20,5 +20,5 @@ STOPWORDS: frozenset[str] = frozenset({
     "use", "using", "used", "when", "any", "skill", "skills",
     "the", "for", "and", "with", "that", "this", "from",
     "before", "after", "work", "working", "approach",
-    "ensure", "follow", "invoke", "tool", "tools",
+    "ensure", "follow", "invoke",
 })

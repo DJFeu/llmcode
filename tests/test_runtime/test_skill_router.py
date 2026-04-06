@@ -105,7 +105,9 @@ class TestTokenize:
 class TestContentTokens:
     def test_removes_stopwords(self):
         tokens = _content_tokens("use this tool for the task")
-        assert "tool" not in tokens  # "tool" is a stopword
+        assert "this" not in tokens  # "this" is a stopword
+        assert "for" not in tokens
+        assert "tool" in tokens  # "tool" is NOT a stopword (meaningful in skill context)
         assert "task" in tokens
 
     def test_keeps_meaningful_words(self):
@@ -317,3 +319,135 @@ class TestEdgeCases:
         # Should still work via auto-extracted keywords
         result = router.route("simple plain skill")
         assert isinstance(result, list)
+
+
+# ------------------------------------------------------------------
+# End-to-end: router → prompt builder
+# ------------------------------------------------------------------
+
+class TestEndToEnd:
+    """Verify the full flow: user message → router → prompt builder → only matched skill in prompt."""
+
+    def test_matched_skill_in_prompt_unmatched_not(self, tmp_path):
+        from llm_code.runtime.prompt import SystemPromptBuilder
+        from llm_code.runtime.context import ProjectContext
+
+        brainstorm = Skill(
+            name="brainstorming", description="creative design features",
+            content="BRAINSTORM_CONTENT_MARKER", auto=True,
+            keywords=("brainstorm", "design", "creative", "設計"),
+        )
+        debug = Skill(
+            name="debugging", description="bug fix error troubleshoot",
+            content="DEBUG_CONTENT_MARKER", auto=True,
+            keywords=("debug", "bug", "error", "fix"),
+        )
+        router = SkillRouter(skills=(brainstorm, debug), config=SkillRouterConfig())
+
+        # Route a design message → should match brainstorming
+        routed = tuple(router.route("我想要設計一個新功能"))
+        assert len(routed) >= 1
+        assert routed[0].name == "brainstorming"
+
+        # Build prompt with routed skills
+        ctx = ProjectContext(cwd=tmp_path, is_git_repo=False, git_status="", instructions="")
+        prompt = SystemPromptBuilder().build(ctx, routed_skills=routed)
+
+        assert "BRAINSTORM_CONTENT_MARKER" in prompt
+        assert "DEBUG_CONTENT_MARKER" not in prompt
+
+    def test_no_match_produces_clean_prompt(self, tmp_path):
+        from llm_code.runtime.prompt import SystemPromptBuilder
+        from llm_code.runtime.context import ProjectContext
+
+        skill = Skill(
+            name="brainstorming", description="creative design",
+            content="SHOULD_NOT_APPEAR", auto=True,
+            keywords=("brainstorm", "design"),
+        )
+        router = SkillRouter(skills=(skill,), config=SkillRouterConfig())
+
+        routed = tuple(router.route("hello how are you"))
+        ctx = ProjectContext(cwd=tmp_path, is_git_repo=False, git_status="", instructions="")
+        prompt = SystemPromptBuilder().build(ctx, routed_skills=routed if routed else None)
+
+        assert "SHOULD_NOT_APPEAR" not in prompt
+
+    def test_local_model_rules_injected(self, tmp_path):
+        from llm_code.runtime.prompt import SystemPromptBuilder
+        from llm_code.runtime.context import ProjectContext
+
+        ctx = ProjectContext(cwd=tmp_path, is_git_repo=False, git_status="", instructions="")
+        prompt_local = SystemPromptBuilder().build(ctx, is_local_model=True)
+        prompt_cloud = SystemPromptBuilder().build(ctx, is_local_model=False)
+
+        assert "Do NOT use the agent tool" in prompt_local
+        assert "Do NOT use the agent tool" not in prompt_cloud
+
+
+# ------------------------------------------------------------------
+# Tier C: LLM classifier (mock)
+# ------------------------------------------------------------------
+
+class TestTierC:
+    @pytest.fixture
+    def skills_pair(self):
+        return (
+            Skill(name="brainstorming", description="creative design", content="...", auto=True),
+            Skill(name="debugging", description="bug fix error", content="...", auto=True),
+        )
+
+    @pytest.mark.asyncio
+    async def test_tier_c_returns_matched_skill(self, skills_pair):
+        from unittest.mock import AsyncMock, MagicMock
+        from llm_code.runtime.skill_router import _classify_with_llm
+
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="brainstorming")]
+        mock_provider = MagicMock()
+        mock_provider.send_message = AsyncMock(return_value=mock_response)
+
+        result = await _classify_with_llm("design a feature", skills_pair, mock_provider, "test-model")
+        assert result == "brainstorming"
+
+    @pytest.mark.asyncio
+    async def test_tier_c_returns_none_on_no_match(self, skills_pair):
+        from unittest.mock import AsyncMock, MagicMock
+        from llm_code.runtime.skill_router import _classify_with_llm
+
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="none")]
+        mock_provider = MagicMock()
+        mock_provider.send_message = AsyncMock(return_value=mock_response)
+
+        result = await _classify_with_llm("what is the weather", skills_pair, mock_provider, "test-model")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_tier_c_handles_exception(self, skills_pair):
+        from unittest.mock import AsyncMock, MagicMock
+        from llm_code.runtime.skill_router import _classify_with_llm
+
+        mock_provider = MagicMock()
+        mock_provider.send_message = AsyncMock(side_effect=Exception("connection error"))
+
+        result = await _classify_with_llm("test", skills_pair, mock_provider, "test-model")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_route_async_uses_tier_c(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        skill = Skill(name="brainstorming", description="creative design", content="...", auto=True)
+        config = SkillRouterConfig(tier_a=False, tier_b=False, tier_c=True)
+
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="brainstorming")]
+        mock_provider = MagicMock()
+        mock_provider.send_message = AsyncMock(return_value=mock_response)
+
+        router = SkillRouter(skills=(skill,), config=config, provider=mock_provider, model="test")
+        result = await router.route_async("design something creative")
+
+        assert len(result) == 1
+        assert result[0].name == "brainstorming"

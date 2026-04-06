@@ -62,6 +62,29 @@ class TestResolvePath:
         assert resolved == real_file
         assert resolved.exists()
 
+    def test_workspace_escape_blocked(self, tmp_path, monkeypatch):
+        """Resolved path must not escape outside cwd via symlink."""
+        import os
+        # Create: tmp_path/project/ (cwd) with a symlink that escapes
+        project = tmp_path / "project"
+        project.mkdir()
+        secret = tmp_path / "secret"
+        secret.mkdir()
+        (secret / "data.txt").write_text("secret")
+
+        # Create symlink: project/escape -> ../secret
+        escape_link = project / "escape"
+        os.symlink(str(secret), str(escape_link))
+
+        monkeypatch.chdir(project)
+
+        # resolve_path tries cwd/escape/data.txt — exists via symlink
+        # but resolved path is outside cwd → should be blocked
+        wrong_path = "/fake/escape/data.txt"
+        resolved = resolve_path(wrong_path)
+        # Should return original path (blocked), NOT the secret file
+        assert str(resolved) == wrong_path
+
 
 # ---------------------------------------------------------------------------
 # ReadFileTool

@@ -195,12 +195,14 @@ async def _classify_with_llm(
     prompt = _CLASSIFY_PROMPT.format(skill_list=skill_list, user_message=user_message)
 
     try:
-        from llm_code.api.types import MessageRequest, UserMessage
+        from llm_code.api.types import MessageRequest, Message, TextBlock
+        user_msg = Message(role="user", content=(TextBlock(text=prompt),))
         request = MessageRequest(
             model=model,
-            messages=[UserMessage(content=prompt)],
+            messages=(user_msg,),
             max_tokens=20,
             temperature=0.0,
+            stream=False,
         )
         response = await provider.send_message(request)
         answer = response.content[0].text.strip().lower() if response.content else ""

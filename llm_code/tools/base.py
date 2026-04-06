@@ -20,8 +20,10 @@ def resolve_path(raw: str) -> pathlib.Path:
 
     Resolution order:
     1. If the literal path exists, return it.
-    2. If it's absolute and doesn't exist, try it as a relative path under cwd.
+    2. If it's absolute and doesn't exist, try suffix matches under cwd.
     3. Otherwise return the original Path (caller decides how to handle).
+
+    Security: resolved paths must be under cwd to prevent workspace escape.
     """
     p = pathlib.Path(raw)
     if p.exists():
@@ -29,12 +31,17 @@ def resolve_path(raw: str) -> pathlib.Path:
     # Absolute path that doesn't exist — try stripping the prefix and
     # interpreting the tail relative to cwd.
     if p.is_absolute():
-        cwd = pathlib.Path.cwd()
+        cwd = pathlib.Path.cwd().resolve()
         # Walk each suffix of the path parts to find the longest match under cwd.
         parts = p.parts
         for i in range(1, len(parts)):
             candidate = cwd / pathlib.Path(*parts[i:])
             if candidate.exists():
+                # Security: ensure resolved path is under cwd
+                try:
+                    candidate.resolve().relative_to(cwd)
+                except ValueError:
+                    continue  # skip — would escape workspace
                 return candidate
     return p  # return as-is; caller will report file-not-found
 

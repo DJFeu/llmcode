@@ -161,7 +161,7 @@ def main(
     # Textual fullscreen TUI (default and only UI mode)
     from llm_code.tui.app import LLMCodeTUI
     app = LLMCodeTUI(config=config, cwd=cwd, budget=budget, initial_mode=cli_mode)
-    app.run(mouse=False)  # Disable Textual mouse capture → terminal handles selection natively
+    app.run()
 
 
 _OLLAMA_DEFAULT_URL = "http://localhost:11434"
