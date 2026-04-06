@@ -670,8 +670,10 @@ class ConversationRuntime:
                     self._db_log("assistant", _assistant_text, output_tokens=_out_tok)
 
             # 8. Diminishing returns detection
+            # Only check when model produced text without tool calls (pure text continuation).
+            # Tool calls = productive work, never penalized.
             _dr_cfg = getattr(self._config, "diminishing_returns", None)
-            if _dr_cfg and _dr_cfg.enabled and stop_event:
+            if _dr_cfg and _dr_cfg.enabled and stop_event and not parsed_calls:
                 _current_output = accumulated_usage.output_tokens
                 _delta = _current_output - _prev_output_tokens
                 _prev_output_tokens = _current_output
@@ -679,7 +681,6 @@ class ConversationRuntime:
                 if (
                     _continuation_count >= _dr_cfg.min_continuations
                     and _delta < _dr_cfg.min_delta_tokens
-                    and parsed_calls  # only trigger if model wants to continue
                 ):
                     logger.info(
                         "Diminishing returns: iteration %d, delta %d tokens < %d threshold",
@@ -690,6 +691,9 @@ class ConversationRuntime:
                         f"iteration {_continuation_count}, {_delta} new tokens]"
                     )
                     break
+            elif parsed_calls:
+                # Reset counter when model is actively using tools
+                _continuation_count = 0
 
             # 9. If no tool calls → end turn
             if not parsed_calls:

@@ -79,7 +79,7 @@ class LLMCodeTUI(App):
 
     def compose(self) -> ComposeResult:
         yield HeaderBar(id="header-bar")
-        yield ChatScrollView()
+        yield ChatScrollView(id="chat-view")
         yield InputBar()
         yield StatusBar(id="status-bar")
 

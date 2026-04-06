@@ -86,8 +86,8 @@ class ChatScrollView(VerticalScroll):
     }
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
         self._auto_scroll = True
 
     def on_mount(self) -> None:
