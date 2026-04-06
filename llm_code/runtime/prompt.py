@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import platform
 from datetime import date
 from pathlib import Path
@@ -10,12 +11,15 @@ from typing import TYPE_CHECKING, Literal
 
 from llm_code.api.types import ToolDefinition
 from llm_code.runtime.context import ProjectContext
+from llm_code.runtime.prompt_guard import sanitize_mcp_instructions
 
 if TYPE_CHECKING:
     from llm_code.runtime.indexer import ProjectIndex
     from llm_code.runtime.memory_layers import GovernanceRule
     from llm_code.runtime.skills import SkillSet
     from llm_code.task.manager import TaskLifecycleManager
+
+logger = logging.getLogger(__name__)
 
 _INTRO = """\
 You are a coding assistant running inside a terminal. \
@@ -157,8 +161,13 @@ class SystemPromptBuilder:
         # MCP server instructions (injected per-server, per-session)
         if mcp_instructions:
             for server_name, instr in mcp_instructions.items():
+                clean_instr, warnings = sanitize_mcp_instructions(
+                    server_name, instr,
+                )
+                for w in warnings:
+                    logger.warning(w)
                 sections.append(PromptSection(
-                    content=f"## MCP Server: {server_name}\n\n{instr}",
+                    content=f"## MCP Server: {server_name}\n\n{clean_instr}",
                     scope="session",
                     priority=0,
                 ))

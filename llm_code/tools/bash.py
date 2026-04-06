@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import select
 import subprocess
@@ -15,6 +16,7 @@ _log = logging.getLogger(__name__)
 
 from pydantic import BaseModel
 
+from llm_code.runtime.secret_scanner import scan_output
 from llm_code.tools.base import PermissionLevel, Tool, ToolProgress, ToolResult
 from llm_code.utils.errors import friendly_error
 
@@ -185,6 +187,40 @@ _ZSH_DANGEROUS_PATTERN = re.compile(
     r"(?<!\w)(" + "|".join(re.escape(b) for b in _ZSH_DANGEROUS_BUILTINS) + r")(?!\w)",
     re.IGNORECASE,
 )
+
+
+# ---------------------------------------------------------------------------
+# Environment variable filtering
+# ---------------------------------------------------------------------------
+
+_SENSITIVE_ENV_PATTERN = re.compile(
+    r"(API_KEY|ACCESS_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|PRIVATE_KEY|AUTH_)",
+    re.IGNORECASE,
+)
+
+_ENV_ALLOWLIST = frozenset({
+    "PATH", "HOME", "SHELL", "USER", "LANG", "LC_ALL", "TERM",
+    "EDITOR", "VISUAL", "TMPDIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
+    "PYTHONPATH", "NODE_PATH", "GOPATH", "CARGO_HOME", "RUSTUP_HOME",
+    "VIRTUAL_ENV", "CONDA_PREFIX", "NVM_DIR",
+    "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
+    "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL",
+    "SSH_AUTH_SOCK",
+    "DISPLAY", "WAYLAND_DISPLAY",
+})
+
+
+def _make_safe_env() -> dict[str, str]:
+    """Create env dict with sensitive variables filtered."""
+    safe: dict[str, str] = {}
+    for key, val in os.environ.items():
+        if key in _ENV_ALLOWLIST:
+            safe[key] = val
+        elif _SENSITIVE_ENV_PATTERN.search(key):
+            safe[key] = "[FILTERED]"
+        else:
+            safe[key] = val
+    return safe
 
 
 def _count_pipe_segments(command: str) -> int:
@@ -468,6 +504,7 @@ class BashTool(Tool):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                env=_make_safe_env(),
             )
         except Exception as exc:
             return ToolResult(output=f"Error starting command: {exc}", is_error=True)
@@ -530,6 +567,10 @@ class BashTool(Tool):
         if len(output) > self._max_output:
             output = output[: self._max_output] + f"\n... [output truncated at {self._max_output} chars]"
 
+        output, findings = scan_output(output)
+        if findings:
+            _log.warning("Secrets redacted from bash output: %s", findings)
+
         is_error = proc.returncode != 0
         return ToolResult(output=output, is_error=is_error)
 
@@ -542,6 +583,7 @@ class BashTool(Tool):
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                env=_make_safe_env(),
             )
             output = proc.stdout
             if proc.stderr:
@@ -552,6 +594,10 @@ class BashTool(Tool):
             if len(output) > self._max_output:
                 truncated = output[: self._max_output]
                 output = truncated + f"\n... [output truncated at {self._max_output} chars]"
+
+            output, findings = scan_output(output)
+            if findings:
+                _log.warning("Secrets redacted from bash output: %s", findings)
 
             is_error = proc.returncode != 0
             return ToolResult(output=output, is_error=is_error)
