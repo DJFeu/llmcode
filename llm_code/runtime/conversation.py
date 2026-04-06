@@ -133,6 +133,7 @@ class ConversationRuntime:
         task_manager: Any = None,
         project_index: Any = None,
         lsp_manager: Any = None,
+        typed_memory_store: Any = None,
     ) -> None:
         self._provider = provider
         self._tool_registry = tool_registry
@@ -166,6 +167,7 @@ class ConversationRuntime:
         self._task_manager = task_manager
         self._project_index = project_index
         self._lsp_manager = lsp_manager
+        self._typed_memory = typed_memory_store
         # Conversation DB for cross-session FTS5 search
         self._conv_db = None
         try:
@@ -405,6 +407,15 @@ class ConversationRuntime:
             if self._memory_store is not None and hasattr(self._memory_store, "list_entries"):
                 try:
                     _memory_entries = self._memory_store.list_entries() or None
+                except Exception:
+                    pass
+            # Enrich with typed memory (4-type taxonomy)
+            if self._typed_memory is not None:
+                try:
+                    for entry in self._typed_memory.list_all()[:20]:
+                        if _memory_entries is None:
+                            _memory_entries = {}
+                        _memory_entries[f"[{entry.memory_type.value}] {entry.name}"] = entry.content[:500]
                 except Exception:
                     pass
 

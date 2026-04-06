@@ -66,8 +66,6 @@ class LLMCodeTUI(App):
         self._ide_bridge = None
         self._lsp_manager = None
         self._project_index = None
-        self._coordinator_class = None
-        self._coordinator_tool_class = None
         self._permission_pending = False
         self._pending_images: list = []
         self._plan_mode: bool = False
@@ -96,6 +94,8 @@ class LLMCodeTUI(App):
             url = self._config.provider_base_url
             status = self.query_one(StatusBar)
             status.is_local = "localhost" in url or "127.0.0.1" in url or "0.0.0.0" in url
+        # Periodic task count polling for status bar
+        self.set_interval(3.0, self._poll_bg_tasks)
         # Apply initial mode from CLI --mode flag
         if self._initial_mode:
             self._cmd_mode(self._initial_mode)
@@ -450,13 +450,29 @@ class LLMCodeTUI(App):
         # Skills
         self._reload_skills()
 
-        # Memory
+        # Memory (legacy key-value store)
         try:
             from llm_code.runtime.memory import MemoryStore
             memory_dir = Path.home() / ".llmcode" / "memory"
             self._memory = MemoryStore(memory_dir, self._cwd)
         except Exception:
             self._memory = None
+
+        # Typed memory (4-type taxonomy)
+        self._typed_memory = None
+        try:
+            import hashlib
+            from llm_code.runtime.memory_taxonomy import TypedMemoryStore
+            project_hash = hashlib.sha256(str(self._cwd).encode()).hexdigest()[:8]
+            typed_dir = Path.home() / ".llmcode" / "memory" / project_hash / "typed"
+            self._typed_memory = TypedMemoryStore(typed_dir)
+            # Auto-migrate legacy memory if typed store is empty
+            if self._memory and not self._typed_memory.list_all():
+                legacy_file = Path.home() / ".llmcode" / "memory" / project_hash / "memory.json"
+                if legacy_file.exists():
+                    self._typed_memory.migrate_from_legacy(legacy_file)
+        except Exception:
+            pass
 
         # Register memory tools
         try:
@@ -514,8 +530,16 @@ class LLMCodeTUI(App):
                         self._tool_reg.register(tool)
                     except ValueError:
                         pass
-                self._coordinator_class = Coordinator
-                self._coordinator_tool_class = CoordinatorTool
+                # Create and register coordinator tool
+                coordinator = Coordinator(
+                    manager=swarm_mgr,
+                    provider=self._runtime._provider if self._runtime else None,
+                    config=self._config,
+                )
+                try:
+                    self._tool_reg.register(CoordinatorTool(coordinator))
+                except ValueError:
+                    pass
         except Exception:
             self._swarm_manager = None
 
@@ -660,6 +684,7 @@ class LLMCodeTUI(App):
             telemetry=telemetry,
             skills=self._skills,
             memory_store=self._memory,
+            typed_memory_store=self._typed_memory,
             task_manager=self._task_manager,
             project_index=self._project_index,
             lsp_manager=self._lsp_manager,
@@ -1192,6 +1217,15 @@ class LLMCodeTUI(App):
     def action_quit_app(self) -> None:
         """Textual action bound to Ctrl+D."""
         self.run_worker(self._graceful_exit(), name="graceful_exit")
+
+    def _poll_bg_tasks(self) -> None:
+        """Periodic update of background task count in status bar."""
+        if self._task_manager is not None:
+            try:
+                count = self._task_manager.running_task_count()
+                self.query_one(StatusBar).bg_tasks = count
+            except Exception:
+                pass
 
     def action_scroll_chat_up(self) -> None:
         """Scroll chat view up by one page."""

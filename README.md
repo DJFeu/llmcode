@@ -17,7 +17,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-3578%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-3646%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
   <img src="https://img.shields.io/pypi/v/llmcode-cli" alt="PyPI">
 </p>
