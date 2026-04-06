@@ -2528,15 +2528,10 @@ class LLMCodeTUI(App):
                 else:
                     self._cmd_skill(f"install {item.repo}")
             else:
-                if item.source == "official":
-                    chat.add_entry(AssistantText(
-                        f"{item.name} is included in superpowers. "
-                        f"Install with: /skill install obra/superpowers"
-                    ))
-                else:
-                    chat.add_entry(AssistantText(
-                        f"No repo URL available for {item.name}. Install manually."
-                    ))
+                chat.add_entry(AssistantText(
+                    f"{item.name} is included in superpowers. "
+                    f"Install with: /skill install obra/superpowers"
+                ))
         elif action == "enable":
             if item.source in ("official", "community", "installed"):
                 self._cmd_plugin(f"enable {item.name}")
