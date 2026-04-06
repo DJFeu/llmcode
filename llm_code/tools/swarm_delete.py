@@ -51,7 +51,7 @@ class SwarmDeleteTool(Tool):
 
     @property
     def required_permission(self) -> PermissionLevel:
-        return PermissionLevel.FULL_ACCESS
+        return PermissionLevel.WORKSPACE_WRITE
 
     @property
     def input_model(self) -> type[SwarmDeleteInput]:
