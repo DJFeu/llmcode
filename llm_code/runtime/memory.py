@@ -14,6 +14,8 @@ class MemoryEntry:
     value: str
     created_at: str
     updated_at: str
+    tags: tuple[str, ...] = ()
+    relates_to: tuple[str, ...] = ()  # keys of related entries (Zettelkasten links)
 
 
 class MemoryStore:
@@ -27,15 +29,33 @@ class MemoryStore:
         self._sessions_dir = self._dir / "sessions"
         self._sessions_dir.mkdir(exist_ok=True)
 
-    def store(self, key: str, value: str) -> None:
-        """Store or update a key-value pair."""
+    def store(
+        self,
+        key: str,
+        value: str,
+        tags: tuple[str, ...] = (),
+        relates_to: tuple[str, ...] = (),
+    ) -> None:
+        """Store or update a key-value pair with optional tags and links."""
         data = self._load()
         now = datetime.now(timezone.utc).isoformat()
         if key in data:
             data[key]["value"] = value
             data[key]["updated_at"] = now
+            if tags:
+                data[key]["tags"] = list(tags)
+            if relates_to:
+                existing = set(data[key].get("relates_to", []))
+                existing.update(relates_to)
+                data[key]["relates_to"] = sorted(existing)
         else:
-            data[key] = {"value": value, "created_at": now, "updated_at": now}
+            data[key] = {
+                "value": value,
+                "created_at": now,
+                "updated_at": now,
+                "tags": list(tags),
+                "relates_to": list(relates_to),
+            }
         self._save(data)
 
     def recall(self, key: str) -> str | None:
@@ -71,11 +91,35 @@ class MemoryStore:
             k: MemoryEntry(
                 key=k,
                 value=v["value"],
-                created_at=v["created_at"],
-                updated_at=v["updated_at"],
+                created_at=v.get("created_at", ""),
+                updated_at=v.get("updated_at", ""),
+                tags=tuple(v.get("tags", ())),
+                relates_to=tuple(v.get("relates_to", ())),
             )
             for k, v in data.items()
         }
+
+    def find_related(self, key: str) -> list[MemoryEntry]:
+        """Return entries linked to the given key (bidirectional)."""
+        all_entries = self.get_all()
+        entry = all_entries.get(key)
+        if entry is None:
+            return []
+
+        related_keys: set[str] = set(entry.relates_to)
+        # Bidirectional: also find entries that link TO this key
+        for k, e in all_entries.items():
+            if key in e.relates_to:
+                related_keys.add(k)
+
+        return [all_entries[k] for k in sorted(related_keys) if k in all_entries]
+
+    def find_by_tag(self, tag: str) -> list[MemoryEntry]:
+        """Return all entries matching a tag."""
+        return [
+            e for e in self.get_all().values()
+            if tag in e.tags
+        ]
 
     def save_session_summary(self, summary: str) -> None:
         """Persist a session summary as a timestamped Markdown file."""

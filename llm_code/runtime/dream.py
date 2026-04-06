@@ -36,6 +36,19 @@ Reusable patterns, idioms, or techniques worth remembering for future sessions.
 ## Open Items
 Any unfinished work, known issues, or next steps mentioned.
 
+## Episodes
+Extract 3-5 key episodes (significant events) as a JSON array. Each episode:
+{"title": "short title", "type": "bug_fix|feature|decision|refactor|debug", \
+"tags": ["tag1", "tag2"], "relates_to": ["related_concept1"]}
+
+Example:
+```json
+[
+  {"title": "Fix DuckDuckGo search backend", "type": "bug_fix", "tags": ["search", "ddg"], "relates_to": ["web_search"]},
+  {"title": "Add proactive context compaction", "type": "feature", "tags": ["context", "compaction"], "relates_to": ["memory", "token_management"]}
+]
+```
+
 Be concise. Focus on facts. Do not invent information not present in the transcript.
 """
 
@@ -113,6 +126,9 @@ class DreamTask:
         with lock:
             memory_store.save_consolidated(summary, date_str=today)
 
+        # Extract episodes from summary and store as structured memory
+        self._extract_episodes(summary, memory_store)
+
         # Update last-run timestamp
         memory_store.store(
             "_dream_last_run",
@@ -125,3 +141,40 @@ class DreamTask:
             today,
         )
         return summary
+
+    @staticmethod
+    def _extract_episodes(
+        summary: str, memory_store: "MemoryStore",
+    ) -> None:
+        """Extract episode JSON from summary and store as linked memory entries."""
+        import json as _json
+        import re
+
+        # Find JSON array in ```json ... ``` block or bare [ ... ]
+        match = re.search(r"```json\s*\n(\[.*?\])\s*\n```", summary, re.DOTALL)
+        if not match:
+            match = re.search(r"(\[\s*\{.*?\}\s*\])", summary, re.DOTALL)
+        if not match:
+            return
+
+        try:
+            episodes = _json.loads(match.group(1))
+        except _json.JSONDecodeError:
+            return
+
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        for ep in episodes:
+            if not isinstance(ep, dict) or "title" not in ep:
+                continue
+            key = f"episode:{today}:{ep['title'][:50]}"
+            tags = tuple(ep.get("tags", ()))
+            relates_to = tuple(ep.get("relates_to", ()))
+            ep_type = ep.get("type", "")
+            if ep_type:
+                tags = tags + (ep_type,)
+            memory_store.store(
+                key=key,
+                value=ep["title"],
+                tags=tags,
+                relates_to=relates_to,
+            )
