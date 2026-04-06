@@ -85,7 +85,7 @@ _TOOL_EXECUTOR = ThreadPoolExecutor(max_workers=4)
 logger = get_logger(__name__)
 
 # Maximum number of characters to inline in tool results
-_MAX_INLINE_RESULT = 4000
+_MAX_INLINE_RESULT = 2000
 
 
 @dataclasses.dataclass(frozen=True)
@@ -523,6 +523,18 @@ class ConversationRuntime:
                     input_tokens=accumulated_usage.input_tokens + stop_event.usage.input_tokens,
                     output_tokens=accumulated_usage.output_tokens + stop_event.usage.output_tokens,
                 )
+
+                # Use ACTUAL API token count for compaction (not estimated)
+                actual_input = stop_event.usage.input_tokens
+                if actual_input > _context_limit:
+                    logger.info(
+                        "API-reported compaction: %d actual tokens > %d limit",
+                        actual_input, _context_limit,
+                    )
+                    _compressor = ContextCompressor(max_result_chars=1000)
+                    self.session = _compressor.compress(
+                        self.session, int(_context_limit * 0.5),
+                    )
 
             # Layer 2: Token limit auto-upgrade
             # If the model stopped due to hitting max_tokens, double the limit and retry
