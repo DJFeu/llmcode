@@ -1886,6 +1886,7 @@ class LLMCodeTUI(App):
         chat.add_entry(AssistantText("\n".join(lines)))
 
     def _cmd_search(self, args: str) -> None:
+        """Cross-session full-text search via SQLite FTS5 + current session fallback."""
         chat = self.query_one(ChatScrollView)
         if not args:
             chat.add_entry(AssistantText("Usage: /search <query>"))
@@ -1897,10 +1898,15 @@ class LLMCodeTUI(App):
         try:
             from llm_code.runtime.conversation_db import ConversationDB
             db = ConversationDB()
-            db_results = db.search(args, limit=15)
+            # Escape FTS5 special chars to prevent syntax errors
+            safe_query = self._escape_fts5(args)
+            db_results = db.search(safe_query, limit=20)
             for r in db_results:
                 session_label = r.conversation_name or r.conversation_id[:8]
-                lines.append(f"  [{r.role}] ({session_label}) {r.content_snippet}")
+                date_str = r.created_at[:10] if r.created_at else ""
+                snippet = r.content_snippet.replace(">>>", "**").replace("<<<", "**")
+                role_icon = ">" if r.role == "user" else "<"
+                lines.append(f"  {role_icon} [{date_str}] ({session_label}) {snippet}")
             db.close()
         except Exception:
             pass
@@ -1908,15 +1914,31 @@ class LLMCodeTUI(App):
         # 2. Fallback: search current session in-memory
         if not lines and self._runtime:
             for msg in self._runtime.session.messages:
-                if args.lower() in str(msg.content).lower():
-                    lines.append(f"  [{msg.role}] {str(msg.content)[:100]}")
+                text = " ".join(
+                    getattr(b, "text", "") for b in msg.content
+                    if hasattr(b, "text")
+                )
+                if args.lower() in text.lower():
+                    role_icon = ">" if msg.role == "user" else "<"
+                    lines.append(f"  {role_icon} [current] {text[:120]}")
 
         if lines:
-            chat.add_entry(AssistantText(
-                f"Found {len(lines)} match(es) for \"{args}\":\n" + "\n".join(lines[:20])
-            ))
+            header = f"Found {len(lines)} match(es) for \"{args}\""
+            if len(lines) > 20:
+                header += " (showing first 20)"
+            chat.add_entry(AssistantText(header + ":\n" + "\n".join(lines[:20])))
         else:
             chat.add_entry(AssistantText(f"No matches for: {args}"))
+
+    @staticmethod
+    def _escape_fts5(query: str) -> str:
+        """Escape special FTS5 characters to prevent query syntax errors."""
+        # FTS5 special: AND OR NOT ( ) * " ^
+        # Wrap each token in double quotes for exact matching
+        tokens = query.split()
+        if not tokens:
+            return query
+        return " ".join(f'"{t}"' for t in tokens)
 
     def _cmd_config(self, args: str) -> None:
         chat = self.query_one(ChatScrollView)

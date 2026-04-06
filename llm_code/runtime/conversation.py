@@ -166,6 +166,20 @@ class ConversationRuntime:
         self._task_manager = task_manager
         self._project_index = project_index
         self._lsp_manager = lsp_manager
+        # Conversation DB for cross-session FTS5 search
+        self._conv_db = None
+        try:
+            from llm_code.runtime.conversation_db import ConversationDB
+            self._conv_db = ConversationDB()
+            _cwd_str = str(context.cwd) if context and hasattr(context, "cwd") else ""
+            self._conv_db.ensure_conversation(
+                conv_id=session.id,
+                name=session.id[:8],
+                model=getattr(config, "model", ""),
+                project_path=_cwd_str,
+            )
+        except Exception:
+            pass
         # Harness Engine — unified quality controls
         from llm_code.harness.engine import HarnessEngine
         from llm_code.harness.config import HarnessConfig
@@ -225,6 +239,23 @@ class ConversationRuntime:
     def analysis_context(self, value: str | None) -> None:
         self._harness.analysis_context = value
 
+    def _db_log(self, role: str, content: str, input_tokens: int = 0, output_tokens: int = 0) -> None:
+        """Log a message to ConversationDB for cross-session FTS5 search."""
+        if self._conv_db is None:
+            return
+        try:
+            from datetime import datetime, timezone
+            self._conv_db.log_message(
+                conversation_id=self.session.id,
+                role=role,
+                content=content[:10_000],  # cap at 10K chars
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+        except Exception:
+            pass
+
     def _fire_hook(self, event: str, context: dict | None = None) -> None:
         """Fire a hook event if the hook runner supports the generic fire() method."""
         if hasattr(self._hooks, "fire"):
@@ -256,6 +287,7 @@ class ConversationRuntime:
             content_blocks.extend(images)
         user_msg = Message(role="user", content=tuple(content_blocks))
         self.session = self.session.add_message(user_msg)
+        self._db_log("user", user_input)
 
         accumulated_usage = TokenUsage(input_tokens=0, output_tokens=0)
         self._has_attempted_reactive_compact = False
@@ -631,6 +663,11 @@ class ConversationRuntime:
                     content=tuple(assistant_blocks),
                 )
                 self.session = self.session.add_message(assistant_msg)
+                # Log assistant text to DB for cross-session search
+                _assistant_text = "".join(t for t in text_parts if t)
+                if _assistant_text:
+                    _out_tok = stop_event.usage.output_tokens if stop_event else 0
+                    self._db_log("assistant", _assistant_text, output_tokens=_out_tok)
 
             # 8. Diminishing returns detection
             _dr_cfg = getattr(self._config, "diminishing_returns", None)

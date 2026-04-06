@@ -5,7 +5,7 @@
 ### Changed
 
 - Default CLI is now Ink UI (React/Node.js); use `--lite` for print-based fallback
-- Updated `pyproject.toml` GitHub URLs from placeholder to `adamhong/llm-code`
+- Updated `pyproject.toml` GitHub URLs from placeholder to `adamhung/llm-code`
 - README updated: Ink UI default, `--lite`/`--serve`/`--connect`/`--ssh` flags documented, ClawHub marketplace, cost tracking, model aliasing
 
 ### Fixed

@@ -7,7 +7,7 @@ name = "llmcode-cli"
 version = "1.1.0"
 description = "Open-source AI agent runtime for any LLM — production-grade coding agent with multi-layer memory, multi-agent orchestration, and defense-in-depth security"
 license = {text = "MIT"}
-authors = [{name = "Adam Hong"}]
+authors = [{name = "Adam Hung"}]
 readme = "README.md"
 requires-python = ">=3.11"
 classifiers = [
