@@ -17,7 +17,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-2861%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-3226%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
 </p>
 
@@ -50,7 +50,7 @@ Run the same agent experience with a free local model on your own GPU, or with a
 - **7-layer error recovery** that self-heals instead of crashing
 - **5-layer memory system** with governance, working, project, task, and summary memory
 - **Multi-agent orchestration** with coordinator pattern and inter-agent messaging
-- **Defense-in-depth security** with 21-point bash checks and sensitive file protection
+- **Defense-in-depth security** with 21-point bash checks, MCP sanitization, secret scanning, env filtering
 
 ## Quick Start
 
@@ -95,6 +95,10 @@ llmcode
 ```bash
 llmcode                       # Default: Fullscreen TUI (Python Textual)
 llmcode --provider ollama     # Auto-detect Ollama + interactive model selector
+llmcode --mode suggest        # Confirm each tool call before execution
+llmcode --mode plan           # Read-only mode, show plan without executing
+llmcode -x "find large files" # Shell assistant: translate to command + execute
+llmcode -q "explain this"     # Quick Q&A without TUI (supports stdin pipe)
 llmcode --serve --port 8765   # Remote WebSocket server
 llmcode --connect host:8765   # Connect to remote agent
 llmcode --ssh user@host       # SSH tunnel + auto-connect
@@ -109,6 +113,7 @@ pip install llmcode-cli[voice]          # Voice input via STT
 pip install llmcode-cli[computer-use]   # GUI automation
 pip install llmcode-cli[ide]            # IDE integration
 pip install llmcode-cli[telemetry]      # OpenTelemetry tracing
+pip install llmcode-cli[treesitter]     # Tree-sitter multi-language repo map
 ```
 
 ---
@@ -146,7 +151,9 @@ The core loop follows a 5-stage **ReAct** (Reason + Act) pattern:
 
 - **7-layer error recovery** — API retry with exponential backoff, 529 overload handling (30/60/120s), native-to-XML tool fallback, reactive context compression, token limit auto-upgrade, context drain, model fallback after 3 consecutive failures
 - **Speculative execution** — writes pre-execute in a tmpdir overlay before user confirms; confirm copies back, deny discards
-- **4-level context compression** — snip (truncate tool results), microcompact (deduplicate reads), autocompact (AI summary), reactive (emergency on 413)
+- **5-level context compression** — snip (truncate tool results), microcompact (deduplicate reads), context collapse (summarize old tool calls), autocompact (AI summary), reactive (emergency on 413)
+- **Proactive compaction** — auto-detects model context window via `/v1/models` API, compresses before hitting limit (not after)
+- **API-reported compaction** — uses actual token count from API response (not estimated) for accurate triggers
 - **Cache-aware compression** — preferentially removes non-API-cached messages to preserve cache hits
 - **3-tier prompt cache** — global/project/session scope boundaries for optimal API cache utilization
 - **HIDA dynamic loading** — classifies input into 10 task types, loads only relevant tools/memory/governance rules
@@ -192,11 +199,17 @@ When tool count exceeds 20, non-core tools are deferred and discoverable via `to
 
 Injection detection, newline attack prevention, pipe chain limits, interpreter REPL blacklist, environment variable leak protection, network access control, file permission change detection, system package operation alerts, redirect overwrite detection, credential path protection, background execution detection, recursive operation warnings, multi-command chain limits, and Zsh dangerous builtin blocking.
 
+**MCP instruction sanitization:** Strips prompt injection patterns (override_safety, role_hijack, secret_exfil, tool_override) from MCP server instructions before system prompt injection. 4096 char limit.
+
+**Bash output secret scanning:** Automatically redacts AWS keys, GitHub PATs, JWTs, private keys, Slack tokens, and generic API keys from tool output before they enter LLM context. Zero user friction.
+
+**Environment variable filtering:** Subprocess inherits safe env only. Sensitive vars (`*_KEY`, `*SECRET*`, `*TOKEN*`, `*PASSWORD*`) replaced with `[FILTERED]`. Allowlist preserves PATH, HOME, SSH_AUTH_SOCK, etc.
+
 **File protection:** Sensitive files (`.env`, SSH keys, `credentials.*`, `*.pem`) are blocked on write and warned on read.
 
 **Sandbox detection:** Auto-detects Docker/container environments and restricts paths.
 
-**Permission system:** 5 modes (read_only → auto_accept) with allow/deny lists, shadowed rule detection, and input-aware classification (`ls` auto-approved, `rm -rf` needs confirmation).
+**Permission system:** 6 modes (read_only / workspace_write / full_access / prompt / plan / auto_accept) with allow/deny lists, shadowed rule detection, and input-aware classification (`ls` auto-approved, `rm -rf` needs confirmation). Switch at runtime with `/mode suggest|normal|plan`.
 
 ### Memory System
 
@@ -233,9 +246,10 @@ PLAN --> DO --> VERIFY --> CLOSE --> DONE
 
 - **Fullscreen TUI** (default) — Python Textual, no Node.js required, Claude Code-style UI
   - Welcome banner, markdown rendering, syntax-highlighted code blocks
-  - Slash command autocomplete dropdown with `Tab`/arrow navigation
-  - Inline `[image]` markers with `Cmd+V` paste support
-  - Interactive marketplace browser for skills, plugins, and MCP servers
+  - Scrollable slash command dropdown with fuzzy match on typos ("did you mean /search?")
+  - Inline `[image]` markers with `Cmd+V` paste support (text and images)
+  - Interactive marketplace browser for skills, plugins, and MCP servers (aligned with Claude Code official architecture)
+  - Hot-reload for skills, plugins, MCP — no restart needed after install
   - Tabbed `/help` modal (general / commands / custom-commands)
   - ToolBlock diff view with colored +/- lines and line numbers
   - Spinner with orange→red color transition on long operations
@@ -301,7 +315,7 @@ Compatible with Claude Code's plugin ecosystem — skills, plugins, and MCP serv
    security-check          [npm]
 ```
 
-Sources: **ClawHub.ai**, **npm**, **local plugins**
+Sources: **Official** (anthropics/claude-plugins-official), **Community**, **npm**, **local**
 
 ### Plugins — `/plugin`
 
@@ -309,7 +323,7 @@ Sources: **ClawHub.ai**, **npm**, **local plugins**
 /plugin install obra/superpowers
 ```
 
-Sources: **Official** (Claude Code), **ClawHub**, **npm**, **GitHub**
+Sources: **Official** (anthropics/claude-plugins-official), **Community**, **npm**, **GitHub**
 
 ### MCP Servers — `/mcp`
 
@@ -402,7 +416,10 @@ Supports **stdio**, **HTTP**, **SSE**, and **WebSocket** transports with health 
 | `/index` | Codebase indexing |
 | `/hida` | HIDA classification info |
 | `/cd <path>` | Change working directory |
-| `/undo` | Undo last file change |
+| `/mode <suggest\|normal\|plan>` | Switch interaction mode |
+| `/diff` | Show changes since last checkpoint |
+| `/undo [N]` | Undo last N file changes |
+| `/model route` | Show model routing table |
 | `/cancel` | Cancel running operation |
 | `/cost` | Token usage + cost |
 | `/budget <n>` | Set token budget |
@@ -414,17 +431,19 @@ Supports **stdio**, **HTTP**, **SSE**, and **WebSocket** transports with health 
 ## Architecture
 
 ```
-llm_code/               21,000 lines Python
+llm_code/               28,500+ lines Python
 ├── api/                Provider abstraction (OpenAI-compat + Anthropic)
-├── cli/                CLI entry point + Textual TUI launcher
+├── cli/                CLI entry point, TUI launcher, oneshot modes (-x/-q)
 ├── runtime/            ReAct engine, memory layers, compression, hooks,
 │                       permissions, checkpoint, dream, VCR, speculative
-│                       execution, telemetry, file protection, sandbox
+│                       execution, telemetry, file protection, sandbox,
+│                       prompt guard, secret scanner, conversation DB,
+│                       tree-sitter repo map, proactive compaction
 ├── tools/              30+ tools with deferred loading + security
 ├── task/               PLAN/DO/VERIFY/CLOSE state machine
 ├── hida/               Dynamic context loading (10-type classifier)
 ├── mcp/                MCP client (4 transports) + OAuth + health checks
-├── marketplace/        Plugin system + ClawHub integration
+├── marketplace/        Plugin system + security scanning
 ├── lsp/                Language Server Protocol client
 ├── remote/             WebSocket server/client + SSH proxy
 ├── vim/                Vim engine (motions, operators, text objects)
@@ -434,7 +453,7 @@ llm_code/               21,000 lines Python
 ├── ide/                IDE bridge (WebSocket JSON-RPC server)
 ├── swarm/              Multi-agent (coordinator, tmux/subprocess, mailbox)
 ├── utils/              Notebook, diff, hyperlinks, search, text normalize
-tests/                  2,861 tests across 170+ test files
+tests/                  3,226 tests across 248 test files
 ```
 
 ---
@@ -446,7 +465,7 @@ git clone https://github.com/DJFeu/llmcode
 cd llmcode
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest                  # 2,861 tests
+pytest                  # 3,226 tests
 ruff check llm_code/    # lint
 ```
 
