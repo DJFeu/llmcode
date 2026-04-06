@@ -251,13 +251,13 @@ class InputBar(Widget):
                     # Fill and wait for argument
                     self.value = selected_cmd + " "
                     self._cursor = len(self.value)
-                self.refresh()
+                self.refresh(layout=True)
                 return
             elif event.key == "escape":
                 self._show_dropdown = False
                 self._dropdown_items = []
                 self._dropdown_cursor = 0
-                self.refresh()
+                self.refresh(layout=True)
                 return
 
         # Tab autocomplete (before vim routing) — fallback when dropdown not shown
