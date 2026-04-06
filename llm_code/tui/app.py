@@ -1082,6 +1082,7 @@ class LLMCodeTUI(App):
             ("/thinking", "Toggle extended thinking"),
             ("/vim", "Toggle vim mode"),
             ("/plan", "Toggle plan/act mode (read-only when ON)"),
+            ("/harness", "Show/configure harness quality controls"),
             ("/dump", "Dump codebase to .llm-code/dump.txt for external LLM use"),
             ("/analyze", "Run code analysis rules on the codebase"),
             ("/diff_check", "Show new/fixed violations vs last analysis"),
@@ -1395,6 +1396,55 @@ class LLMCodeTUI(App):
             ))
         if self._runtime:
             self._runtime.plan_mode = self._plan_mode
+
+    def _cmd_harness(self, args: str) -> None:
+        """Show or configure harness controls."""
+        chat = self.query_one(ChatScrollView)
+
+        if not self._runtime or not hasattr(self._runtime, "_harness"):
+            chat.add_entry(AssistantText("Harness not available."))
+            return
+
+        harness = self._runtime._harness
+        parts = args.strip().split()
+
+        if not parts:
+            # Show status
+            status = harness.status()
+            lines = [f"Harness: {status['template']}\n"]
+            lines.append("  Guides (feedforward):")
+            for g in status["guides"]:
+                mark = "✓" if g["enabled"] else "✗"
+                lines.append(f"    {mark} {g['name']:<22} {g['trigger']:<12} {g['kind']}")
+            lines.append("\n  Sensors (feedback):")
+            for s in status["sensors"]:
+                mark = "✓" if s["enabled"] else "✗"
+                lines.append(f"    {mark} {s['name']:<22} {s['trigger']:<12} {s['kind']}")
+            chat.add_entry(AssistantText("\n".join(lines)))
+            return
+
+        action = parts[0]
+        if action == "enable" and len(parts) > 1:
+            harness.enable(parts[1])
+            chat.add_entry(AssistantText(f"Enabled: {parts[1]}"))
+        elif action == "disable" and len(parts) > 1:
+            harness.disable(parts[1])
+            chat.add_entry(AssistantText(f"Disabled: {parts[1]}"))
+        elif action == "template" and len(parts) > 1:
+            from llm_code.harness.templates import default_controls
+            from llm_code.harness.config import HarnessConfig
+            new_controls = default_controls(parts[1])
+            harness._config = HarnessConfig(template=parts[1], controls=new_controls)
+            harness._overrides.clear()
+            chat.add_entry(AssistantText(f"Switched to template: {parts[1]}"))
+        else:
+            chat.add_entry(AssistantText(
+                "Usage: /harness [enable|disable|template] [name]\n"
+                "  /harness              — show status\n"
+                "  /harness enable X     — enable control X\n"
+                "  /harness disable X    — disable control X\n"
+                "  /harness template Y   — switch to template Y"
+            ))
 
     def _cmd_dump(self, args: str) -> None:
         """Dump codebase for external LLM use (DAFC pattern)."""
