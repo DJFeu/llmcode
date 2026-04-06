@@ -1,5 +1,4 @@
 """vLLM-specific compatibility tests."""
-import pytest
 import httpx
 
 

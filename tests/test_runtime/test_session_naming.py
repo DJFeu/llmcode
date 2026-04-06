@@ -1,7 +1,7 @@
 """Tests for Session name and tags fields (Task 5: Session Naming)."""
 import pytest
 from pathlib import Path
-from llm_code.runtime.session import Session
+from llm_code.runtime.session import Session, SessionManager
 
 
 class TestSessionNaming:
@@ -51,8 +51,6 @@ class TestSessionNaming:
         assert s2.name == ""
         assert s2.tags == ()
 
-
-from llm_code.runtime.session import SessionManager
 
 
 class TestSessionManagerExtensions:

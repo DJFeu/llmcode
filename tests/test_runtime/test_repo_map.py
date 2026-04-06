@@ -3,9 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
-from llm_code.runtime.repo_map import build_repo_map, RepoMap, FileSymbols, ClassSymbol
+from llm_code.runtime.repo_map import build_repo_map, RepoMap
 
 
 class TestBuildRepoMapPython:

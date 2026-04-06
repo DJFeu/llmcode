@@ -1,7 +1,6 @@
 """Tests for model parameter in SwarmCreateTool / SwarmCreateInput."""
 from __future__ import annotations
 
-import pytest
 
 from llm_code.tools.swarm_create import SwarmCreateInput, SwarmCreateTool
 

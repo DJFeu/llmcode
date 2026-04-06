@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
 from llm_code.tools.dump import dump_codebase, DumpResult
 

@@ -1,7 +1,6 @@
 """Tests for user-defined bash rules in classify_command()."""
 from __future__ import annotations
 
-import pytest
 from llm_code.tools.bash import classify_command
 from llm_code.runtime.config import BashRule
 

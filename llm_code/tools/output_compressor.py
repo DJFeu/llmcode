@@ -160,8 +160,8 @@ def _compress_git_status(output: str) -> str:
         return output
 
     # Remove hint lines
-    lines = [l for l in lines if not _GIT_HINT_RE.match(l)]
-    lines = [l for l in lines if l.strip()]
+    lines = [line for line in lines if not _GIT_HINT_RE.match(line)]
+    lines = [line for line in lines if line.strip()]
 
     if not lines:
         return "nothing to commit, working tree clean"
@@ -870,13 +870,13 @@ def _apply_toml_filter(output: str, filt: dict) -> str:
     strip_patterns = filt.get("strip_lines_matching", [])
     if strip_patterns:
         compiled = [re.compile(p) for p in strip_patterns]
-        lines = [l for l in lines if not any(p.search(l) for p in compiled)]
+        lines = [line for line in lines if not any(p.search(line) for p in compiled)]
 
     # Stage 2: keep_lines_matching (mutually exclusive with strip)
     keep_patterns = filt.get("keep_lines_matching", [])
     if keep_patterns and not strip_patterns:
         compiled = [re.compile(p) for p in keep_patterns]
-        lines = [l for l in lines if any(p.search(l) for p in compiled)]
+        lines = [line for line in lines if any(p.search(line) for p in compiled)]
 
     # Stage 3: max_lines
     max_lines = filt.get("max_lines")
@@ -927,7 +927,7 @@ def _compress_docker(output: str) -> str:
         if len(lines) <= 6:
             return output
         header = lines[0]
-        rows = [l for l in lines[1:] if l.strip()]
+        rows = [line for line in lines[1:] if line.strip()]
         result = [header]
         max_rows = 20
         for r in rows[:max_rows]:
@@ -952,7 +952,7 @@ def _compress_kubectl(output: str) -> str:
         if len(lines) <= 6:
             return output
         header = lines[0]
-        rows = [l for l in lines[1:] if l.strip()]
+        rows = [line for line in lines[1:] if line.strip()]
         result = [header]
         max_rows = 25
         for r in rows[:max_rows]:
@@ -963,15 +963,15 @@ def _compress_kubectl(output: str) -> str:
         return "\n".join(result)
 
     # kubectl describe: keep key sections, strip Events if large
-    if any("Name:" in l for l in lines[:5]):
+    if any("Name:" in line for line in lines[:5]):
         event_start = -1
-        for i, l in enumerate(lines):
-            if l.strip().startswith("Events:"):
+        for i, line in enumerate(lines):
+            if line.strip().startswith("Events:"):
                 event_start = i
                 break
         if event_start >= 0 and len(lines) - event_start > 10:
             pre = lines[:event_start + 1]
-            events = [l for l in lines[event_start + 1:] if l.strip()]
+            events = [line for line in lines[event_start + 1:] if line.strip()]
             pre.append(f"  ({len(events)} events, showing last 5)")
             pre.extend(events[-5:])
             return "\n".join(pre)

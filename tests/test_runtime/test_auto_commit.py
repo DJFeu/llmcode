@@ -2,9 +2,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
-import pytest
 
 from llm_code.runtime.auto_commit import auto_commit_file
 

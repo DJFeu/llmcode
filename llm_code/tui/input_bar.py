@@ -12,7 +12,7 @@ from textual.app import RenderResult
 from rich.text import Text
 
 from llm_code.cli.commands import COMMAND_REGISTRY
-from llm_code.tui.keybindings import KeybindingManager, load_keybindings
+from llm_code.tui.keybindings import load_keybindings
 
 # Derived from the single-source registry in commands.py
 SLASH_COMMANDS = sorted(f"/{c.name}" for c in COMMAND_REGISTRY)

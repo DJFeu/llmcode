@@ -66,7 +66,7 @@ class TestDuckDuckGoBackend:
         mock_response.text = html
 
         with patch("httpx.get", return_value=mock_response):
-            results = backend = DuckDuckGoBackend()
+            _results = backend = DuckDuckGoBackend()
             # Just confirm backend can be called
             assert backend.name == "duckduckgo"
 

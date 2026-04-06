@@ -138,7 +138,7 @@ def test_undo_multi_step(git_repo):
 
     # Create 3 checkpoints; create() does git add -A + commit internally
     (git_repo / "a.txt").write_text("a")
-    cp_a = manager.create("tool_a", {"step": 1})
+    _cp_a = manager.create("tool_a", {"step": 1})
 
     (git_repo / "b.txt").write_text("b")
     cp_b = manager.create("tool_b", {"step": 2})

@@ -1,7 +1,7 @@
 """WebFetch tool — fetch and extract content from URLs."""
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 import httpx
 from pydantic import BaseModel, field_validator
@@ -166,7 +166,6 @@ class WebFetchTool(Tool):
         """Execute the web fetch tool."""
         # Validate and parse input
         try:
-            from pydantic import ValidationError
             parsed = WebFetchInput(**args)
         except (KeyError, TypeError, Exception) as exc:
             return ToolResult(

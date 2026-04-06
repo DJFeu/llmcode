@@ -1,7 +1,6 @@
 """Tests for RBAC engine."""
 from __future__ import annotations
 
-import pytest
 
 from llm_code.enterprise.auth import AuthIdentity
 from llm_code.enterprise.rbac import DEFAULT_ROLES, RBACEngine, Role

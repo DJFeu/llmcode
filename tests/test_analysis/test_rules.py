@@ -1,7 +1,6 @@
 """Tests for llm_code.analysis.rules — core types + registry."""
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 

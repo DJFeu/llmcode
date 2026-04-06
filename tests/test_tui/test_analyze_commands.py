@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from llm_code.tui.app import LLMCodeTUI
-from llm_code.tui.input_bar import InputBar
 from llm_code.tui.chat_view import ChatScrollView
 
 

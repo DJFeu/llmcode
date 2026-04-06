@@ -1,6 +1,5 @@
 """Tests for SQLite conversation database."""
 import pytest
-from pathlib import Path
 from llm_code.runtime.conversation_db import ConversationDB, SearchResult, UsageSummary
 
 

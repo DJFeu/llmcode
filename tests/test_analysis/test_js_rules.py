@@ -1,7 +1,6 @@
 """Tests for llm_code.analysis.js_rules — JS/TS regex-based rules."""
 from __future__ import annotations
 
-import pytest
 
 from llm_code.analysis.js_rules import (
     check_empty_catch,

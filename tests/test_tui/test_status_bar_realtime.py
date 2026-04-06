@@ -1,7 +1,6 @@
 """Tests for real-time token/cost display in StatusBar."""
 from __future__ import annotations
 
-import pytest
 
 from llm_code.tui.status_bar import StatusBar
 

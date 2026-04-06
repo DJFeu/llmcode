@@ -1,7 +1,6 @@
 """Tests for enterprise config integration."""
 from __future__ import annotations
 
-import pytest
 
 from llm_code.runtime.config import (
     EnterpriseConfig,

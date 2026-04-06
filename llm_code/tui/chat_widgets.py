@@ -76,8 +76,8 @@ class ToolBlock(Widget):
 
     def _count_diff_changes(self) -> tuple[int, int]:
         """Count added and removed lines in diff."""
-        added = sum(1 for l in self._data.diff_lines if l.startswith("+"))
-        removed = sum(1 for l in self._data.diff_lines if l.startswith("-"))
+        added = sum(1 for line in self._data.diff_lines if line.startswith("+"))
+        removed = sum(1 for line in self._data.diff_lines if line.startswith("-"))
         return added, removed
 
     def render_text(self) -> str:

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from llm_code.tools.base import PermissionLevel, ToolResult
 from llm_code.tools.web_fetch import WebFetchTool

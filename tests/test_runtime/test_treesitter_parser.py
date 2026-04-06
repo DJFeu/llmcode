@@ -7,9 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from llm_code.runtime.repo_map import (
-    ClassSymbol,
     FileSymbols,
-    RepoMap,
     build_repo_map,
     compute_map_budget,
 )
@@ -23,8 +21,6 @@ class TestIsAvailable:
 
     def test_returns_false_when_import_fails(self) -> None:
         with patch.dict("sys.modules", {"tree_sitter_language_pack": None}):
-            import importlib
-            import llm_code.runtime.treesitter_parser as mod
 
             # Force re-evaluation by calling directly
             # When module is None in sys.modules, import raises ImportError

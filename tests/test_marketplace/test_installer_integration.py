@@ -9,13 +9,12 @@ Covers the bugs found during the testing session:
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 
 import pytest
 
 from llm_code.marketplace.installer import PluginInstaller
-from llm_code.marketplace.plugin import InstalledPlugin, PluginManifest
+from llm_code.marketplace.plugin import PluginManifest
 
 
 # ---------------------------------------------------------------------------
@@ -514,7 +513,7 @@ class TestSecurityAuditLog:
     def test_clean_scan_writes_passed_entry(
         self, installer: PluginInstaller, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        audit_path = tmp_path / "audit" / "security-audit.jsonl"
+        _audit_path = tmp_path / "audit" / "security-audit.jsonl"
         monkeypatch.setattr(
             "llm_code.marketplace.installer.Path.home",
             lambda: tmp_path / "audit",
@@ -568,9 +567,9 @@ class TestSecurityAuditLog:
         (s2 / "b.py").write_text("pass")
         installer.scan_plugin(s2)
 
-        lines = [l for l in audit_file.read_text().strip().split("\n") if l]
+        lines = [line for line in audit_file.read_text().strip().split("\n") if line]
         assert len(lines) == 2
-        entries = [json.loads(l) for l in lines]
+        entries = [json.loads(line) for line in lines]
         plugins = {e["plugin"] for e in entries}
-        assert f"source-plug-a" in plugins
-        assert f"source-plug-b" in plugins
+        assert "source-plug-a" in plugins
+        assert "source-plug-b" in plugins

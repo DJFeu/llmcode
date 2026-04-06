@@ -1,6 +1,8 @@
 """Tests for app tier classification and enforcement."""
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
 from llm_code.computer_use.app_detect import AppInfo
@@ -91,9 +93,6 @@ class TestAppTierDenied:
     def test_hint(self) -> None:
         err = AppTierDenied(app="Chrome", tier="read", action="type", hint="Use browser MCP")
         assert err.hint == "Use browser MCP"
-
-
-from unittest.mock import patch
 
 
 class TestCoordinatorTierEnforcement:

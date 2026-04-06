@@ -1,9 +1,8 @@
 """Tests for --provider ollama CLI integration."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
-import pytest
 from click.testing import CliRunner
 
 from llm_code.cli.tui_main import main

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from llm_code.analysis.rules import RuleRegistry, Violation
+from llm_code.analysis.rules import RuleRegistry
 from llm_code.analysis.universal_rules import (
     check_hardcoded_secret,
     check_todo_fixme,

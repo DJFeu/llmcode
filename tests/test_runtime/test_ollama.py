@@ -1,7 +1,6 @@
 """Tests for llm_code.runtime.ollama — Ollama API interactions."""
 from __future__ import annotations
 
-import json
 
 import httpx
 import pytest

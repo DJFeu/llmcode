@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from llm_code.analysis.cache import load_results, save_results
 from llm_code.analysis.engine import (

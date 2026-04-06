@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 
 from llm_code.runtime.secret_scanner import (
     load_custom_patterns,
@@ -150,9 +149,8 @@ class TestCustomPatternLoading:
         rules = {"patterns": [{"name": "internal", "regex": r"INT_[A-Z0-9]{16}"}]}
         (tmp_path / "security-rules.json").write_text(json.dumps(rules))
         custom = load_custom_patterns(tmp_path)
-        all_patterns = scan_output.__module__  # just verify integration
+        _all_patterns = scan_output.__module__  # just verify integration
         # Use the patterns parameter to test
-        import re
         from llm_code.runtime.secret_scanner import _BUILTIN_PATTERNS
         combined = _BUILTIN_PATTERNS + custom
         text = "secret=INT_ABCDEF1234567890"

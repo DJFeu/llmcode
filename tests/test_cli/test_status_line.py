@@ -1,4 +1,7 @@
-import pytest
+from unittest.mock import MagicMock
+
+from rich.console import Console
+
 from llm_code.cli.status_line import StatusLineState, format_status_line
 
 
@@ -42,9 +45,6 @@ class TestFormatStatusLine:
         result = format_status_line(state)
         assert "[plan]" in result
 
-
-from unittest.mock import MagicMock
-from rich.console import Console
 
 
 class TestCLIStatusLine:

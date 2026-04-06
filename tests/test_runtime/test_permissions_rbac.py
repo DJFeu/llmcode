@@ -1,7 +1,6 @@
 """Tests for RBAC integration with PermissionPolicy."""
 from __future__ import annotations
 
-import pytest
 
 from llm_code.enterprise.auth import AuthIdentity
 from llm_code.enterprise.rbac import RBACEngine

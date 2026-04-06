@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
 
 from llm_code.tools.bash import _make_safe_env
 

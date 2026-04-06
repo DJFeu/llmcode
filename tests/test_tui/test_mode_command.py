@@ -1,9 +1,8 @@
 """Tests for /mode slash command (suggest/normal/plan)."""
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
 
 from llm_code.runtime.permissions import PermissionMode, PermissionPolicy
 from llm_code.tui.status_bar import StatusBar
@@ -69,7 +68,6 @@ class TestCmdMode:
         app._runtime._permissions = PermissionPolicy(mode=PermissionMode.WORKSPACE_WRITE)
 
         # Bind the real _cmd_mode method
-        from llm_code.tui.app import LLMCodeTUI
         app._cmd_mode = LLMCodeTUI._cmd_mode.__get__(app, type(app))
 
         return app, status, chat

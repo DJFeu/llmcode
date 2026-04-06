@@ -1,7 +1,6 @@
 """Tests for KnowledgeCompiler."""
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -37,7 +36,7 @@ def test_knowledge_entry_frozen():
 def test_compiler_init_creates_dirs(tmp_path: Path):
     from llm_code.runtime.knowledge_compiler import KnowledgeCompiler
 
-    compiler = KnowledgeCompiler(cwd=tmp_path, llm_provider=None)
+    _compiler = KnowledgeCompiler(cwd=tmp_path, llm_provider=None)
     knowledge_dir = tmp_path / ".llmcode" / "knowledge"
     assert knowledge_dir.exists()
     assert (knowledge_dir / "modules").exists()

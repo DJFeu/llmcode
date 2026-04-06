@@ -12,14 +12,14 @@ from typing import TYPE_CHECKING, Callable
 if TYPE_CHECKING:
     from llm_code.runtime.config import BashRule
 
-_log = logging.getLogger(__name__)
-
 from pydantic import BaseModel
 
 from llm_code.runtime.secret_scanner import scan_output
 from llm_code.tools.base import PermissionLevel, Tool, ToolProgress, ToolResult
 from llm_code.tools.output_compressor import compress as compress_output
 from llm_code.utils.errors import friendly_error
+
+_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Input model

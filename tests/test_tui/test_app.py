@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from llm_code.tui.app import LLMCodeTUI
 from llm_code.tui.header_bar import HeaderBar
-from llm_code.tui.chat_view import ChatScrollView, AssistantText
+from llm_code.tui.chat_view import ChatScrollView
 from llm_code.tui.input_bar import InputBar
 from llm_code.tui.status_bar import StatusBar
 
@@ -18,10 +18,6 @@ class TestAppCreation:
     def test_app_has_required_widgets(self):
         app = LLMCodeTUI()
         # Verify compose yields expected widget types
-        from llm_code.tui.header_bar import HeaderBar
-        from llm_code.tui.chat_view import ChatScrollView
-        from llm_code.tui.input_bar import InputBar
-        from llm_code.tui.status_bar import StatusBar
         widgets = list(app.compose())
         type_names = [type(w).__name__ for w in widgets]
         assert "HeaderBar" in type_names
@@ -45,7 +41,7 @@ class TestEntryPointFlags:
 async def test_app_boots_and_accepts_input():
     """Integration test: app boots into fullscreen with all 4 widget areas."""
     app = LLMCodeTUI()
-    async with app.run_test() as pilot:
+    async with app.run_test() as _pilot:
         # Verify all widgets present
         header = app.query_one(HeaderBar)
         assert header is not None

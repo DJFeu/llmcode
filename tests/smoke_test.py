@@ -10,8 +10,6 @@ Tests are organized by dependency:
 """
 from __future__ import annotations
 
-import subprocess
-import sys
 import importlib
 
 

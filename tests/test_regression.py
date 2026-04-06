@@ -5,13 +5,10 @@ Run: python -m pytest tests/test_regression.py -v
 """
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
 
-import pytest
 
 
 # ── Symlink bypass in file_protection (C1: 58411dc) ──
@@ -311,7 +308,7 @@ class TestProactiveCompaction:
         """ContextCompressor should reduce session token count."""
         from llm_code.runtime.compressor import ContextCompressor
         from llm_code.runtime.session import Session
-        from llm_code.api.types import Message, TextBlock, ToolResultBlock
+        from llm_code.api.types import Message, TextBlock
 
         # Build a session with lots of tool results
         messages = []
@@ -386,7 +383,7 @@ class TestIsLocalDetection:
     def test_https_is_not_local(self):
         """https:// URLs should NOT be treated as local (cloud API)."""
         url = "https://api.openai.com/v1"
-        is_local = (
+        _is_local = (
             any(h in url for h in ("localhost", "127.0.0.1", "0.0.0.0", "192.168.", "10.", "172."))
             or url.startswith("http://")
         )

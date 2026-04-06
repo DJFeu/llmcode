@@ -1,7 +1,6 @@
 """Tests for PermissionMode.PLAN and PermissionOutcome.NEED_PLAN."""
 from __future__ import annotations
 
-import pytest
 
 from llm_code.tools.base import PermissionLevel
 from llm_code.runtime.permissions import PermissionMode, PermissionOutcome, PermissionPolicy

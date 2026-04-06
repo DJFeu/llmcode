@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import ast
 import textwrap
+from pathlib import Path
 
-import pytest
 
 from llm_code.analysis.python_rules import (
     check_bare_except,
@@ -191,7 +191,6 @@ class TestPrintInProd:
 
 class TestCircularImport:
     def test_detects_cycle(self, tmp_path: "Path") -> None:
-        from pathlib import Path
 
         # a.py imports b, b.py imports a
         (tmp_path / "a.py").write_text("import b\n")
@@ -207,7 +206,6 @@ class TestCircularImport:
         assert violations[0].severity == "high"
 
     def test_no_cycle(self, tmp_path: "Path") -> None:
-        from pathlib import Path
 
         (tmp_path / "a.py").write_text("import os\n")
         (tmp_path / "b.py").write_text("import a\n")
@@ -220,7 +218,6 @@ class TestCircularImport:
         assert len(violations) == 0
 
     def test_three_module_cycle(self, tmp_path: "Path") -> None:
-        from pathlib import Path
 
         (tmp_path / "a.py").write_text("import b\n")
         (tmp_path / "b.py").write_text("import c\n")

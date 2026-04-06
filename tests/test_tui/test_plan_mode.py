@@ -1,9 +1,7 @@
 """Tests for plan/act mode toggle."""
 from __future__ import annotations
 
-from unittest.mock import MagicMock, AsyncMock, patch
 
-import pytest
 
 from llm_code.tui.status_bar import StatusBar
 

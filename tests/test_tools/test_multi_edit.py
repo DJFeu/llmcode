@@ -1,5 +1,4 @@
 """Tests for MultiEditTool — atomic multi-file search-and-replace."""
-import pytest
 from llm_code.runtime.overlay import OverlayFS
 from llm_code.tools.multi_edit import MultiEditTool
 

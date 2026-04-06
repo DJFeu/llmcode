@@ -1,9 +1,7 @@
 """Tests for agent team checkpoint system."""
 from __future__ import annotations
 
-import json
 
-import pytest
 
 from llm_code.swarm.checkpoint import (
     AgentCheckpoint,

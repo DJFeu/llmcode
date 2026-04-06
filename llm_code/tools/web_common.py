@@ -41,8 +41,6 @@ def classify_url(url: str) -> UrlSafetyResult:
     - needs_confirm: localhost, 127.0.0.1, IP-only URLs, non-standard ports
     - safe: standard HTTP/HTTPS URLs to regular hosts
     """
-    reasons: list[str] = []
-
     try:
         parsed = urlparse(url)
     except Exception:

@@ -7,8 +7,9 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from textual import events
 from textual.app import App, ComposeResult
 
 from llm_code.tui.chat_view import ChatScrollView, UserMessage, AssistantText
@@ -17,6 +18,9 @@ from llm_code.tui.input_bar import InputBar
 from llm_code.tui.status_bar import StatusBar
 from llm_code.tui.theme import APP_CSS
 from llm_code.logging import get_logger
+
+if TYPE_CHECKING:
+    from llm_code.tui.marketplace import MarketplaceBrowser  # noqa: F811
 
 logger = get_logger(__name__)
 
@@ -250,7 +254,7 @@ class LLMCodeTUI(App):
                 recovery = CheckpointRecovery(
                     Path.home() / ".llmcode" / "checkpoints"
                 )
-                path = recovery.save_checkpoint(self._runtime.session)
+                _path = recovery.save_checkpoint(self._runtime.session)
                 session_id = self._runtime.session.id
             except Exception:
                 pass
@@ -1256,7 +1260,6 @@ class LLMCodeTUI(App):
         from textual.screen import ModalScreen
         from textual.containers import VerticalScroll
         from textual.widgets import Static
-        from textual.reactive import reactive
         from rich.text import Text as RichText
 
         skills = self._skills
@@ -2468,7 +2471,7 @@ class LLMCodeTUI(App):
                         chat.add_entry(AssistantText(f"Installed {name}. Activated."))
                     else:
                         logger.warning("Skill clone failed for %s: %s", repo, result.stderr[:200])
-                        chat.add_entry(AssistantText(f"Clone failed. Check the repository URL."))
+                        chat.add_entry(AssistantText("Clone failed. Check the repository URL."))
             except Exception as exc:
                 chat.add_entry(AssistantText(f"Install failed: {exc}"))
         elif sub == "enable" and subargs:
@@ -2678,7 +2681,6 @@ class LLMCodeTUI(App):
         self, event: "MarketplaceBrowser.ItemAction"
     ) -> None:
         """Handle marketplace item selection (install/enable/disable/remove)."""
-        from llm_code.tui.marketplace import MarketplaceBrowser
         from llm_code.tui.chat_view import AssistantText
 
         chat = self.query_one(ChatScrollView)

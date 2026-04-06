@@ -4,7 +4,6 @@ from __future__ import annotations
 from llm_code.tui.header_bar import HeaderBar
 from llm_code.tui.status_bar import StatusBar
 from llm_code.tui.chat_widgets import ToolBlock, ThinkingBlock, TurnSummary, SpinnerLine
-from llm_code.tui.chat_view import ChatScrollView
 from llm_code.tui.input_bar import InputBar
 
 

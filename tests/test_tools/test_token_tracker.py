@@ -42,7 +42,7 @@ class TestTokenTracker:
         db = tmp_path / "data.db"
         tracker = TokenTracker(db_path=db)
         for i in range(5):
-            tracker.record(f"git status", "git_status", 2000, 200, 90)
+            tracker.record("git status", "git_status", 2000, 200, 90)
         tracker.record("pytest tests/", "pytest", 10000, 1000, 90)
 
         text = tracker.format_report()

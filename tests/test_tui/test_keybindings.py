@@ -7,7 +7,6 @@ import pytest
 
 from llm_code.tui.keybindings import (
     ACTION_REGISTRY,
-    ChordBinding,
     ChordState,
     KeyAction,
     KeybindingManager,

@@ -1,7 +1,6 @@
 """Tests for team template data model and persistence."""
 from __future__ import annotations
 
-import json
 
 import pytest
 
