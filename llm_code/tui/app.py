@@ -959,12 +959,15 @@ class LLMCodeTUI(App):
                             _raw_text_buffer = ""
                         continue
 
+                    # Safety: strip any remaining think/thinking tags that slipped through
+                    for _tag in ("<think>", "</think>", "<thinking>", "</thinking>"):
+                        _raw_text_buffer = _raw_text_buffer.replace(_tag, "")
+
                     # Normal text — output to assistant
                     # Hold back potential partial tags (e.g. "<thi" might become "<think>")
                     if _raw_text_buffer:
                         last_lt = _raw_text_buffer.rfind("<")
                         if last_lt >= 0 and ">" not in _raw_text_buffer[last_lt:]:
-                            # Partial tag at end — flush everything before it
                             flush = _raw_text_buffer[:last_lt]
                             _raw_text_buffer = _raw_text_buffer[last_lt:]
                         else:
