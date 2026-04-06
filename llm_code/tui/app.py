@@ -898,6 +898,8 @@ class LLMCodeTUI(App):
         _think_close_tag = "</think>"
         _in_tool_call_tag = False
         _raw_text_buffer = ""
+        _is_first_text_delta = True  # Track first delta for think-start detection
+        _full_text_accumulator = ""  # Accumulate ALL text for post-hoc think stripping
 
         async def remove_spinner() -> None:
             """Remove spinner if it is currently mounted."""
@@ -922,23 +924,28 @@ class LLMCodeTUI(App):
                     chat.add_entry(spinner)
 
                 if isinstance(event, StreamTextDelta):
-                    # Client-side parsing: buffer text and strip think/tool_call tags
                     _raw_text_buffer += event.text
 
-                    # Handle <think> / <thinking> tags — route to thinking buffer
-                    for open_tag, close_tag in [("<think>", "</think>"), ("<thinking>", "</thinking>")]:
-                        while open_tag in _raw_text_buffer and not _in_think_tag:
-                            before, _, _raw_text_buffer = _raw_text_buffer.partition(open_tag)
-                            if before.strip():
-                                if not assistant_added:
-                                    await remove_spinner()
-                                    chat.add_entry(assistant)
-                                    assistant_added = True
-                                assistant.append_text(before)
-                            _in_think_tag = True
-                            _think_close_tag = close_tag
-                            spinner.phase = "thinking"
+                    # ── First delta detection ──
+                    # Qwen (and similar) always start with <think> when thinking.
+                    # On the first text delta, check if response starts with a think tag.
+                    if _is_first_text_delta:
+                        stripped_start = _raw_text_buffer.lstrip()
+                        # Still accumulating a potential partial tag prefix
+                        if len(stripped_start) < len("<thinking>") and stripped_start.startswith("<"):
+                            continue  # wait for more data
+                        _is_first_text_delta = False
+                        for open_tag, close_tag in [("<think>", "</think>"), ("<thinking>", "</thinking>")]:
+                            if stripped_start.startswith(open_tag):
+                                # Strip the open tag and enter thinking mode
+                                idx = _raw_text_buffer.index(open_tag) + len(open_tag)
+                                _raw_text_buffer = _raw_text_buffer[idx:]
+                                _in_think_tag = True
+                                _think_close_tag = close_tag
+                                spinner.phase = "thinking"
+                                break
 
+                    # ── Thinking mode: route everything to thinking_buffer ──
                     if _in_think_tag:
                         if _think_close_tag in _raw_text_buffer:
                             think_content, _, _raw_text_buffer = _raw_text_buffer.partition(_think_close_tag)
@@ -949,12 +956,42 @@ class LLMCodeTUI(App):
                                 tokens_t = len(thinking_buffer) // 4
                                 chat.add_entry(ThinkingBlock(thinking_buffer, elapsed_t, tokens_t))
                                 thinking_buffer = ""
+                            # After closing think, check for another think block
+                            _is_first_text_delta = True
                         else:
                             thinking_buffer += _raw_text_buffer
                             _raw_text_buffer = ""
                         continue
 
-                    # Handle <tool_call> tags — suppress (runtime handles tool execution)
+                    # ── Mid-stream think tags (e.g. after tool results) ──
+                    for open_tag, close_tag in [("<think>", "</think>"), ("<thinking>", "</thinking>")]:
+                        if open_tag in _raw_text_buffer:
+                            before, _, _raw_text_buffer = _raw_text_buffer.partition(open_tag)
+                            if before.strip():
+                                if not assistant_added:
+                                    await remove_spinner()
+                                    chat.add_entry(assistant)
+                                    assistant_added = True
+                                assistant.append_text(before)
+                            _in_think_tag = True
+                            _think_close_tag = close_tag
+                            spinner.phase = "thinking"
+                            # Re-process remaining buffer in thinking mode
+                            if _think_close_tag in _raw_text_buffer:
+                                tc, _, _raw_text_buffer = _raw_text_buffer.partition(_think_close_tag)
+                                thinking_buffer += tc
+                                _in_think_tag = False
+                                if thinking_buffer.strip():
+                                    elapsed_t = time.monotonic() - thinking_start
+                                    tokens_t = len(thinking_buffer) // 4
+                                    chat.add_entry(ThinkingBlock(thinking_buffer, elapsed_t, tokens_t))
+                                    thinking_buffer = ""
+                            else:
+                                thinking_buffer += _raw_text_buffer
+                                _raw_text_buffer = ""
+                            continue
+
+                    # ── Handle <tool_call> tags ──
                     while "<tool_call>" in _raw_text_buffer and not _in_tool_call_tag:
                         before, _, _raw_text_buffer = _raw_text_buffer.partition("<tool_call>")
                         if before.strip():
@@ -973,13 +1010,13 @@ class LLMCodeTUI(App):
                             _raw_text_buffer = ""
                         continue
 
-                    # Safety: strip any remaining think/thinking tags that slipped through
+                    # ── Safety: strip any remaining think tags ──
                     for _tag in ("<think>", "</think>", "<thinking>", "</thinking>"):
                         _raw_text_buffer = _raw_text_buffer.replace(_tag, "")
 
-                    # Normal text — output to assistant
-                    # Hold back potential partial tags (e.g. "<thi" might become "<think>")
+                    # ── Normal text — output to assistant ──
                     if _raw_text_buffer:
+                        # Hold back potential partial tags
                         last_lt = _raw_text_buffer.rfind("<")
                         if last_lt >= 0 and ">" not in _raw_text_buffer[last_lt:]:
                             flush = _raw_text_buffer[:last_lt]

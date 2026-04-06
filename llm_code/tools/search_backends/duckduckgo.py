@@ -8,7 +8,7 @@ import httpx
 
 from llm_code.tools.search_backends import SearchResult
 
-_DDG_LITE_URL = "https://lite.duckduckgo.com/lite/"
+_DDG_LITE_URL = "https://html.duckduckgo.com/html/"
 _RATE_LIMIT_SECONDS = 1.0
 
 
@@ -33,19 +33,16 @@ class _DDGLiteParser(HTMLParser):
             self._current_url = attr_dict.get("href", "")
             self._current_title = ""
 
-        if tag == "div" and "result__snippet" in classes:
+        if tag in ("div", "a") and "result__snippet" in classes:
             self._in_snippet = True
-            self._snippet_depth = 1
+            self._snippet_tag = tag
             self._current_snippet = ""
-
-        if self._in_snippet and tag != "div":
-            pass  # track inner tags
 
     def handle_endtag(self, tag: str) -> None:
         if self._in_title_link and tag == "a":
             self._in_title_link = False
 
-        if self._in_snippet and tag == "div":
+        if self._in_snippet and tag == getattr(self, "_snippet_tag", "div"):
             self._in_snippet = False
             # Save result when snippet ends
             if self._current_url and self._current_title:
@@ -110,7 +107,7 @@ class DuckDuckGoBackend:
         except httpx.RequestError:
             return ()
 
-        if response.status_code != 200:
+        if response.status_code not in (200, 202):
             return ()
 
         parser = _DDGLiteParser()
@@ -120,10 +117,21 @@ class DuckDuckGoBackend:
         results = tuple(
             SearchResult(
                 title=r["title"],
-                url=r["url"],
+                url=self._extract_real_url(r["url"]),
                 snippet=r["snippet"],
             )
             for r in raw[:max_results]
             if r.get("title") and r.get("url")
         )
         return results
+
+    @staticmethod
+    def _extract_real_url(ddg_url: str) -> str:
+        """Extract the real URL from a DuckDuckGo redirect URL."""
+        from urllib.parse import unquote, urlparse, parse_qs
+        if "duckduckgo.com/l/" in ddg_url:
+            parsed = urlparse(ddg_url)
+            uddg = parse_qs(parsed.query).get("uddg", [""])[0]
+            if uddg:
+                return unquote(uddg)
+        return ddg_url
