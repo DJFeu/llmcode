@@ -18,7 +18,7 @@ SLASH_COMMANDS = sorted([
     "/undo", "/cd", "/config", "/thinking", "/vim", "/image", "/search",
     "/index", "/session", "/skill", "/plugin", "/mcp", "/memory",
     "/lsp", "/cancel", "/cron", "/task", "/swarm", "/voice", "/ide",
-    "/vcr", "/hida", "/checkpoint", "/keybind", "/audit",
+    "/vcr", "/hida", "/checkpoint",
     "/plan", "/analyze", "/diff_check", "/dump", "/map",
     "/harness", "/knowledge",
 ])
@@ -60,8 +60,6 @@ SLASH_COMMAND_DESCS: list[tuple[str, str]] = [
     ("/cancel", "Cancel generation"),
     ("/exit", "Quit"),
     ("/quit", "Quit"),
-    ("/keybind", "Rebind keys"),
-    ("/audit", "Audit log"),
     ("/plan", "Plan/Act mode"),
     ("/analyze", "Code analysis"),
     ("/diff_check", "Diff analysis"),
@@ -84,7 +82,7 @@ class InputBar(Widget):
         dock: bottom;
         height: auto;
         min-height: 3;
-        max-height: 8;
+        max-height: 14;
         padding: 0 1;
         background: $surface;
     }
@@ -162,7 +160,7 @@ class InputBar(Widget):
         text = Text()
         # Render dropdown above prompt when active
         if self._show_dropdown and self._dropdown_items:
-            visible = self._dropdown_items[:8]
+            visible = self._dropdown_items[:12]
             for i, (cmd, desc) in enumerate(visible):
                 if i == self._dropdown_cursor:
                     text.append(f"  > {cmd:<20s} {desc}\n", style="bold white on #3a3a5a")
@@ -224,13 +222,13 @@ class InputBar(Widget):
         # Dropdown navigation (when dropdown is visible)
         if self._show_dropdown and self._dropdown_items:
             if event.key == "up":
-                self._dropdown_cursor = (self._dropdown_cursor - 1) % min(len(self._dropdown_items), 8)
+                self._dropdown_cursor = (self._dropdown_cursor - 1) % min(len(self._dropdown_items), 12)
                 self.refresh()
                 event.prevent_default()
                 event.stop()
                 return
             elif event.key == "down":
-                self._dropdown_cursor = (self._dropdown_cursor + 1) % min(len(self._dropdown_items), 8)
+                self._dropdown_cursor = (self._dropdown_cursor + 1) % min(len(self._dropdown_items), 12)
                 self.refresh()
                 event.prevent_default()
                 event.stop()

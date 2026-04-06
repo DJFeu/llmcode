@@ -34,10 +34,13 @@ KNOWN_COMMANDS = frozenset({
     "task",
     "checkpoint",
     "cancel",
-    "keybind",
-    "audit",
     "analyze",
     "diff_check",
+    "plan",
+    "dump",
+    "map",
+    "harness",
+    "knowledge",
 })
 
 
