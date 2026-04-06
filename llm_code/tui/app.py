@@ -1915,6 +1915,16 @@ class LLMCodeTUI(App):
                         preview = "\n".join(s.strip().splitlines()[:3])
                         lines.append(f"  #{i+1} {preview}")
                     chat.add_entry(AssistantText("\n".join(lines)))
+            elif sub == "lint":
+                flags = parts[1] if len(parts) > 1 else ""
+                if "--deep" in flags:
+                    import asyncio
+                    asyncio.ensure_future(self._memory_lint_deep())
+                elif "--fix" in flags:
+                    import asyncio
+                    asyncio.ensure_future(self._memory_lint_fix())
+                else:
+                    self._memory_lint_fast()
             else:
                 entries = self._memory.get_all()
                 lines = [f"Memory ({len(entries)} entries)"]
@@ -1925,6 +1935,52 @@ class LLMCodeTUI(App):
                 chat.add_entry(AssistantText("\n".join(lines)))
         except Exception as exc:
             chat.add_entry(AssistantText(f"Memory error: {exc}"))
+
+    def _memory_lint_fast(self) -> None:
+        """Run fast computational memory lint."""
+        chat = self.query_one(ChatScrollView)
+        try:
+            from llm_code.runtime.memory_lint import lint_memory
+            result = lint_memory(memory_dir=self._memory._dir, cwd=self._cwd)
+            report = result.format_report()
+            if not result.stale and not result.coverage_gaps and not result.old:
+                report += "\n\nContradictions: (requires LLM, skipped — use /memory lint --deep)"
+            chat.add_entry(AssistantText(report))
+        except Exception as exc:
+            chat.add_entry(AssistantText(f"Lint failed: {exc}"))
+
+    async def _memory_lint_deep(self) -> None:
+        """Run deep memory lint with LLM contradiction detection."""
+        chat = self.query_one(ChatScrollView)
+        chat.add_entry(AssistantText("Running deep memory lint..."))
+        try:
+            from llm_code.runtime.memory_lint import lint_memory_deep
+            provider = self._runtime._provider if self._runtime else None
+            result = await lint_memory_deep(
+                memory_dir=self._memory._dir,
+                cwd=self._cwd,
+                llm_provider=provider,
+            )
+            chat.add_entry(AssistantText(result.format_report()))
+        except Exception as exc:
+            chat.add_entry(AssistantText(f"Deep lint failed: {exc}"))
+
+    async def _memory_lint_fix(self) -> None:
+        """Run lint and auto-remove stale references."""
+        chat = self.query_one(ChatScrollView)
+        try:
+            from llm_code.runtime.memory_lint import lint_memory
+            result = lint_memory(memory_dir=self._memory._dir, cwd=self._cwd)
+            if not result.stale:
+                chat.add_entry(AssistantText("No stale references to fix."))
+                return
+            removed = 0
+            for s in result.stale:
+                self._memory.delete(s.key)
+                removed += 1
+            chat.add_entry(AssistantText(f"Removed {removed} stale entries.\n\n{result.format_report()}"))
+        except Exception as exc:
+            chat.add_entry(AssistantText(f"Lint fix failed: {exc}"))
 
     # ── Repo Map ─────────────────────────────────────────────────────
 
