@@ -163,12 +163,25 @@ class InputBar(Widget):
         text = Text()
         # Render dropdown above prompt when active
         if self._show_dropdown and self._dropdown_items:
-            visible = self._dropdown_items[:12]
-            for i, (cmd, desc) in enumerate(visible):
+            max_visible = 12
+            total = len(self._dropdown_items)
+            # Sliding window: keep cursor visible within the window
+            if total <= max_visible:
+                start = 0
+            else:
+                start = max(0, min(self._dropdown_cursor - max_visible + 1, total - max_visible))
+            end = min(start + max_visible, total)
+            for i in range(start, end):
+                cmd, desc = self._dropdown_items[i]
                 if i == self._dropdown_cursor:
                     text.append(f"  > {cmd:<20s} {desc}\n", style="bold white on #3a3a5a")
                 else:
                     text.append(f"    {cmd:<20s} {desc}\n", style="dim")
+            # Scroll indicators
+            if start > 0:
+                text.append("")  # handled by items above
+            if end < total:
+                text.append(f"    ↓ {total - end} more\n", style="dim italic")
         if self.vim_mode == "NORMAL":
             text.append("[N] ", style="yellow bold")
         elif self.vim_mode == "INSERT":
@@ -225,13 +238,13 @@ class InputBar(Widget):
         # Dropdown navigation (when dropdown is visible)
         if self._show_dropdown and self._dropdown_items:
             if event.key == "up":
-                self._dropdown_cursor = (self._dropdown_cursor - 1) % min(len(self._dropdown_items), 12)
+                self._dropdown_cursor = (self._dropdown_cursor - 1) % len(self._dropdown_items)
                 self.refresh()
                 event.prevent_default()
                 event.stop()
                 return
             elif event.key == "down":
-                self._dropdown_cursor = (self._dropdown_cursor + 1) % min(len(self._dropdown_items), 12)
+                self._dropdown_cursor = (self._dropdown_cursor + 1) % len(self._dropdown_items)
                 self.refresh()
                 event.prevent_default()
                 event.stop()
