@@ -1064,7 +1064,18 @@ class LLMCodeTUI(App):
             handler(args)
         else:
             chat = self.query_one(ChatScrollView)
-            chat.add_entry(AssistantText(f"Unknown command: /{name} — type /help for help"))
+            # Suggest closest matching command
+            from difflib import get_close_matches
+            from llm_code.cli.commands import KNOWN_COMMANDS
+            matches = get_close_matches(name, KNOWN_COMMANDS, n=1, cutoff=0.5)
+            if matches:
+                chat.add_entry(AssistantText(
+                    f"Unknown command: /{name} — did you mean /{matches[0]}?"
+                ))
+            else:
+                chat.add_entry(AssistantText(
+                    f"Unknown command: /{name} — type /help for help"
+                ))
 
     def _cmd_exit(self, args: str) -> None:
         import asyncio
