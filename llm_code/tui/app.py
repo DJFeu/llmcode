@@ -226,6 +226,30 @@ class LLMCodeTUI(App):
             f"  Press Ctrl+C again to quit immediately."
         ))
 
+    def _reload_skills(self) -> None:
+        """(Re)load skills from all configured directories."""
+        try:
+            from llm_code.runtime.skills import SkillLoader
+            from llm_code.marketplace.installer import PluginInstaller
+            skill_dirs: list[Path] = [
+                Path.home() / ".llmcode" / "skills",
+                self._cwd / ".llmcode" / "skills",
+            ]
+            plugin_dir = Path.home() / ".llmcode" / "plugins"
+            if plugin_dir.is_dir():
+                pi = PluginInstaller(plugin_dir)
+                for p in pi.list_installed():
+                    if p.enabled and p.manifest.skills:
+                        sp = p.path / p.manifest.skills
+                        if sp.is_dir():
+                            skill_dirs.append(sp)
+                    direct = p.path / "skills"
+                    if p.enabled and direct.is_dir() and direct not in skill_dirs:
+                        skill_dirs.append(direct)
+            self._skills = SkillLoader().load_from_dirs(skill_dirs)
+        except Exception:
+            self._skills = None
+
     def _init_runtime(self) -> None:
         """Initialize the conversation runtime."""
         if self._config is None:
@@ -378,27 +402,7 @@ class LLMCodeTUI(App):
                 pass
 
         # Skills
-        try:
-            from llm_code.runtime.skills import SkillLoader
-            from llm_code.marketplace.installer import PluginInstaller
-            skill_dirs: list[Path] = [
-                Path.home() / ".llmcode" / "skills",
-                self._cwd / ".llmcode" / "skills",
-            ]
-            plugin_dir = Path.home() / ".llmcode" / "plugins"
-            if plugin_dir.is_dir():
-                pi = PluginInstaller(plugin_dir)
-                for p in pi.list_installed():
-                    if p.enabled and p.manifest.skills:
-                        sp = p.path / p.manifest.skills
-                        if sp.is_dir():
-                            skill_dirs.append(sp)
-                    direct = p.path / "skills"
-                    if p.enabled and direct.is_dir() and direct not in skill_dirs:
-                        skill_dirs.append(direct)
-            self._skills = SkillLoader().load_from_dirs(skill_dirs)
-        except Exception:
-            self._skills = None
+        self._reload_skills()
 
         # Memory
         try:
@@ -2293,7 +2297,8 @@ class LLMCodeTUI(App):
                             shutil.copytree(skills_src, dest)
                         else:
                             shutil.copytree(tmp, dest)
-                        chat.add_entry(AssistantText(f"Installed {name}. Restart to activate."))
+                        self._reload_skills()
+                        chat.add_entry(AssistantText(f"Installed {name}. Activated."))
                     else:
                         logger.warning("Skill clone failed for %s: %s", repo, result.stderr[:200])
                         chat.add_entry(AssistantText(f"Clone failed. Check the repository URL."))
@@ -2305,6 +2310,7 @@ class LLMCodeTUI(App):
                 return
             marker = Path.home() / ".llmcode" / "skills" / subargs / ".disabled"
             marker.unlink(missing_ok=True)
+            self._reload_skills()
             chat.add_entry(AssistantText(f"Enabled {subargs}"))
         elif sub == "disable" and subargs:
             if not self._is_safe_name(subargs):
@@ -2313,6 +2319,7 @@ class LLMCodeTUI(App):
             marker = Path.home() / ".llmcode" / "skills" / subargs / ".disabled"
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.touch()
+            self._reload_skills()
             chat.add_entry(AssistantText(f"Disabled {subargs}"))
         elif sub == "remove" and subargs:
             if not self._is_safe_name(subargs):
@@ -2321,6 +2328,7 @@ class LLMCodeTUI(App):
             d = Path.home() / ".llmcode" / "skills" / subargs
             if d.is_dir():
                 shutil.rmtree(d)
+                self._reload_skills()
                 chat.add_entry(AssistantText(f"Removed {subargs}"))
             else:
                 chat.add_entry(AssistantText(f"Not found: {subargs}"))
