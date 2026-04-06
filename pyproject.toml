@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "llm-code"
+name = "llmcode"
 version = "1.0.0"
 description = "Open-source AI agent runtime for any LLM — production-grade coding agent with multi-layer memory, multi-agent orchestration, and defense-in-depth security"
 license = {text = "MIT"}
@@ -59,7 +59,10 @@ dev = [
 ]
 
 [project.scripts]
-llm-code = "llm_code.cli.tui_main:main"
+llmcode = "llm_code.cli.tui_main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["llm_code"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
