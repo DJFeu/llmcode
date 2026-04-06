@@ -19,6 +19,8 @@ SLASH_COMMANDS = sorted([
     "/index", "/session", "/skill", "/plugin", "/mcp", "/memory",
     "/lsp", "/cancel", "/cron", "/task", "/swarm", "/voice", "/ide",
     "/vcr", "/hida", "/checkpoint", "/keybind", "/audit",
+    "/plan", "/analyze", "/diff_check", "/dump", "/map",
+    "/harness", "/knowledge",
 ])
 
 # Commands that execute immediately (no arguments needed)
@@ -60,6 +62,13 @@ SLASH_COMMAND_DESCS: list[tuple[str, str]] = [
     ("/quit", "Quit"),
     ("/keybind", "Rebind keys"),
     ("/audit", "Audit log"),
+    ("/plan", "Plan/Act mode"),
+    ("/analyze", "Code analysis"),
+    ("/diff_check", "Diff analysis"),
+    ("/dump", "Dump context"),
+    ("/map", "Repo map"),
+    ("/harness", "Harness controls"),
+    ("/knowledge", "Knowledge base"),
 ]
 
 
@@ -293,6 +302,8 @@ class InputBar(Widget):
         elif event.character and len(event.character) == 1:
             self.value = self.value[:self._cursor] + event.character + self.value[self._cursor:]
             self._cursor += 1
+            event.prevent_default()
+            event.stop()
 
     def _handle_action(self, action: str) -> None:
         """Execute a named keybinding action."""
