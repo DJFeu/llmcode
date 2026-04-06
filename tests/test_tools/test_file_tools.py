@@ -338,14 +338,19 @@ class TestEditFileTool:
             call_counts[key] = count
             real_result = real_stat(self_path, follow_symlinks=follow_symlinks)
             if key == str(f):
-                if count == 2:
-                    # "before read" stat — report original mtime
+                # resolve_path calls exists() which calls stat() once,
+                # then edit_file calls stat() for mtime_before and mtime_after.
+                # We want the last two calls on the target file to return
+                # different mtimes to simulate external modification.
+                total = call_counts[key]
+                if total == 3:
+                    # mtime_before read — original
                     return type("_FakeStat", (), {
                         "st_mtime": original_mtime,
                         "st_size": real_result.st_size,
                     })()
-                if count == 3:
-                    # "before write" stat — report bumped mtime (conflict!)
+                if total == 4:
+                    # mtime_after check — simulated external modification
                     return type("_FakeStat", (), {
                         "st_mtime": future_mtime,
                         "st_size": real_result.st_size,
