@@ -244,7 +244,12 @@ class ConversationRuntime:
         _current_max_tokens: int = self._config.max_tokens
         # Local models (localhost/private network) have no cost concern — no cap
         _base_url = getattr(self._config, "provider_base_url", "") or ""
-        _is_local = any(h in _base_url for h in ("localhost", "127.0.0.1", "0.0.0.0", "192.168.", "10.", "172."))
+        # Detect self-hosted models: private IPs, localhost, or model paths (e.g. /models/Qwen...)
+        _is_local = (
+            any(h in _base_url for h in ("localhost", "127.0.0.1", "0.0.0.0", "192.168.", "10.", "172."))
+            or _base_url.startswith("http://")  # non-HTTPS = likely self-hosted
+            or self._active_model.startswith("/")  # path-based model name = vLLM
+        )
         _TOKEN_UPGRADE_CAP = 0 if _is_local else 65536  # 0 means unlimited
 
         # Determine effective context limit for proactive compaction
