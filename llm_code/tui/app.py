@@ -1829,15 +1829,34 @@ class LLMCodeTUI(App):
 
     def _cmd_search(self, args: str) -> None:
         chat = self.query_one(ChatScrollView)
-        if not args or not self._runtime:
+        if not args:
             chat.add_entry(AssistantText("Usage: /search <query>"))
             return
-        results = []
-        for msg in self._runtime.session.messages:
-            if args.lower() in str(msg.content).lower():
-                results.append(f"  [{msg.role}] {str(msg.content)[:100]}")
-        if results:
-            chat.add_entry(AssistantText(f"Found {len(results)} matches:\n" + "\n".join(results[:20])))
+
+        lines: list[str] = []
+
+        # 1. Search across ALL sessions via SQLite FTS5
+        try:
+            from llm_code.runtime.conversation_db import ConversationDB
+            db = ConversationDB()
+            db_results = db.search(args, limit=15)
+            for r in db_results:
+                session_label = r.conversation_name or r.conversation_id[:8]
+                lines.append(f"  [{r.role}] ({session_label}) {r.content_snippet}")
+            db.close()
+        except Exception:
+            pass
+
+        # 2. Fallback: search current session in-memory
+        if not lines and self._runtime:
+            for msg in self._runtime.session.messages:
+                if args.lower() in str(msg.content).lower():
+                    lines.append(f"  [{msg.role}] {str(msg.content)[:100]}")
+
+        if lines:
+            chat.add_entry(AssistantText(
+                f"Found {len(lines)} match(es) for \"{args}\":\n" + "\n".join(lines[:20])
+            ))
         else:
             chat.add_entry(AssistantText(f"No matches for: {args}"))
 
