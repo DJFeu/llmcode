@@ -292,6 +292,9 @@ class ConversationRuntime:
             # Use 70% of model's context window as compaction threshold
             _context_limit = min(_context_limit, int(self._detected_context_window * 0.7))
 
+        _prev_output_tokens = 0
+        _continuation_count = 0
+
         for _iteration in range(self._config.max_turn_iterations):
             # Proactive context compaction: compress before hitting model limit
             est_tokens = self.session.estimated_tokens()
@@ -629,7 +632,29 @@ class ConversationRuntime:
                 )
                 self.session = self.session.add_message(assistant_msg)
 
-            # 8. If no tool calls → end turn
+            # 8. Diminishing returns detection
+            _dr_cfg = getattr(self._config, "diminishing_returns", None)
+            if _dr_cfg and _dr_cfg.enabled and stop_event:
+                _current_output = accumulated_usage.output_tokens
+                _delta = _current_output - _prev_output_tokens
+                _prev_output_tokens = _current_output
+                _continuation_count += 1
+                if (
+                    _continuation_count >= _dr_cfg.min_continuations
+                    and _delta < _dr_cfg.min_delta_tokens
+                    and parsed_calls  # only trigger if model wants to continue
+                ):
+                    logger.info(
+                        "Diminishing returns: iteration %d, delta %d tokens < %d threshold",
+                        _continuation_count, _delta, _dr_cfg.min_delta_tokens,
+                    )
+                    yield StreamTextDelta(
+                        text=f"\n[Auto-stopped: diminishing returns — "
+                        f"iteration {_continuation_count}, {_delta} new tokens]"
+                    )
+                    break
+
+            # 9. If no tool calls → end turn
             if not parsed_calls:
                 break
 

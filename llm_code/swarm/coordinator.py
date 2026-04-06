@@ -30,6 +30,22 @@ Task to decompose:
 {task}
 """
 
+_SYNTHESIZE_PROMPT = """\
+Before delegating this task, analyze what you already know and what needs investigation.
+
+Task: {task}
+
+Reply with ONLY a JSON object (no explanation):
+{{
+  "known_facts": ["list of things you can determine from the task description"],
+  "unknowns": ["list of things that need investigation or implementation"],
+  "should_delegate": true or false,
+  "reason": "why delegate or not"
+}}
+
+If the task is simple enough to handle directly (e.g. a question, single-file change), set should_delegate=false.
+"""
+
 _AGGREGATE_PROMPT = """\
 You are a coordinator agent summarizing the results of parallel worker agents.
 
@@ -65,7 +81,7 @@ class Coordinator:
         self._config = config
 
     async def orchestrate(self, task: str) -> str:
-        """Decompose task, dispatch workers, wait for completion, return summary.
+        """Synthesize → decompose → dispatch → wait → aggregate.
 
         Args:
             task: High-level task description to decompose and delegate.
@@ -73,6 +89,12 @@ class Coordinator:
         Returns:
             Aggregated summary string from all worker results.
         """
+        # Synthesis-first: analyze before delegating
+        synthesis = await self._synthesize(task)
+        if synthesis and not synthesis.get("should_delegate", True):
+            reason = synthesis.get("reason", "Task is simple enough to handle directly.")
+            return f"[Coordinator] Skipping delegation: {reason}"
+
         subtasks = await self._decompose(task)
         if not subtasks:
             return f"No subtasks generated for: {task}"
@@ -107,6 +129,70 @@ class Coordinator:
 
         summary = await self._aggregate(task, members, results)
         return summary
+
+    async def _synthesize(self, task: str) -> dict | None:
+        """Analyze task before delegation — decide whether to delegate at all.
+
+        Returns a dict with known_facts, unknowns, should_delegate, reason.
+        Returns None if synthesis fails (fallback: proceed with delegation).
+        """
+        synthesis_enabled = getattr(
+            getattr(self._config, "swarm", None), "synthesis_enabled", True
+        )
+        if not synthesis_enabled:
+            return None
+
+        prompt = _SYNTHESIZE_PROMPT.format(task=task)
+        model = getattr(self._config, "model", None) or "default"
+        request = MessageRequest(
+            model=model,
+            messages=(Message(role="user", content=(TextBlock(text=prompt),)),),
+            max_tokens=512,
+            stream=False,
+        )
+        try:
+            response = await self._provider.send_message(request)
+            text = ""
+            for block in response.content:
+                if isinstance(block, TextBlock):
+                    text += block.text
+            parsed = self._parse_json_object(text)
+            if parsed and isinstance(parsed.get("should_delegate"), bool):
+                return parsed
+            return None
+        except Exception as exc:
+            logger.debug("Synthesis failed (proceeding with delegation): %s", exc)
+            return None
+
+    @staticmethod
+    def _parse_json_object(text: str) -> dict | None:
+        """Extract a JSON object from LLM output."""
+        cleaned = re.sub(r"```(?:json)?\s*", "", text).strip().rstrip("`").strip()
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start == -1 or end == -1:
+            return None
+        try:
+            data = json.loads(cleaned[start : end + 1])
+            return data if isinstance(data, dict) else None
+        except json.JSONDecodeError:
+            return None
+
+    @staticmethod
+    def context_overlap(worker_context: str, next_task: str) -> float:
+        """Compute token-level overlap between a worker's context and next task.
+
+        Returns a score 0.0-1.0. Higher = more overlap = better to continue
+        the same worker rather than spawning fresh.
+        """
+        from llm_code.runtime.skill_router import tokenize
+
+        worker_tokens = set(tokenize(worker_context))
+        task_tokens = set(tokenize(next_task))
+        if not task_tokens:
+            return 0.0
+        overlap = worker_tokens & task_tokens
+        return len(overlap) / len(task_tokens)
 
     async def _decompose(self, task: str) -> list[dict]:
         """Ask the LLM to decompose task into subtasks. Returns list of dicts."""

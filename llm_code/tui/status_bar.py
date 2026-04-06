@@ -16,6 +16,7 @@ class StatusBar(Widget):
     vim_mode: reactive[str] = reactive("")  # "" | "NORMAL" | "INSERT"
     is_local: reactive[bool] = reactive(False)
     plan_mode: reactive[str] = reactive("")  # "" | "PLAN"
+    bg_tasks: reactive[int] = reactive(0)   # running/pending background tasks
 
     DEFAULT_CSS = """
     StatusBar {
@@ -41,6 +42,8 @@ class StatusBar(Widget):
             parts.append("free")
         elif self.cost:
             parts.append(self.cost)
+        if self.bg_tasks > 0:
+            parts.append(f"{self.bg_tasks} task{'s' if self.bg_tasks > 1 else ''} running")
         if self.is_streaming:
             parts.append("streaming…")
         parts.append("/help")
@@ -69,4 +72,7 @@ class StatusBar(Widget):
         self.refresh()
 
     def watch_plan_mode(self) -> None:
+        self.refresh()
+
+    def watch_bg_tasks(self) -> None:
         self.refresh()

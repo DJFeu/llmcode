@@ -185,6 +185,15 @@ class EnterpriseConfig:
 
 
 @dataclass(frozen=True)
+class DiminishingReturnsConfig:
+    """Auto-stop when model produces diminishing output per continuation."""
+
+    enabled: bool = True
+    min_continuations: int = 3   # minimum iterations before checking
+    min_delta_tokens: int = 500  # stop if delta below this
+
+
+@dataclass(frozen=True)
 class SkillRouterConfig:
     """Configuration for the 3-tier skill router."""
 
@@ -199,6 +208,7 @@ class SkillRouterConfig:
 
 @dataclass(frozen=True)
 class RuntimeConfig:
+    config_version: str = ""
     model: str = ""
     provider_base_url: str | None = None
     provider_api_key_env: str = "LLM_API_KEY"
@@ -244,6 +254,7 @@ class RuntimeConfig:
     harness: HarnessConfig = field(default_factory=HarnessConfig)
     knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
     skill_router: SkillRouterConfig = field(default_factory=lambda: SkillRouterConfig())
+    diminishing_returns: DiminishingReturnsConfig = field(default_factory=lambda: DiminishingReturnsConfig())
 
 
 class ConfigSchema(BaseModel):
@@ -537,6 +548,10 @@ def load_config(
     merged = merge_configs(merged, local_cfg)
 
     merged = merge_configs(merged, cli_overrides)
+
+    # Apply pending config migrations
+    from llm_code.runtime.config_migration import apply_pending_migrations
+    merged = apply_pending_migrations(merged, config_dir=Path(user_dir))
 
     # Validate merged config; on error, log warning and continue with best-effort defaults
     try:

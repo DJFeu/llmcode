@@ -36,15 +36,22 @@ def _make_response(text: str) -> MessageResponse:
     )
 
 
-def _make_provider(decompose_text: str, aggregate_text: str = "All done."):
+def _make_provider(*responses: str):
+    """Create mock provider returning given response texts in order."""
     provider = MagicMock()
     provider.send_message = AsyncMock(
-        side_effect=[
-            _make_response(decompose_text),
-            _make_response(aggregate_text),
-        ]
+        side_effect=[_make_response(r) for r in responses]
     )
     return provider
+
+
+def _make_orchestrate_provider(decompose_text: str, aggregate_text: str = "All done."):
+    """Create mock provider for full orchestrate flow (synthesize + decompose + aggregate)."""
+    return _make_provider(
+        '{"should_delegate": true, "reason": "complex"}',
+        decompose_text,
+        aggregate_text,
+    )
 
 
 def _make_config(max_members: int = 3, model: str = "test-model"):
@@ -52,6 +59,7 @@ def _make_config(max_members: int = 3, model: str = "test-model"):
     config.model = model
     config.swarm = MagicMock()
     config.swarm.max_members = max_members
+    config.swarm.synthesis_enabled = True
     return config
 
 
@@ -180,7 +188,7 @@ class TestOrchestrate:
     @pytest.mark.asyncio
     async def test_orchestrate_full_flow(self, manager):
         subtasks_json = '[{"role": "coder", "task": "implement X"}]'
-        provider = _make_provider(subtasks_json, aggregate_text="Summary: X implemented.")
+        provider = _make_orchestrate_provider(subtasks_json, aggregate_text="Summary: X implemented.")
         config = _make_config(max_members=3)
 
         # Mock create_member to return a fake member without spawning
@@ -198,7 +206,10 @@ class TestOrchestrate:
 
     @pytest.mark.asyncio
     async def test_orchestrate_no_subtasks(self, manager):
-        provider = _make_provider("not json")
+        provider = _make_provider(
+            '{"should_delegate": true, "reason": "test"}',  # synthesis
+            "not json",  # decompose fails
+        )
         coord = Coordinator(manager, provider, _make_config())
         result = await coord.orchestrate("some task")
         assert "No subtasks" in result
@@ -207,7 +218,7 @@ class TestOrchestrate:
     async def test_orchestrate_respects_max_members(self, manager):
         # 5 subtasks but max_members=2
         subtasks = [{"role": f"r{i}", "task": f"task {i}"} for i in range(5)]
-        provider = _make_provider(json.dumps(subtasks), "Aggregated.")
+        provider = _make_orchestrate_provider(json.dumps(subtasks), "Aggregated.")
         config = _make_config(max_members=2)
 
         created_members = []
@@ -235,7 +246,7 @@ class TestOrchestrate:
     @pytest.mark.asyncio
     async def test_orchestrate_create_member_fails(self, manager):
         subtasks_json = '[{"role": "coder", "task": "implement X"}]'
-        provider = _make_provider(subtasks_json)
+        provider = _make_orchestrate_provider(subtasks_json)
         config = _make_config()
 
         with patch.object(manager, "create_member", new=AsyncMock(side_effect=ValueError("max reached"))):

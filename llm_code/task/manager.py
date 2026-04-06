@@ -91,6 +91,11 @@ class TaskLifecycleManager:
                 continue
         return tuple(tasks)
 
+    def running_task_count(self) -> int:
+        """Count tasks in active states (PLAN, DO, VERIFY)."""
+        active = {TaskStatus.PLAN, TaskStatus.DO, TaskStatus.VERIFY}
+        return sum(1 for t in self.list_tasks() if t.status in active)
+
     def update_task(self, task_id: str, **kwargs) -> TaskState:
         """Update arbitrary fields on a task (immutable replace)."""
         task = self._load(task_id)
