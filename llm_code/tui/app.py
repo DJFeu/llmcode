@@ -196,6 +196,13 @@ class LLMCodeTUI(App):
                     chat.add_entry(AssistantText(f"Plugin directory not found: {subdir}"))
                     return
                 shutil.copytree(src, dest)
+                # Register in plugin state so it shows as installed
+                try:
+                    from llm_code.marketplace.installer import PluginInstaller
+                    installer = PluginInstaller(Path.home() / ".llmcode" / "plugins")
+                    installer.enable(name)
+                except Exception:
+                    pass
                 self._reload_skills()
                 chat.add_entry(AssistantText(f"Installed {name}. Activated."))
         except Exception as exc:

@@ -118,24 +118,32 @@ class PluginInstaller:
         self._write_state(state)
 
     def list_installed(self) -> list[InstalledPlugin]:
-        """Return all installed plugins, merging directory scan with state.json."""
+        """Return all installed plugins, merging directory scan with state.json.
+
+        Plugins with .claude-plugin/plugin.json use its metadata.
+        Plugins without a manifest (e.g. from marketplace subdir install)
+        are still detected if they have a directory and state.json entry.
+        """
         state = self._read_state()
         plugins: list[InstalledPlugin] = []
+        seen_names: set[str] = set()
 
         for entry in sorted(self._install_dir.iterdir()):
             if not entry.is_dir():
                 continue
-            if entry.name == "state.json":
-                continue
+            name = entry.name
+
             try:
                 manifest = PluginManifest.from_path(entry)
             except FileNotFoundError:
-                continue
+                # No .claude-plugin/plugin.json — create minimal manifest from dir name
+                manifest = PluginManifest(name=name, version="0.0.0", description="")
 
-            entry_state = state.get(manifest.name, {})
+            entry_state = state.get(name, {})
             enabled = bool(entry_state.get("enabled", True))
             installed_from = str(entry_state.get("installed_from", "local"))
 
+            seen_names.add(name)
             plugins.append(
                 InstalledPlugin(
                     manifest=manifest,

@@ -48,27 +48,34 @@ OFFICIAL_PLUGINS = [
 ]
 
 COMMUNITY_PLUGINS = [
-    {"name": "ai-integration-architect", "desc": "Design and scaffold AI integration into enterprise systems", "skills": 1, "repo": ""},
-    {"name": "claude-md-optimizer", "desc": "Optimize oversized CLAUDE.md using progressive disclosure", "skills": 1, "repo": ""},
+    # Verified: exists in known_marketplaces or has standalone repo
     {"name": "codex", "desc": "OpenAI Codex companion — rescue, review, second opinion", "skills": 5, "repo": "openai/codex-plugin-cc"},
-    {"name": "devfleet", "desc": "Orchestrate parallel agents via DevFleet", "skills": 1, "repo": ""},
-    {"name": "loop-operator", "desc": "Operate autonomous agent loops with monitoring", "skills": 3, "repo": ""},
-    {"name": "chief-of-staff", "desc": "Triage email, Slack, LINE, Messenger communications", "skills": 1, "repo": ""},
-    {"name": "sessions", "desc": "Manage session history, aliases, and metadata", "skills": 1, "repo": ""},
-    {"name": "pm2", "desc": "PM2 process manager integration", "skills": 1, "repo": ""},
-    {"name": "context-budget", "desc": "Analyze context window usage across agents and skills", "skills": 1, "repo": ""},
-    {"name": "harness-optimizer", "desc": "Optimize local agent harness for reliability and cost", "skills": 1, "repo": ""},
-    {"name": "performance-optimizer", "desc": "Identify bottlenecks, optimize slow code, reduce bundle size", "skills": 1, "repo": ""},
-    {"name": "database-reviewer", "desc": "PostgreSQL query optimization, schema design, security", "skills": 1, "repo": ""},
-    {"name": "kotlin-tools", "desc": "Kotlin/Gradle build, review, and TDD tools", "skills": 3, "repo": ""},
-    {"name": "cpp-tools", "desc": "C++ build, review, and TDD tools", "skills": 3, "repo": ""},
-    {"name": "go-tools", "desc": "Go build, review, and TDD tools", "skills": 3, "repo": ""},
-    {"name": "rust-tools", "desc": "Rust build, review, and TDD tools", "skills": 3, "repo": ""},
-    {"name": "e2e-runner", "desc": "End-to-end testing with Playwright and browser agents", "skills": 1, "repo": ""},
-    {"name": "doc-updater", "desc": "Update documentation and codemaps automatically", "skills": 2, "repo": ""},
-    {"name": "refactor-cleaner", "desc": "Dead code cleanup, consolidation, and safe removal", "skills": 1, "repo": ""},
-    {"name": "translate-book", "desc": "Translate books (PDF/DOCX/EPUB) with parallel agents", "skills": 1, "repo": ""},
-    {"name": "prompt-optimize", "desc": "Analyze and optimize prompts for better LLM output", "skills": 1, "repo": ""},
+    # Third-party from paddo-tools marketplace
+    {"name": "gemini-tools", "desc": "Gemini integration for Claude Code", "skills": 0, "repo": "paddo/claude-tools", "subdir": "plugins/gemini-tools"},
+    {"name": "headless", "desc": "Headless browser automation", "skills": 0, "repo": "paddo/claude-tools", "subdir": "plugins/headless"},
+    # External plugins in official marketplace
+    {"name": "discord", "desc": "Discord messaging bridge with access control", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "external_plugins/discord"},
+    {"name": "slack", "desc": "Slack integration for Claude Code", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "external_plugins/slack"},
+    {"name": "linear", "desc": "Linear issue tracking integration", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "external_plugins/linear"},
+    {"name": "github", "desc": "GitHub integration for issues and PRs", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "external_plugins/github"},
+    {"name": "gitlab", "desc": "GitLab integration", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "external_plugins/gitlab"},
+    {"name": "firebase", "desc": "Firebase integration", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "external_plugins/firebase"},
+    {"name": "terraform", "desc": "Terraform IaC automation and planning", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "external_plugins/terraform"},
+    {"name": "telegram", "desc": "Telegram messaging integration", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "external_plugins/telegram"},
+    {"name": "greptile", "desc": "Codebase search and understanding", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "external_plugins/greptile"},
+    {"name": "asana", "desc": "Asana project management integration", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "external_plugins/asana"},
+    # Additional internal plugins we missed
+    {"name": "hookify", "desc": "Hook management and creation tools", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/hookify"},
+    {"name": "plugin-dev", "desc": "Plugin development tools", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/plugin-dev"},
+    {"name": "mcp-server-dev", "desc": "MCP server development tools", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/mcp-server-dev"},
+    # Additional LSPs from official
+    {"name": "kotlin-lsp", "desc": "Kotlin language server integration", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/kotlin-lsp"},
+    {"name": "ruby-lsp", "desc": "Ruby language server integration", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/ruby-lsp"},
+    {"name": "swift-lsp", "desc": "Swift language server integration", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/swift-lsp"},
+    {"name": "php-lsp", "desc": "PHP language server integration", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/php-lsp"},
+    {"name": "lua-lsp", "desc": "Lua language server integration", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/lua-lsp"},
+    {"name": "csharp-lsp", "desc": "C# language server integration", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/csharp-lsp"},
+    {"name": "jdtls-lsp", "desc": "Java language server integration", "skills": 0, "repo": _OFFICIAL_MARKETPLACE, "subdir": "plugins/jdtls-lsp"},
 ]
 
 
