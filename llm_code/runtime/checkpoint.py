@@ -51,10 +51,13 @@ class CheckpointManager:
         self._stack.append(cp)
         return cp
 
-    def undo(self) -> Checkpoint | None:
-        """Pop the last checkpoint and hard-reset the repo to that SHA."""
-        if not self._stack:
+    def undo(self, steps: int = 1) -> Checkpoint | None:
+        """Pop the last N checkpoints and hard-reset to that SHA."""
+        if not self._stack or steps < 1:
             return None
+        steps = min(steps, len(self._stack))
+        for _ in range(steps - 1):
+            self._stack.pop()
         cp = self._stack.pop()
         subprocess.run(
             ["git", "reset", "--hard", cp.git_sha],

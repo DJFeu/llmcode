@@ -41,6 +41,8 @@ KNOWN_COMMANDS = frozenset({
     "map",
     "harness",
     "knowledge",
+    "diff",
+    "mode",
 })
 
 

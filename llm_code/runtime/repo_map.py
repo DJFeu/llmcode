@@ -78,6 +78,12 @@ class RepoMap:
         return "\n".join(lines)
 
 
+def compute_map_budget(context_window: int, chat_tokens: int) -> int:
+    """Compute optimal repo map token budget based on available context."""
+    available = context_window - chat_tokens - 4096  # padding
+    return min(max(512, available // 8), 4096)
+
+
 def build_repo_map(cwd: Path, max_files: int = 100) -> RepoMap:
     """Build a symbol map of the repository rooted at *cwd*."""
     source_files: list[Path] = []
@@ -87,18 +93,29 @@ def build_repo_map(cwd: Path, max_files: int = 100) -> RepoMap:
     file_symbols: list[FileSymbols] = []
     for f in source_files[:max_files]:
         rel = str(f.relative_to(cwd))
-        suffix = f.suffix.lower()
-
-        if suffix in _PYTHON_EXTS:
-            fs = _parse_python(f, rel)
-        elif suffix in _JS_TS_EXTS:
-            fs = _parse_js_ts(f, rel)
-        else:
-            fs = FileSymbols(path=rel)
-
-        file_symbols.append(fs)
+        file_symbols.append(_parse_file(f, rel))
 
     return RepoMap(files=tuple(file_symbols))
+
+
+def _parse_file(path: Path, rel: str) -> FileSymbols:
+    """Parse file symbols -- tree-sitter first, fallback to ast/regex."""
+    try:
+        from llm_code.runtime.treesitter_parser import parse_file as ts_parse
+
+        result = ts_parse(path, rel)
+        if result is not None:
+            return result
+    except Exception:
+        pass
+
+    # Existing fallback
+    suffix = path.suffix.lower()
+    if suffix in _PYTHON_EXTS:
+        return _parse_python(path, rel)
+    elif suffix in _JS_TS_EXTS:
+        return _parse_js_ts(path, rel)
+    return FileSymbols(path=rel)
 
 
 def _collect_source_files(

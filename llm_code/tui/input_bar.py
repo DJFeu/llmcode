@@ -19,8 +19,9 @@ SLASH_COMMANDS = sorted([
     "/index", "/session", "/skill", "/plugin", "/mcp", "/memory",
     "/lsp", "/cancel", "/cron", "/task", "/swarm", "/voice", "/ide",
     "/vcr", "/hida", "/checkpoint",
-    "/plan", "/analyze", "/diff_check", "/dump", "/map",
+    "/diff", "/plan", "/analyze", "/diff_check", "/dump", "/map",
     "/harness", "/knowledge",
+    "/mode",
 ])
 
 # Commands that execute immediately (no arguments needed)
@@ -55,6 +56,7 @@ SLASH_COMMAND_DESCS: list[tuple[str, str]] = [
     ("/ide", "IDE bridge"),
     ("/vcr", "VCR recording"),
     ("/checkpoint", "Checkpoints"),
+    ("/diff", "Diff since checkpoint"),
     ("/hida", "HIDA classification"),
     ("/lsp", "LSP status"),
     ("/cancel", "Cancel generation"),
@@ -67,6 +69,7 @@ SLASH_COMMAND_DESCS: list[tuple[str, str]] = [
     ("/map", "Repo map"),
     ("/harness", "Harness controls"),
     ("/knowledge", "Knowledge base"),
+    ("/mode", "Switch mode (suggest/normal/plan)"),
 ]
 
 

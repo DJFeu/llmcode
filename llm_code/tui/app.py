@@ -33,11 +33,13 @@ class LLMCodeTUI(App):
         config: Any = None,
         cwd: Path | None = None,
         budget: int | None = None,
+        initial_mode: str | None = None,
     ) -> None:
         super().__init__()
         self._config = config
         self._cwd = cwd or Path.cwd()
         self._budget = budget
+        self._initial_mode = initial_mode
         self._runtime = None
         self._cost_tracker = None
         self._input_tokens = 0
@@ -84,6 +86,9 @@ class LLMCodeTUI(App):
             url = self._config.provider_base_url
             status = self.query_one(StatusBar)
             status.is_local = "localhost" in url or "127.0.0.1" in url or "0.0.0.0" in url
+        # Apply initial mode from CLI --mode flag
+        if self._initial_mode:
+            self._cmd_mode(self._initial_mode)
         # Focus input bar so it receives key events
         self.query_one(InputBar).focus()
         # Register SIGINT handler for clean interrupt (Ctrl+C)
@@ -1280,6 +1285,9 @@ class LLMCodeTUI(App):
 
     def _cmd_model(self, args: str) -> None:
         chat = self.query_one(ChatScrollView)
+        if args.strip() == "route":
+            self._show_model_routes()
+            return
         if args:
             import dataclasses
             self._config = dataclasses.replace(self._config, model=args)
@@ -1289,6 +1297,24 @@ class LLMCodeTUI(App):
         else:
             model = self._config.model if self._config else "(not set)"
             chat.add_entry(AssistantText(f"Current model: {model}"))
+
+    def _show_model_routes(self) -> None:
+        """Display configured model routing table."""
+        chat = self.query_one(ChatScrollView)
+        routes: list[str] = []
+        cfg = self._config
+        if hasattr(cfg, "model") and cfg.model:
+            routes.append(f"  {'default':<12s}  {cfg.model}")
+        if hasattr(cfg, "model_routing") and cfg.model_routing:
+            mr = cfg.model_routing
+            for attr in ("sub_agent", "compaction", "fallback"):
+                model = getattr(mr, attr, None)
+                if model:
+                    routes.append(f"  {attr:<12s}  {model}")
+        if routes:
+            chat.add_entry(AssistantText("Model routing:\n" + "\n".join(routes)))
+        else:
+            chat.add_entry(AssistantText("No model routing configured"))
 
     def _cmd_cost(self, args: str) -> None:
         cost = self._cost_tracker.format_cost() if self._cost_tracker else "No cost data"
@@ -1336,11 +1362,32 @@ class LLMCodeTUI(App):
             else:
                 chat.add_entry(AssistantText("No checkpoints."))
         elif self._checkpoint_mgr.can_undo():
-            cp = self._checkpoint_mgr.undo()
+            steps = 1
+            if args.strip().isdigit():
+                steps = int(args.strip())
+            cp = self._checkpoint_mgr.undo(steps)
             if cp:
-                chat.add_entry(AssistantText(f"Undone: {cp.tool_name} ({cp.tool_args_summary[:50]})"))
+                label = f"Undone {steps} step(s)" if steps > 1 else "Undone"
+                chat.add_entry(AssistantText(f"{label}: {cp.tool_name} ({cp.tool_args_summary[:50]})"))
         else:
             chat.add_entry(AssistantText("Nothing to undo."))
+
+    def _cmd_diff(self, args: str) -> None:
+        """Show diff since last checkpoint."""
+        chat = self.query_one(ChatScrollView)
+        if not self._checkpoint_mgr or not self._checkpoint_mgr.can_undo():
+            chat.add_entry(AssistantText("No checkpoints available."))
+            return
+        last_cp = self._checkpoint_mgr.list_checkpoints()[-1]
+        import subprocess
+        result = subprocess.run(
+            ["git", "diff", last_cp.git_sha, "HEAD"],
+            capture_output=True, text=True, cwd=self._cwd,
+        )
+        if result.stdout.strip():
+            chat.add_entry(AssistantText(f"```diff\n{result.stdout}\n```"))
+        else:
+            chat.add_entry(AssistantText("No changes since last checkpoint."))
 
     def _cmd_index(self, args: str) -> None:
         chat = self.query_one(ChatScrollView)
@@ -1429,6 +1476,56 @@ class LLMCodeTUI(App):
             ))
         if self._runtime:
             self._runtime.plan_mode = self._plan_mode
+
+    def _cmd_mode(self, args: str) -> None:
+        """Switch between suggest/normal/plan modes."""
+        from llm_code.runtime.permissions import PermissionMode
+
+        chat = self.query_one(ChatScrollView)
+        status = self.query_one(StatusBar)
+
+        # Map mode names to PermissionMode values and status bar labels
+        valid_modes = {
+            "suggest": (PermissionMode.PROMPT, "SUGGEST"),
+            "normal": (PermissionMode.WORKSPACE_WRITE, ""),
+            "plan": (PermissionMode.PLAN, "PLAN"),
+        }
+
+        if not args.strip():
+            # Determine current mode name from status bar state and plan flag
+            if self._plan_mode:
+                current = "plan"
+            elif status.plan_mode == "SUGGEST":
+                current = "suggest"
+            else:
+                current = "normal"
+            chat.add_entry(AssistantText(
+                f"Current mode: {current}\nAvailable: suggest, normal, plan"
+            ))
+            return
+
+        mode_name = args.strip().lower()
+        if mode_name not in valid_modes:
+            chat.add_entry(AssistantText(
+                f"Unknown mode: {mode_name}. Use: suggest, normal, plan"
+            ))
+            return
+
+        perm_mode, label = valid_modes[mode_name]
+
+        # Update plan mode flag
+        self._plan_mode = mode_name == "plan"
+
+        # Update status bar
+        status.plan_mode = label
+
+        # Update runtime permission policy mode
+        if self._runtime and hasattr(self._runtime, "_permissions"):
+            self._runtime._permissions._mode = perm_mode
+        if self._runtime:
+            self._runtime.plan_mode = self._plan_mode
+
+        chat.add_entry(AssistantText(f"Switched to {mode_name} mode"))
 
     def _cmd_harness(self, args: str) -> None:
         """Show or configure harness controls."""

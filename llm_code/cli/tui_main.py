@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import click
@@ -30,6 +31,9 @@ _PERMISSION_CHOICES = ["prompt", "auto_accept", "read_only", "workspace_write", 
 @click.option("--replay", default=None, help="Replay a VCR recording file (.jsonl)")
 @click.option("--replay-speed", type=float, default=1.0, help="Playback speed for --replay (0 = instant)")
 @click.option("--resume", default=None, help="Resume from a checkpoint (session_id or 'last')")
+@click.option("--mode", "cli_mode", type=click.Choice(["suggest", "normal", "plan"]), default=None, help="Interaction mode (suggest/normal/plan)")
+@click.option("-x", "--execute", "execute_prompt", default=None, help="Translate to shell command and execute")
+@click.option("-q", "--quick", "quick_prompt", default=None, help="Quick Q&A (no TUI)")
 def main(
     prompt: str | None,
     model: str | None,
@@ -46,6 +50,9 @@ def main(
     replay: str | None = None,
     replay_speed: float = 1.0,
     resume: str | None = None,
+    cli_mode: str | None = None,
+    execute_prompt: str | None = None,
+    quick_prompt: str | None = None,
 ) -> None:
     """llm-code: AI coding assistant CLI."""
     from llm_code.logging import setup_logging
@@ -64,6 +71,11 @@ def main(
         os.environ["LLM_API_KEY"] = api_key
     if permission:
         cli_overrides.setdefault("permissions", {})["mode"] = permission
+
+    # Map --mode flag to permission mode
+    _MODE_PERMISSION_MAP = {"suggest": "prompt", "normal": "workspace_write", "plan": "prompt"}
+    if cli_mode:
+        cli_overrides.setdefault("permissions", {})["mode"] = _MODE_PERMISSION_MAP[cli_mode]
 
     # Ollama provider setup
     if provider == "ollama":
@@ -86,6 +98,20 @@ def main(
         local_path=cwd / ".llmcode" / "config.json",
         cli_overrides=cli_overrides,
     )
+
+    # One-shot modes (skip TUI)
+    if execute_prompt:
+        from llm_code.cli.oneshot import run_execute_mode
+        run_execute_mode(execute_prompt, config)
+        return
+
+    if quick_prompt:
+        stdin_text = None
+        if not sys.stdin.isatty():
+            stdin_text = sys.stdin.read()
+        from llm_code.cli.oneshot import run_quick_mode
+        run_quick_mode(quick_prompt, config, stdin_text)
+        return
 
     import asyncio
 
@@ -134,7 +160,7 @@ def main(
 
     # Textual fullscreen TUI (default and only UI mode)
     from llm_code.tui.app import LLMCodeTUI
-    app = LLMCodeTUI(config=config, cwd=cwd, budget=budget)
+    app = LLMCodeTUI(config=config, cwd=cwd, budget=budget, initial_mode=cli_mode)
     app.run()
 
 

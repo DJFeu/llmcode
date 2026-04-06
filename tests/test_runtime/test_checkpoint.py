@@ -130,3 +130,88 @@ def test_undo_restores_file(git_repo):
     # Now file should be restored
     assert (git_repo / "data.txt").exists()
     assert (git_repo / "data.txt").read_text() == "important data"
+
+
+def test_undo_multi_step(git_repo):
+    """undo(n) pops n checkpoints and resets to the nth one."""
+    manager = CheckpointManager(git_repo)
+
+    # Create 3 checkpoints; create() does git add -A + commit internally
+    (git_repo / "a.txt").write_text("a")
+    cp_a = manager.create("tool_a", {"step": 1})
+
+    (git_repo / "b.txt").write_text("b")
+    cp_b = manager.create("tool_b", {"step": 2})
+
+    (git_repo / "c.txt").write_text("c")
+    manager.create("tool_c", {"step": 3})
+
+    assert len(manager.list_checkpoints()) == 3
+
+    # Undo 2 steps — pops tool_c and tool_b, resets to tool_b's SHA
+    cp = manager.undo(steps=2)
+    assert cp is not None
+    assert cp.tool_name == "tool_b"
+    assert len(manager.list_checkpoints()) == 1
+
+    # HEAD should be at tool_b's checkpoint SHA
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        capture_output=True, text=True, cwd=git_repo,
+    ).stdout.strip()
+    assert head == cp_b.git_sha
+
+    # c.txt should be gone (was committed after tool_b checkpoint)
+    assert not (git_repo / "c.txt").exists()
+    # a.txt and b.txt should still exist
+    assert (git_repo / "a.txt").exists()
+    assert (git_repo / "b.txt").exists()
+
+
+def test_undo_multi_step_exceeds_stack(git_repo):
+    """undo(n) where n > stack size clamps to stack size."""
+    manager = CheckpointManager(git_repo)
+    manager.create("tool_a", {})
+    manager.create("tool_b", {})
+
+    cp = manager.undo(steps=10)
+    assert cp is not None
+    assert cp.tool_name == "tool_a"
+    assert len(manager.list_checkpoints()) == 0
+
+
+def test_undo_single_step_default(git_repo):
+    """undo(1) behaves identically to the old undo()."""
+    manager = CheckpointManager(git_repo)
+    manager.create("tool_a", {})
+    manager.create("tool_b", {})
+
+    cp = manager.undo(steps=1)
+    assert cp is not None
+    assert cp.tool_name == "tool_b"
+    assert len(manager.list_checkpoints()) == 1
+
+
+def test_undo_zero_or_negative_returns_none(git_repo):
+    """undo(0) and undo(-1) return None without modifying stack."""
+    manager = CheckpointManager(git_repo)
+    manager.create("tool_a", {})
+
+    assert manager.undo(steps=0) is None
+    assert manager.undo(steps=-1) is None
+    assert len(manager.list_checkpoints()) == 1
+
+
+def test_list_checkpoints_after_multi_undo(git_repo):
+    """After multi-step undo, remaining checkpoints are correct."""
+    manager = CheckpointManager(git_repo)
+    manager.create("tool_1", {"a": 1})
+    manager.create("tool_2", {"b": 2})
+    manager.create("tool_3", {"c": 3})
+    manager.create("tool_4", {"d": 4})
+
+    manager.undo(steps=2)
+    remaining = manager.list_checkpoints()
+    assert len(remaining) == 2
+    assert remaining[0].tool_name == "tool_1"
+    assert remaining[1].tool_name == "tool_2"

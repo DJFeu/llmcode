@@ -98,6 +98,44 @@ class TestKeybindCommand:
         assert cmd.args == "reset"
 
 
+class TestDiffCommand:
+    def test_parse_diff_no_args(self) -> None:
+        cmd = parse_slash_command("/diff")
+        assert cmd is not None
+        assert cmd.name == "diff"
+        assert cmd.args == ""
+
+
+class TestModeCommand:
+    def test_parse_mode_no_args(self) -> None:
+        cmd = parse_slash_command("/mode")
+        assert cmd is not None
+        assert cmd.name == "mode"
+        assert cmd.args == ""
+
+    def test_parse_mode_suggest(self) -> None:
+        cmd = parse_slash_command("/mode suggest")
+        assert cmd is not None
+        assert cmd.name == "mode"
+        assert cmd.args == "suggest"
+
+    def test_parse_mode_normal(self) -> None:
+        cmd = parse_slash_command("/mode normal")
+        assert cmd is not None
+        assert cmd.name == "mode"
+        assert cmd.args == "normal"
+
+    def test_parse_mode_plan(self) -> None:
+        cmd = parse_slash_command("/mode plan")
+        assert cmd is not None
+        assert cmd.name == "mode"
+        assert cmd.args == "plan"
+
+    def test_mode_in_known_commands(self) -> None:
+        from llm_code.cli.commands import KNOWN_COMMANDS
+        assert "mode" in KNOWN_COMMANDS
+
+
 class TestAuditCommand:
     def test_parse_audit_no_args(self) -> None:
         from llm_code.cli.commands import parse_slash_command
