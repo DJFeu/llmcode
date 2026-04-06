@@ -70,3 +70,31 @@ def test_harness_finding_fields():
     assert f.message == "type error"
     assert f.file_path == "foo.py"
     assert f.severity == "error"
+
+
+def test_runtime_config_has_harness():
+    from llm_code.runtime.config import RuntimeConfig
+    from llm_code.harness.config import HarnessConfig
+
+    cfg = RuntimeConfig()
+    assert isinstance(cfg.harness, HarnessConfig)
+    assert cfg.harness.template == "auto"
+
+
+def test_runtime_config_from_dict_harness():
+    from llm_code.runtime.config import _dict_to_runtime_config as _build_runtime_config
+
+    data = {
+        "harness": {
+            "template": "python-web",
+            "controls": {
+                "test_runner": {"enabled": True},
+                "auto_commit": {"enabled": False},
+            },
+        }
+    }
+    cfg = _build_runtime_config(data)
+    assert cfg.harness.template == "python-web"
+    names = {c.name for c in cfg.harness.controls}
+    assert "test_runner" in names
+    assert "auto_commit" in names

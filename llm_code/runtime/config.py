@@ -9,6 +9,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ValidationError, field_validator
 
+from llm_code.harness.config import HarnessConfig, HarnessControl
+
 
 @dataclass(frozen=True)
 class HookConfig:
@@ -217,6 +219,7 @@ class RuntimeConfig:
     enterprise: EnterpriseConfig = field(default_factory=EnterpriseConfig)
     auto_commit: bool = False
     lsp_auto_diagnose: bool = True
+    harness: HarnessConfig = field(default_factory=HarnessConfig)
 
 
 class ConfigSchema(BaseModel):
@@ -418,6 +421,22 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         audit=enterprise_audit,
     )
 
+    # Harness config
+    harness_data = data.get("harness", {})
+    harness_controls: list[HarnessControl] = []
+    for name, overrides in harness_data.get("controls", {}).items():
+        harness_controls.append(HarnessControl(
+            name=name,
+            category=overrides.get("category", "sensor"),
+            kind=overrides.get("kind", "computational"),
+            enabled=overrides.get("enabled", True),
+            trigger=overrides.get("trigger", "post_tool"),
+        ))
+    harness = HarnessConfig(
+        template=harness_data.get("template", "auto"),
+        controls=tuple(harness_controls),
+    )
+
     return RuntimeConfig(
         model=data.get("model", ""),
         provider_base_url=provider.get("base_url", None),
@@ -456,6 +475,7 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         enterprise=enterprise,
         auto_commit=data.get("auto_commit", False),
         lsp_auto_diagnose=data.get("lsp_auto_diagnose", True),
+        harness=harness,
     )
 
 
