@@ -321,43 +321,21 @@ class TestEditFileTool:
         import unittest.mock as _mock
 
         original_mtime = f.stat().st_mtime
-        future_mtime = original_mtime + 2.0
+        future_mtime = original_mtime + 10.0
 
-        # Patch stat on the concrete Path subclass (PosixPath / WindowsPath).
-        # The execute() method calls path.stat() twice for the target file:
-        #   call 1 — from path.exists() (internal pathlib)
-        #   call 2 — explicit st = path.stat() to get size+mtime_before
-        #   call 3 — current_mtime = path.stat().st_mtime  (conflict check)
-        # We return original_mtime on call 2 and future_mtime on call 3.
-        real_stat = type(f).stat
-        call_counts: dict[str, int] = {}
+        # Strategy: patch read_text to bump the file's real mtime after reading.
+        # This simulates another process modifying the file between read and write.
+        real_read_text = type(f).read_text
 
-        def patched_stat(self_path, *, follow_symlinks=True):
-            key = str(self_path)
-            count = call_counts.get(key, 0) + 1
-            call_counts[key] = count
-            real_result = real_stat(self_path, follow_symlinks=follow_symlinks)
-            if key == str(f):
-                # resolve_path calls exists() which calls stat() once,
-                # then edit_file calls stat() for mtime_before and mtime_after.
-                # We want the last two calls on the target file to return
-                # different mtimes to simulate external modification.
-                total = call_counts[key]
-                if total == 3:
-                    # mtime_before read — original
-                    return type("_FakeStat", (), {
-                        "st_mtime": original_mtime,
-                        "st_size": real_result.st_size,
-                    })()
-                if total == 4:
-                    # mtime_after check — simulated external modification
-                    return type("_FakeStat", (), {
-                        "st_mtime": future_mtime,
-                        "st_size": real_result.st_size,
-                    })()
-            return real_result
+        def patched_read_text(self_path, *args, **kwargs):
+            content = real_read_text(self_path, *args, **kwargs)
+            # After edit_file reads the file, "externally modify" it
+            if str(self_path) == str(f):
+                import os
+                os.utime(str(f), (future_mtime, future_mtime))
+            return content
 
-        with _mock.patch.object(type(f), "stat", patched_stat):
+        with _mock.patch.object(type(f), "read_text", patched_read_text):
             result = EditFileTool().execute(
                 {"path": str(f), "old": "original content here", "new": "new"}
             )
