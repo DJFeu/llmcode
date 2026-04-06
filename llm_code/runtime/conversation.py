@@ -394,7 +394,7 @@ class ConversationRuntime:
                 self._fire_hook("http_error", {"error": _exc_str[:200], "model": self._active_model})
                 # Auto-fallback: if native tool calling is not supported by server
                 if "tool-call-parser" in _exc_str or "tool choice" in _exc_str.lower():
-                    logger.warning("Server does not support native tool calling; falling back to XML tag mode")
+                    logger.debug("Server does not support native tool calling; falling back to XML tag mode")
                     self._fire_hook("http_fallback", {"reason": "xml_mode", "model": self._active_model})
                     self._force_xml_mode = True
                     # Rebuild request without tools
