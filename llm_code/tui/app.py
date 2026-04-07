@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from textual import events
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 
 from llm_code.tui.chat_view import ChatScrollView, UserMessage, AssistantText
 from llm_code.tui.header_bar import HeaderBar
@@ -31,12 +32,14 @@ class LLMCodeTUI(App):
     TITLE = "llm-code"
     CSS = APP_CSS
     BINDINGS = [
-        ("ctrl+d", "quit_app", "Quit"),
-        ("pageup", "scroll_chat_up", "Scroll Up"),
-        ("pagedown", "scroll_chat_down", "Scroll Down"),
-        ("shift+up", "scroll_chat_up", "Scroll Up"),
-        ("shift+down", "scroll_chat_down", "Scroll Down"),
-        ("shift+tab", "cycle_agent", "Cycle Agent"),
+        Binding("ctrl+d", "quit_app", "Quit"),
+        Binding("pageup", "scroll_chat_up", "Scroll Up"),
+        Binding("pagedown", "scroll_chat_down", "Scroll Down"),
+        Binding("shift+up", "scroll_chat_up", "Scroll Up"),
+        Binding("shift+down", "scroll_chat_down", "Scroll Down"),
+        # priority=True overrides Textual's screen-level shift+tab → focus_previous
+        Binding("shift+tab", "cycle_agent", "Cycle Agent", priority=True),
+        Binding("ctrl+y", "cycle_agent", "Cycle Agent"),  # alternate keybinding
     ]
 
     def __init__(
@@ -161,7 +164,7 @@ class LLMCodeTUI(App):
             ("Multiline", "Shift+Enter"),
             ("Images", paste_key),
             ("Scroll", "PageUp/Down · Shift+↑/↓"),
-            ("Cycle agent", "Shift+Tab (build/plan/suggest)"),
+            ("Cycle agent", "Shift+Tab or Ctrl+Y (build/plan/suggest)"),
         ]:
             text.append(f"  {label:<14}", style="dim")
             text.append(f" {value}\n", style="white")
