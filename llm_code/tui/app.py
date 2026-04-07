@@ -78,6 +78,7 @@ class LLMCodeTUI(App):
         self._interrupt_pending: bool = False
         self._last_interrupt_time: float = 0.0
         self._analysis_context: str | None = None
+        self._context_warned: bool = False  # one-shot 80% warning
 
     def compose(self) -> ComposeResult:
         yield HeaderBar(id="header-bar")
@@ -98,6 +99,17 @@ class LLMCodeTUI(App):
             url = self._config.provider_base_url
             status = self.query_one(StatusBar)
             status.is_local = "localhost" in url or "127.0.0.1" in url or "0.0.0.0" in url
+        # Initialize context window meter
+        try:
+            status = self.query_one(StatusBar)
+            limit = 0
+            if self._config is not None:
+                limit = int(getattr(self._config, "compact_after_tokens", 0) or 0)
+            if limit <= 0:
+                limit = 128_000
+            status.context_limit = limit
+        except Exception:
+            pass
         # Periodic task count polling for status bar
         self.set_interval(3.0, self._poll_bg_tasks)
         # Apply initial mode from CLI --mode flag
@@ -915,6 +927,7 @@ class LLMCodeTUI(App):
         # Reset per-turn counters
         turn_input_tokens = 0
         turn_output_tokens = 0
+        self._context_warned = False
         # Per-turn map: tool_id → live ToolBlock (so Result events update
         # the same widget that was created at Start, no second mount)
         _pending_tools: dict[str, ToolBlock] = {}
@@ -1180,6 +1193,21 @@ class LLMCodeTUI(App):
                         if self._cost_tracker:
                             cost_usd = self._cost_tracker.total_cost_usd
                             status.cost = f"${cost_usd:.4f}" if cost_usd > 0.0001 else ""
+                        # Context window meter: input tokens approximate
+                        # current context fill (input is the full re-sent state).
+                        status.context_used = event.usage.input_tokens
+                        if (
+                            not self._context_warned
+                            and status.context_limit > 0
+                            and status.context_pct() >= 80.0
+                        ):
+                            self._context_warned = True
+                            chat.add_entry(AssistantText(
+                                "⚠ Context window is "
+                                f"{int(status.context_pct())}% full. "
+                                "Run /compact to summarize older messages "
+                                "and free space."
+                            ))
 
         except Exception as exc:
             chat.add_entry(AssistantText(f"Error: {exc}"))
@@ -1291,6 +1319,41 @@ class LLMCodeTUI(App):
             chat.add_entry(AssistantText(
                 f"Unknown command: /{name} — type /help for help"
             ))
+
+    def _cmd_compact(self, args: str) -> None:
+        """Manually compact the conversation, freeing context window space."""
+        chat = self.query_one(ChatScrollView)
+        if self._runtime is None:
+            chat.add_entry(AssistantText("Compaction unavailable: runtime not initialized."))
+            return
+        try:
+            from llm_code.runtime.compaction import compact_session
+
+            before_msgs = len(self._runtime.session.messages)
+            before_toks = self._runtime.session.estimated_tokens()
+            keep = 4
+            try:
+                keep = int(args.strip()) if args.strip() else 4
+            except ValueError:
+                keep = 4
+            self._runtime.session = compact_session(
+                self._runtime.session, keep_recent=keep, summary="(manual /compact)",
+            )
+            after_msgs = len(self._runtime.session.messages)
+            after_toks = self._runtime.session.estimated_tokens()
+            chat.add_entry(AssistantText(
+                f"✓ Compacted: {before_msgs} → {after_msgs} messages, "
+                f"~{before_toks:,} → ~{after_toks:,} tokens. "
+                "Older messages summarized."
+            ))
+            try:
+                status = self.query_one(StatusBar)
+                status.context_used = after_toks
+                self._context_warned = False
+            except Exception:
+                pass
+        except Exception as exc:
+            chat.add_entry(AssistantText(f"Compaction failed: {exc}"))
 
     def _cmd_exit(self, args: str) -> None:
         self.run_worker(self._graceful_exit(), name="graceful_exit")

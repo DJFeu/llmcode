@@ -4,6 +4,18 @@ from __future__ import annotations
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.app import RenderResult
+from rich.text import Text
+
+
+def context_meter_style(pct: float) -> str:
+    """Return rich style string for a context-usage percentage (0..100)."""
+    if pct < 60:
+        return "dim"
+    if pct < 80:
+        return "yellow"
+    if pct < 95:
+        return "#ff8800"
+    return "bold red"
 
 
 class StatusBar(Widget):
@@ -17,6 +29,8 @@ class StatusBar(Widget):
     is_local: reactive[bool] = reactive(False)
     plan_mode: reactive[str] = reactive("")  # "" | "PLAN"
     bg_tasks: reactive[int] = reactive(0)   # running/pending background tasks
+    context_used: reactive[int] = reactive(0)     # tokens currently in context window
+    context_limit: reactive[int] = reactive(0)    # total context window size (0 = unknown)
 
     DEFAULT_CSS = """
     StatusBar {
@@ -28,6 +42,12 @@ class StatusBar(Widget):
     }
     """
 
+    def context_pct(self) -> float:
+        """Return current context-window utilization 0..100, or 0 if unknown."""
+        if self.context_limit <= 0:
+            return 0.0
+        return min(100.0, (self.context_used / self.context_limit) * 100.0)
+
     def _format_content(self) -> str:
         parts: list[str] = []
         if self.plan_mode:
@@ -38,6 +58,8 @@ class StatusBar(Widget):
             parts.append(self.model)
         if self.tokens > 0:
             parts.append(f"↓{self.tokens:,} tok")
+        if self.context_limit > 0:
+            parts.append(f"ctx {int(self.context_pct())}%")
         if self.is_local:
             parts.append("free")
         elif self.cost:
@@ -51,7 +73,20 @@ class StatusBar(Widget):
         return " │ ".join(parts)
 
     def render(self) -> RenderResult:
-        return self._format_content()
+        # Render via rich Text so the ctx segment can be color-coded.
+        plain = self._format_content()
+        if self.context_limit <= 0:
+            return plain
+        text = Text()
+        segments = plain.split(" │ ")
+        for i, seg in enumerate(segments):
+            if i:
+                text.append(" │ ")
+            if seg.startswith("ctx "):
+                text.append(seg, style=context_meter_style(self.context_pct()))
+            else:
+                text.append(seg)
+        return text
 
     def watch_model(self) -> None:
         self.refresh()
@@ -75,4 +110,10 @@ class StatusBar(Widget):
         self.refresh()
 
     def watch_bg_tasks(self) -> None:
+        self.refresh()
+
+    def watch_context_used(self) -> None:
+        self.refresh()
+
+    def watch_context_limit(self) -> None:
         self.refresh()
