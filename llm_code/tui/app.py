@@ -2602,12 +2602,7 @@ class LLMCodeTUI(App):
         chat.add_entry(AssistantText("\n".join(lines)))
 
     def _cmd_orchestrate(self, args: str) -> None:
-        """Run the OrchestratorHook (category routing + retry-on-failure).
-
-        Uses a report-only executor that surfaces the routing plan rather
-        than dispatching to the live swarm coordinator. Real execution
-        wiring is tracked separately.
-        """
+        """Run the OrchestratorHook with inline LLM execution per persona."""
         chat = self.query_one(ChatScrollView)
         task = args.strip()
         if not task:
@@ -2617,25 +2612,37 @@ class LLMCodeTUI(App):
                 "fallback personas on failure."
             ))
             return
+        if self._runtime is None:
+            chat.add_entry(AssistantText("Orchestrate: runtime not ready."))
+            return
+        self.run_worker(self._run_orchestrate(task), name="orchestrate")
+
+    async def _run_orchestrate(self, task: str) -> None:
+        chat = self.query_one(ChatScrollView)
         try:
             from llm_code.swarm.orchestrator_hook import OrchestratorHook, categorize
+            from llm_code.runtime.orchestrate_executor import (
+                make_inline_persona_executor,
+                sync_wrap,
+            )
 
-            def _executor(persona, task_text):  # report-only: always succeeds
-                return True, f"[plan] persona={persona.name} would handle: {task_text[:200]}"
-
-            hook = OrchestratorHook(executor=_executor)
-            result = hook.orchestrate(task)
+            runtime = self._runtime
+            executor = make_inline_persona_executor(runtime)
+            hook = OrchestratorHook(executor=sync_wrap(executor))
+            # Run blocking orchestrate in thread to avoid blocking UI loop.
+            import asyncio
+            result = await asyncio.to_thread(hook.orchestrate, task)
             category = categorize(task)
-            lines = [
-                f"Orchestrator plan (category={category}):",
-                "",
-            ]
-            for a in result.attempts:
-                status = "OK" if a.success else f"FAIL: {a.error}"
-                lines.append(f"  attempt {a.attempt}: {a.persona} -> {status}")
-            if result.success:
-                lines += ["", result.final_output]
-            chat.add_entry(AssistantText("\n".join(lines)))
+
+            success_attempt = next((a for a in result.attempts if a.success), None)
+            if success_attempt is not None:
+                chat.add_entry(SkillBadge([success_attempt.persona]))
+                chat.add_entry(AssistantText(result.final_output))
+            else:
+                lines = [f"Orchestrate failed (category={category}):", ""]
+                for a in result.attempts:
+                    lines.append(f"  attempt {a.attempt}: {a.persona} -> FAIL: {a.error}")
+                chat.add_entry(AssistantText("\n".join(lines)))
         except Exception as exc:
             chat.add_entry(AssistantText(f"Orchestrate failed: {exc}"))
 
