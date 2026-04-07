@@ -202,6 +202,15 @@ class ConversationRuntime:
         if hasattr(config, "lsp_auto_diagnose") and not config.lsp_auto_diagnose:
             self._harness.disable("lsp_diagnose")
         self._permission_future: asyncio.Future[str] | None = None
+        # Per-session in-memory permission allowlist for "always" responses.
+        # Tools added to _session_allowed_tools skip the prompt entirely.
+        # _session_allowed_exact contains (tool_name, args_preview) tuples for
+        # "always allow this exact" choices. _session_allowed_prefixes contains
+        # bash-command prefixes (e.g. "git ") that auto-allow.
+        self._session_allowed_tools: set[str] = set()
+        self._session_allowed_exact: set[tuple[str, str]] = set()
+        self._session_allowed_prefixes: set[str] = set()
+        self._session_allowed_path_roots: set[str] = set()
         self._has_attempted_reactive_compact = False
         self._consecutive_failures: int = 0
         self._compressor = ContextCompressor()
@@ -262,6 +271,57 @@ class ConversationRuntime:
         """Fire a hook event if the hook runner supports the generic fire() method."""
         if hasattr(self._hooks, "fire"):
             self._hooks.fire(event, context or {})
+
+    def is_session_allowed(
+        self, tool_name: str, args_preview: str, validated_args: dict | None = None,
+    ) -> bool:
+        """Return True if a tool call is pre-approved by the in-session allowlist."""
+        if tool_name in self._session_allowed_tools:
+            return True
+        if (tool_name, args_preview) in self._session_allowed_exact:
+            return True
+        if tool_name == "bash" and validated_args is not None:
+            cmd = str(validated_args.get("command", "")).strip()
+            for prefix in self._session_allowed_prefixes:
+                if cmd.startswith(prefix):
+                    return True
+        if tool_name in ("edit_file", "write_file", "multi_edit") and validated_args is not None:
+            path = str(validated_args.get("path") or validated_args.get("file_path") or "")
+            for root in self._session_allowed_path_roots:
+                if path.startswith(root):
+                    return True
+        return False
+
+    def record_permission_choice(
+        self,
+        choice: str,
+        tool_name: str,
+        args_preview: str,
+        validated_args: dict | None = None,
+    ) -> None:
+        """Persist an 'always' permission choice in the in-session allowlist.
+
+        ``choice`` is one of: 'always_kind', 'always_exact'.
+        For bash 'always_kind' also records the first command token as a prefix
+        rule. For file edits 'always_kind' records the workspace root.
+        """
+        if choice == "always_kind":
+            # File edit tools record a path-root scope rather than blanket allow,
+            # so an "always" choice in /work/proj does not also allow edits in /other.
+            if tool_name not in ("edit_file", "write_file", "multi_edit"):
+                self._session_allowed_tools.add(tool_name)
+            if tool_name == "bash" and validated_args is not None:
+                cmd = str(validated_args.get("command", "")).strip()
+                first = cmd.split()[0] if cmd else ""
+                if first:
+                    self._session_allowed_prefixes.add(first + " ")
+            if tool_name in ("edit_file", "write_file", "multi_edit"):
+                try:
+                    self._session_allowed_path_roots.add(str(self._context.cwd))
+                except Exception:
+                    pass
+        elif choice == "always_exact":
+            self._session_allowed_exact.add((tool_name, args_preview))
 
     def send_permission_response(self, response: str) -> None:
         """Resolve the pending permission prompt with 'allow', 'deny', or 'always'.
@@ -936,64 +996,74 @@ class ConversationRuntime:
             # Build a short preview of tool arguments for the permission prompt
             args_preview = json.dumps(validated_args, default=str)[:120]
 
-            # Attempt speculative pre-execution via overlay so the result is
-            # ready the moment the user approves.
-            spec_executor = None
-            try:
-                from llm_code.runtime.speculative import SpeculativeExecutor
-                import uuid as _uuid
-                session_id = f"{call.name}-{_uuid.uuid4().hex[:8]}"
-                spec_executor = SpeculativeExecutor(
-                    tool=tool,
-                    args=validated_args,
-                    base_dir=self._context.cwd,
-                    session_id=session_id,
-                )
-                spec_executor.pre_execute()
-            except Exception:
+            # In-session allowlist short-circuit (user previously chose
+            # "always" for this tool / prefix / exact-args).
+            if not self.is_session_allowed(call.name, args_preview, validated_args):
+                # Attempt speculative pre-execution via overlay so the result is
+                # ready the moment the user approves.
                 spec_executor = None
+                try:
+                    from llm_code.runtime.speculative import SpeculativeExecutor
+                    import uuid as _uuid
+                    session_id = f"{call.name}-{_uuid.uuid4().hex[:8]}"
+                    spec_executor = SpeculativeExecutor(
+                        tool=tool,
+                        args=validated_args,
+                        base_dir=self._context.cwd,
+                        session_id=session_id,
+                    )
+                    spec_executor.pre_execute()
+                except Exception:
+                    spec_executor = None
 
-            # Yield permission request and wait for user response
-            yield StreamPermissionRequest(
-                tool_name=call.name,
-                args_preview=args_preview,
-            )
-
-            loop = asyncio.get_running_loop()
-            self._permission_future = loop.create_future()
-            try:
-                response = await asyncio.wait_for(self._permission_future, timeout=300)
-            except asyncio.TimeoutError:
-                response = "deny"
-                logger.warning("Permission prompt for '%s' timed out (300s), auto-denying", call.name)
-            finally:
-                self._permission_future = None
-
-            if response in ("allow", "always"):
-                if response == "always":
-                    # Add to allow list so future calls skip prompting
-                    if hasattr(self._permissions, "allow_tool"):
-                        self._permissions.allow_tool(call.name)
-                if spec_executor is not None:
-                    try:
-                        spec_executor.confirm()
-                    except Exception:
-                        pass
-                # Fall through to execute the tool normally below
-            else:
-                # Denied by user
-                if spec_executor is not None:
-                    try:
-                        spec_executor.deny()
-                    except Exception:
-                        pass
-                self._fire_hook("tool_denied", {"tool_name": call.name})
-                yield ToolResultBlock(
-                    tool_use_id=call.id,
-                    content=f"Tool '{call.name}' denied by user",
-                    is_error=True,
+                # Yield permission request and wait for user response
+                yield StreamPermissionRequest(
+                    tool_name=call.name,
+                    args_preview=args_preview,
                 )
-                return
+
+                loop = asyncio.get_running_loop()
+                self._permission_future = loop.create_future()
+                try:
+                    response = await asyncio.wait_for(self._permission_future, timeout=300)
+                except asyncio.TimeoutError:
+                    response = "deny"
+                    logger.warning("Permission prompt for '%s' timed out (300s), auto-denying", call.name)
+                finally:
+                    self._permission_future = None
+
+                if response in ("allow", "always", "always_kind", "always_exact"):
+                    if response in ("always", "always_kind"):
+                        # Add to allow list so future calls skip prompting
+                        if hasattr(self._permissions, "allow_tool"):
+                            self._permissions.allow_tool(call.name)
+                        self.record_permission_choice(
+                            "always_kind", call.name, args_preview, validated_args,
+                        )
+                    elif response == "always_exact":
+                        self.record_permission_choice(
+                            "always_exact", call.name, args_preview, validated_args,
+                        )
+                    if spec_executor is not None:
+                        try:
+                            spec_executor.confirm()
+                        except Exception:
+                            pass
+                    # Fall through to execute the tool normally below
+                else:
+                    # Denied by user
+                    if spec_executor is not None:
+                        try:
+                            spec_executor.deny()
+                        except Exception:
+                            pass
+                    self._fire_hook("tool_denied", {"tool_name": call.name})
+                    yield ToolResultBlock(
+                        tool_use_id=call.id,
+                        content=f"Tool '{call.name}' denied by user",
+                        is_error=True,
+                    )
+                    return
 
         # 4b. Create checkpoint before mutating tools
         if self._checkpoint_mgr is not None and not tool.is_read_only(validated_args):

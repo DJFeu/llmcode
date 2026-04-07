@@ -889,10 +889,23 @@ class LLMCodeTUI(App):
         # Permission handling (y/n/a)
         if not self._permission_pending or self._runtime is None:
             return
-        response_map = {"y": "allow", "n": "deny", "a": "always"}
+        # y = allow once; a = always-by-kind/prefix; A = always-this-exact; n = deny
+        # 'a' and 'A' are distinct keys (shift modifier).
+        response_map = {
+            "y": "allow",
+            "n": "deny",
+            "a": "always_kind",
+            "A": "always_exact",
+            "shift+a": "always_exact",
+        }
         response = response_map.get(event.key)
         if response is not None:
             self._runtime.send_permission_response(response)
+            event.prevent_default()
+            event.stop()
+            return
+        if event.key == "e":
+            # TODO: edit-args inline editor (Tier 2 follow-up)
             event.prevent_default()
             event.stop()
 

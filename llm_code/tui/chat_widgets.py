@@ -393,15 +393,53 @@ class PermissionInline(Widget):
         self._tool_name = tool_name
         self._args_preview = args_preview
 
+    def _supports_edit_args(self) -> bool:
+        return self._tool_name in ("bash", "edit_file", "write_file", "multi_edit")
+
+    def _always_kind_label(self) -> str:
+        if self._tool_name == "bash":
+            # Try to extract a sensible prefix for "all `git *`" labelling
+            preview = self._args_preview
+            # args_preview is JSON: {"command": "git status"}
+            try:
+                import json as _json
+                parsed = _json.loads(preview) if preview.startswith("{") else None
+                if parsed and "command" in parsed:
+                    first = str(parsed["command"]).split()[0] if parsed["command"] else ""
+                    if first:
+                        return f"Always allow `{first} *`"
+            except Exception:
+                pass
+            return "Always allow all bash"
+        if self._tool_name in ("edit_file", "write_file", "multi_edit"):
+            return "Always allow edits in workspace"
+        return f"Always allow all `{self._tool_name}`"
+
     def render(self) -> RenderResult:
         text = Text()
-        text.append("⚠ Allow? ", style="yellow bold")
-        text.append(f"{self._tool_name}: {self._args_preview[:60]}", style="dim")
-        text.append("\n  ")
-        text.append("[y]", style="bold green")
-        text.append(" Yes  ", style="dim")
-        text.append("[n]", style="bold red")
-        text.append(" No  ", style="dim")
-        text.append("[a]", style="bold cyan")
-        text.append(" Always", style="dim")
+        text.append("⚠ Allow ", style="yellow bold")
+        text.append(self._tool_name, style="bold white")
+        text.append("?\n", style="yellow bold")
+        # Verbatim args in code-style box
+        text.append("  ")
+        text.append(f" {self._args_preview[:100]} ", style="white on #2a2a3a")
+        text.append("\n")
+        # Options
+        options: list[tuple[str, str]] = [
+            ("y", "Allow once"),
+            ("a", self._always_kind_label()),
+            ("A", "Always allow this exact"),
+            ("n", "Deny"),
+        ]
+        if self._supports_edit_args():
+            options.append(("e", "Edit args (TODO)"))
+        for i, (key, label) in enumerate(options):
+            if i == 0:
+                text.append("  ")
+            else:
+                text.append("  ")
+            text.append(f"[{key}]", style="bold bright_cyan")
+            text.append(f" {label}", style="dim")
+            if i < len(options) - 1:
+                text.append("\n")
         return text
