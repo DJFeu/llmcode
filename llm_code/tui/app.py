@@ -486,6 +486,14 @@ class LLMCodeTUI(App):
         except ImportError:
             pass
 
+        # Register skill_load tool — lets LLM actively load skills (complement to router)
+        try:
+            from llm_code.tools.skill_load import SkillLoadTool
+            if self._skills is not None:
+                self._tool_reg.register(SkillLoadTool(self._skills))
+        except (ImportError, ValueError):
+            pass
+
         # Register cron tools
         try:
             from llm_code.cron.storage import CronStorage
@@ -1175,6 +1183,23 @@ class LLMCodeTUI(App):
         if handler is not None:
             handler(args)
             return
+
+        # Check user-defined custom commands (project + global)
+        try:
+            from llm_code.runtime.custom_commands import discover_custom_commands
+            custom = discover_custom_commands(self._cwd)
+            if name in custom:
+                cmd_def = custom[name]
+                rendered = cmd_def.render(args)
+                chat = self.query_one(ChatScrollView)
+                chat.add_entry(AssistantText(f"Running custom command: /{name}"))
+                images = list(self._pending_images)
+                self._pending_images.clear()
+                self.query_one(InputBar).pending_image_count = 0
+                self.run_worker(self._run_turn(rendered, images=images), name="run_turn")
+                return
+        except Exception:
+            pass
 
         # Check loaded skills — superpowers etc. register as command skills
         if self._skills:

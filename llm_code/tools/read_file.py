@@ -109,6 +109,23 @@ class ReadFileTool(Tool):
                 metadata=result.metadata,
                 is_error=result.is_error,
             )
+
+        # Attach per-directory instructions (AGENTS.md / CLAUDE.md walking up
+        # from the file's directory). Each instruction file is attached at most
+        # once per session to avoid spamming context.
+        if not result.is_error and suffix not in _IMAGE_EXTENSIONS:
+            try:
+                from llm_code.runtime.instruction_attach import attach_for
+                footer = attach_for(path)
+                if footer:
+                    result = ToolResult(
+                        output=result.output + footer,
+                        metadata=result.metadata,
+                        is_error=result.is_error,
+                    )
+            except Exception:
+                pass
+
         return result
 
     def _read_notebook(self, path: pathlib.Path) -> ToolResult:
