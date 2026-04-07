@@ -28,12 +28,27 @@ class AsyncTaskInfo:
 class AsyncTaskRegistry:
     """Thread-safe registry of in-flight asyncio.Tasks."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_concurrent: int = 5) -> None:
         self._lock = threading.RLock()
         self._tasks: dict[str, tuple[AsyncTaskInfo, "asyncio.Task[object]"]] = {}
+        self._max_concurrent = max(1, max_concurrent)
 
-    def register(self, task: "asyncio.Task[object]", title: str) -> str:
-        """Register an asyncio.Task. Auto-unregisters on completion."""
+    @property
+    def max_concurrent(self) -> int:
+        return self._max_concurrent
+
+    def register(self, task: "asyncio.Task[object]", title: str) -> Optional[str]:
+        """Register an asyncio.Task. Auto-unregisters on completion.
+
+        Returns the task id, or ``None`` if the registry is at its
+        :attr:`max_concurrent` cap.
+        """
+        with self._lock:
+            if len(self._tasks) >= self._max_concurrent:
+                logger.warning(
+                    "AsyncTaskRegistry: refusing register, at cap %d", self._max_concurrent
+                )
+                return None
         task_id = uuid.uuid4().hex[:12]
         info = AsyncTaskInfo(task_id=task_id, title=title, started_at=time.time())
         with self._lock:
@@ -110,6 +125,35 @@ class AsyncTaskRegistry:
             for info in snapshot:
                 self._tasks.pop(info.task_id, None)
         return snapshot
+
+
+    async def poll_until_stable(
+        self,
+        task_id: str,
+        interval: float = 2.0,
+        stable_count: int = 3,
+    ) -> str:
+        """Poll *task_id* until its done-state has been observed *stable_count* times in a row.
+
+        Returns the final state string: "done" | "missing" | "running".
+        """
+        last_state: str = ""
+        streak = 0
+        while True:
+            with self._lock:
+                entry = self._tasks.get(task_id)
+            if entry is None:
+                state = "missing"
+            else:
+                state = "done" if entry[1].done() else "running"
+            if state == last_state:
+                streak += 1
+            else:
+                streak = 1
+                last_state = state
+            if streak >= stable_count and state in ("done", "missing"):
+                return state
+            await asyncio.sleep(interval)
 
 
 _global_async_registry: Optional[AsyncTaskRegistry] = None
