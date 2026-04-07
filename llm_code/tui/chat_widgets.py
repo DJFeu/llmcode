@@ -9,6 +9,8 @@ from textual.reactive import reactive
 from textual.app import RenderResult
 from rich.text import Text
 
+from llm_code.tui.tool_render import render_tool_args
+
 
 SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
@@ -79,7 +81,11 @@ class ToolBlock(Widget):
         self.refresh()
 
     def _extract_file_path(self) -> str:
-        """Extract file path from args_display."""
+        """DEPRECATED: use render_tool_args() from tool_render.py instead.
+
+        Kept for backward compatibility with callers/tests relying on the
+        legacy regex-based extraction.
+        """
         d = self._data
         for pattern in ("'path': '", '"path": "', "'file_path': '", '"file_path": "'):
             if pattern in d.args_display:
@@ -101,7 +107,7 @@ class ToolBlock(Widget):
     def render_text(self) -> str:
         d = self._data
         action = self._ACTION_MAP.get(d.tool_name, d.tool_name)
-        file_path = self._extract_file_path()
+        file_path = render_tool_args(d.tool_name, d.args_display)
         icon = "✗" if d.is_error else "●"
         lines = [f"{icon} {action}({file_path})"]
         if d.result:
@@ -112,7 +118,7 @@ class ToolBlock(Widget):
         d = self._data
         text = Text()
         action = self._ACTION_MAP.get(d.tool_name, d.tool_name)
-        file_path = self._extract_file_path()
+        file_path = render_tool_args(d.tool_name, d.args_display)
 
         # Header: ● Action(file_path) or ✗ Action(file_path)
         if d.is_error:
