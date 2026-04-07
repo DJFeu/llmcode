@@ -921,8 +921,13 @@ class LLMCodeTUI(App):
 
         # Show skill router activations (run router here so user sees it
         # before the LLM call starts)
+        _tui_cfg = getattr(self._config, "tui", None)
+        _verb_override = tuple(getattr(_tui_cfg, "spinner_verbs", ()) or ())
+        _verb_mode = getattr(_tui_cfg, "spinner_verbs_mode", "append") or "append"
         if self._runtime._skill_router is not None:
-            _routing_spinner = SpinnerLine()
+            _routing_spinner = SpinnerLine(
+                verb_override=_verb_override, verb_mode=_verb_mode,
+            )
             _routing_spinner.phase = "routing"
             chat.add_entry(_routing_spinner)
             try:
@@ -940,7 +945,9 @@ class LLMCodeTUI(App):
                 except Exception:
                     pass
 
-        spinner = SpinnerLine()
+        spinner = SpinnerLine(
+            verb_override=_verb_override, verb_mode=_verb_mode,
+        )
         spinner.phase = "waiting"
         chat.add_entry(spinner)
         start = time.monotonic()

@@ -150,19 +150,23 @@ class TestSpinnerLine:
         s = SpinnerLine()
         s.phase = "waiting"
         assert "Waiting" in s.render_text()
+        # Thinking phase now uses a randomly-picked whimsical verb.
         s.phase = "thinking"
-        assert "Puttering" in s.render_text()
+        out = s.render_text()
+        assert out.split("…", 1)[0]  # non-empty verb followed by ellipsis
+        assert "…" in out
         s.phase = "processing"
-        assert "Processing" in s.render_text()
+        out2 = s.render_text()
+        assert "…" in out2
 
-    def test_color_changes_after_60s(self):
+    def test_stalled_color_leans_red(self):
         s = SpinnerLine()
-        s.elapsed = 30
-        rendered = s.render()
-        assert "#cc7a00" in str(rendered._spans[0].style) or "cc7a00" in str(rendered)
-        s.elapsed = 90
-        rendered = s.render()
-        assert "#cc3333" in str(rendered._spans[0].style) or "cc3333" in str(rendered)
+        s.elapsed = 5
+        s._last_progress = 5
+        r1, _, _ = s._stall_rgb()
+        s.elapsed = 70  # 65s of stall
+        r2, _, _ = s._stall_rgb()
+        assert r2 > r1
 
 
 def _simulate_key(bar: "InputBar", key: str) -> None:

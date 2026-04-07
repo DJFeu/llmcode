@@ -9,6 +9,7 @@ from textual.reactive import reactive
 from textual.app import RenderResult
 from rich.text import Text
 
+from llm_code.tui.spinner_verbs import get_verb
 from llm_code.tui.tool_render import render_tool_args
 
 
@@ -83,7 +84,7 @@ class ToolBlock(Widget):
     def _extract_file_path(self) -> str:
         """DEPRECATED: use render_tool_args() from tool_render.py instead.
 
-        Kept for backward compatibility with callers/tests relying on the
+        Kept for backward compatibility with callers/tests that rely on the
         legacy regex-based extraction.
         """
         d = self._data
@@ -240,66 +241,145 @@ class TurnSummary(Widget):
 
 
 class SpinnerLine(Widget):
-    """Animated spinner — color changes: orange (normal) → red (>60s)."""
+    """Animated spinner with whimsical verbs, smooth token counter,
+    width gating, and stalled color interpolation."""
 
     DEFAULT_CSS = "SpinnerLine { height: auto; }"
 
     phase: reactive[str] = reactive("waiting")
     elapsed: reactive[float] = reactive(0.0)
     tokens: reactive[int] = reactive(0)
-    _frame: int = 0
 
     _LABELS = {
         "waiting": "Waiting for model…",
-        "thinking": "Puttering…",
         "processing": "Processing…",
         "running": "Reading {tool}…",
         "streaming": "Streaming…",
         "routing": "Routing skills…",
     }
 
-    def __init__(self, tool_name: str = "") -> None:
+    # Base color (blue-ish) → stalled (red)
+    _BASE_RGB = (96, 175, 255)
+    _STALLED_RGB = (171, 43, 63)
+
+    def __init__(
+        self,
+        tool_name: str = "",
+        verb_override: tuple[str, ...] = (),
+        verb_mode: str = "append",
+    ) -> None:
         super().__init__()
         self._tool_name = tool_name
         self._detail_lines: list[str] = []
+        self._frame: int = 0
+        self._verb: str = ""
+        self._verb_override = verb_override
+        self._verb_mode = verb_mode
+        self._displayed_tokens: float = 0.0
+        self._last_progress: float = 0.0
 
     def set_detail(self, lines: list[str]) -> None:
         """Set detail lines shown below the spinner (e.g. file paths)."""
         self._detail_lines = lines
         self.refresh()
 
-    def render_text(self) -> str:
-        label = self._LABELS.get(self.phase, "Working…")
+    def _pick_verb(self) -> None:
+        self._verb = get_verb(
+            seed=None,
+            override=self._verb_override,
+            mode=self._verb_mode,
+        )
+
+    def watch_phase(self, old: str, new: str) -> None:
+        if new in ("thinking", "processing") and old != new:
+            self._pick_verb()
+        # Reset stall-progress anchor on phase change
+        self._last_progress = self.elapsed
+
+    def watch_tokens(self, old: int, new: int) -> None:
+        if new > old:
+            self._last_progress = self.elapsed
+
+    def _terminal_width(self) -> int:
+        try:
+            return int(self.app.size.width)
+        except Exception:
+            return 80
+
+    def _stall_rgb(self) -> tuple[int, int, int]:
+        stalled_for = self.elapsed - self._last_progress
+        if stalled_for <= 30:
+            return self._BASE_RGB
+        t = min((stalled_for - 30) / 30.0, 1.0)
+        br, bg, bb = self._BASE_RGB
+        sr, sg, sb = self._STALLED_RGB
+        r = int(br + (sr - br) * t)
+        g = int(bg + (sg - bg) * t)
+        b = int(bb + (sb - bb) * t)
+        return r, g, b
+
+    def _label_for_phase(self) -> str:
+        phase = self.phase
+        if phase in ("thinking", "processing"):
+            verb = self._verb or "Working"
+            return f"{verb}…"
+        label = self._LABELS.get(phase, "Working…")
         if "{tool}" in label:
             label = label.replace("{tool}", self._tool_name)
-        # Time formatting
-        if self.elapsed >= 60:
-            time_str = f"{self.elapsed / 60:.0f}m {self.elapsed % 60:.0f}s"
-        else:
-            time_str = f"{self.elapsed:.0f}s"
-        # Build status parts
-        parts = [time_str]
-        if self.tokens > 0:
-            parts.append(f"↑ {self.tokens:,} tokens")
-        if self.phase == "thinking":
-            parts.append("thinking")
+        return label
+
+    def render_text(self) -> str:
+        width = self._terminal_width()
+        label = self._label_for_phase()
+
+        # Elapsed time
+        time_str = ""
+        if self.elapsed >= 3:
+            if self.elapsed >= 60:
+                time_str = f"{self.elapsed / 60:.0f}m {self.elapsed % 60:.0f}s"
+            else:
+                time_str = f"{self.elapsed:.0f}s"
+
+        tokens_int = int(self._displayed_tokens)
+
+        # Width < 40: strip suffix, just verb…/label
+        if width < 40:
+            return label
+
+        parts: list[str] = []
+        if time_str:
+            parts.append(time_str)
+        # Width < 60: drop tokens
+        if tokens_int > 0 and width >= 60:
+            parts.append(f"↓ {tokens_int:,} tokens")
+        if not parts:
+            return label
         meta = " · ".join(parts)
         return f"{label} ({meta})"
 
     def render(self) -> RenderResult:
-        # Color: orange normally, red when elapsed > 60s
-        color = "#cc3333" if self.elapsed > 60 else "#cc7a00"
+        r, g, b = self._stall_rgb()
+        color = f"rgb({r},{g},{b})"
         prefix = "●" if self.phase == "running" else "*"
         text = Text()
         text.append(f"{prefix} ", style=f"bold {color}")
         text.append(self.render_text(), style=color)
-        # Detail lines (e.g. tool file paths)
         for line in self._detail_lines:
             text.append(f"\n    └ {line}", style="dim")
         return text
 
+    def _advance_tokens(self) -> None:
+        target = float(self.tokens)
+        if self._displayed_tokens >= target:
+            self._displayed_tokens = target
+            return
+        delta = target - self._displayed_tokens
+        step = max(1.0, delta / 8.0)
+        self._displayed_tokens = min(target, self._displayed_tokens + step)
+
     def advance_frame(self) -> None:
         self._frame += 1
+        self._advance_tokens()
         self.refresh()
 
 
