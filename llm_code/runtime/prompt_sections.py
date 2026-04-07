@@ -1,14 +1,15 @@
-"""Dynamic prompt section builders ported from oh-my-opencode.
+"""Dynamic prompt section builders.
 
-These helpers render small system-prompt sections describing the personas,
-tools, and skills that are currently available in the runtime. They are
-deliberately pure functions so they can be cached per turn by the prompt
-builder and unit-tested without spinning up a full conversation.
+Currently exposes only the personas section builder. Tools and skills are
+rendered elsewhere in the prompt pipeline (the tool registry is serialized
+directly by the provider adapter, and skill descriptions are injected by
+``SystemPromptBuilder`` / ``SkillRouter``), so dedicated helpers for those
+sections are intentionally absent here.
 """
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Any, Iterable, Mapping
+from typing import Any, Mapping
 
 
 def build_personas_section(personas: Mapping[str, Any]) -> str:
@@ -20,54 +21,6 @@ def build_personas_section(personas: Mapping[str, Any]) -> str:
         desc = getattr(persona, "description", "") or ""
         lines.append(f"- **{name}**: {desc}".rstrip())
     return "\n".join(lines)
-
-
-def build_tools_section(tool_registry: Any) -> str:
-    """Render the available tools as a system-prompt section.
-
-    Accepts any object exposing a ``list_tools()`` method or an iterable of
-    tool definitions with ``name``/``description`` attributes (or matching
-    dict keys).
-    """
-    tools: Iterable[Any]
-    if tool_registry is None:
-        return ""
-    if hasattr(tool_registry, "list_tools"):
-        tools = tool_registry.list_tools()
-    else:
-        tools = tool_registry  # assume iterable
-    rendered: list[str] = []
-    for tool in tools or []:
-        name = getattr(tool, "name", None) or (
-            tool.get("name") if isinstance(tool, dict) else None
-        )
-        desc = getattr(tool, "description", None) or (
-            tool.get("description", "") if isinstance(tool, dict) else ""
-        )
-        if not name:
-            continue
-        rendered.append(f"- **{name}**: {desc}".rstrip())
-    if not rendered:
-        return ""
-    return "\n".join(["## Available Tools", *rendered])
-
-
-def build_skills_section(skills: Iterable[Any]) -> str:
-    """Render loaded skills as a system-prompt section."""
-    rendered: list[str] = []
-    for skill in skills or []:
-        name = getattr(skill, "name", None) or (
-            skill.get("name") if isinstance(skill, dict) else None
-        )
-        desc = getattr(skill, "description", None) or (
-            skill.get("description", "") if isinstance(skill, dict) else ""
-        )
-        if not name:
-            continue
-        rendered.append(f"- **{name}**: {desc}".rstrip())
-    if not rendered:
-        return ""
-    return "\n".join(["## Available Skills", *rendered])
 
 
 # ---------------------------------------------------------------------------
