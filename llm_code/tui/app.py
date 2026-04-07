@@ -279,6 +279,8 @@ class LLMCodeTUI(App):
 
     def _reload_skills(self) -> None:
         """(Re)load skills from all configured directories."""
+        import logging
+        _log = logging.getLogger(__name__)
         try:
             from llm_code.runtime.skills import SkillLoader
             from llm_code.marketplace.installer import PluginInstaller
@@ -298,7 +300,14 @@ class LLMCodeTUI(App):
                     if p.enabled and direct.is_dir() and direct not in skill_dirs:
                         skill_dirs.append(direct)
             self._skills = SkillLoader().load_from_dirs(skill_dirs)
-        except Exception:
+            _log.info(
+                "skill load: dirs=%d auto=%d command=%d",
+                len(skill_dirs),
+                len(self._skills.auto_skills) if self._skills else 0,
+                len(self._skills.command_skills) if self._skills else 0,
+            )
+        except Exception as e:
+            _log.warning("skill load failed: %r", e, exc_info=True)
             self._skills = None
 
     def _init_runtime(self) -> None:
@@ -916,7 +925,10 @@ class LLMCodeTUI(App):
                     skill_names = ", ".join(s.name for s in _matched)
                     chat.add_entry(AssistantText(f"⚡ Skills: {skill_names}"))
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).warning(
+                    "skill router failed", exc_info=True,
+                )
 
         spinner = SpinnerLine()
         spinner.phase = "waiting"

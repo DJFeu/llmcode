@@ -250,6 +250,14 @@ class PluginInstaller:
             except FileNotFoundError:
                 # No .claude-plugin/plugin.json — create minimal manifest from dir name
                 manifest = PluginManifest(name=name, version="0.0.0", description="")
+            except (KeyError, ValueError, TypeError) as _e:
+                # Malformed plugin.json (missing fields, bad types, etc.) —
+                # don't let one broken plugin take down the whole listing.
+                import logging
+                logging.getLogger(__name__).warning(
+                    "skipping malformed plugin %r: %s", name, _e,
+                )
+                manifest = PluginManifest(name=name, version="0.0.0", description="")
 
             entry_state = state.get(name, {})
             enabled = bool(entry_state.get("enabled", True))

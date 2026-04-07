@@ -52,8 +52,8 @@ class PluginManifest:
 
         return cls(
             name=data["name"],
-            version=data["version"],
-            description=data["description"],
+            version=str(data.get("version", "0.0.0")),
+            description=str(data.get("description", "")),
             author=data.get("author"),
             homepage=data.get("homepage"),
             repository=data.get("repository"),
