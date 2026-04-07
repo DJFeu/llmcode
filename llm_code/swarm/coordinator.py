@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, Literal
 
 from llm_code.api.provider import LLMProvider
 from llm_code.api.types import Message, MessageRequest, TextBlock
@@ -69,6 +69,7 @@ class Coordinator:
     POLL_INTERVAL: float = 5.0
     TIMEOUT: float = 300.0
     COORDINATOR_ID: str = "coordinator"
+    SYNTHESIZE_MIN_CHARS: int = 200
 
     def __init__(
         self,
@@ -115,6 +116,24 @@ class Coordinator:
                 resume_member_ids = None
 
         if not resume_member_ids:
+            # Consult _select_delegation_target against any pre-existing
+            # manager members — if there's a high-overlap match, reuse it
+            # rather than spawning fresh.
+            try:
+                existing_members = list(self._manager.list_members())
+            except Exception:
+                existing_members = []
+            if existing_members:
+                decision, target = self._select_delegation_target(task, existing_members)
+                if decision == "resume":
+                    reused = self._manager.get_member(target)
+                    if reused is not None:
+                        members.append(reused)
+                        logger.info(
+                            "Resuming swarm member %s via overlap match", reused.id
+                        )
+
+        if not resume_member_ids and not members:
             subtasks = await self._decompose(task)
             if not subtasks:
                 return f"No subtasks generated for: {task}"
@@ -163,6 +182,16 @@ class Coordinator:
         if not synthesis_enabled:
             return None
 
+        # Short-circuit: trivially small tasks skip the LLM round-trip and
+        # return a stub synthesis indicating "delegate as usual".
+        if len(task) < self.SYNTHESIZE_MIN_CHARS:
+            return {
+                "known_facts": [],
+                "unknowns": [task],
+                "should_delegate": True,
+                "reason": "stub: task below synthesis short-circuit threshold",
+            }
+
         prompt = _SYNTHESIZE_PROMPT.format(task=task)
         model = getattr(self._config, "model", None) or "default"
         request = MessageRequest(
@@ -198,6 +227,49 @@ class Coordinator:
             return data if isinstance(data, dict) else None
         except json.JSONDecodeError:
             return None
+
+    def _select_delegation_target(
+        self,
+        task: str,
+        candidates: list[Any],
+    ) -> tuple[Literal["resume", "spawn"], Any]:
+        """Decide whether to resume an existing worker or spawn a new one.
+
+        For each candidate (a swarm member with ``.id`` and ``.context``
+        or ``.task`` attributes), compute :func:`context_overlap` between
+        its accumulated context and *task*. If the maximum overlap meets
+        or exceeds ``swarm.overlap_threshold``, return
+        ``("resume", member_id)``; otherwise return ``("spawn", task)``.
+        """
+        threshold = float(
+            getattr(getattr(self._config, "swarm", None), "overlap_threshold", 0.6)
+        )
+        best_score = -1.0
+        best_id: Any = None
+        for member in candidates or []:
+            ctx = (
+                getattr(member, "context", None)
+                or getattr(member, "task", None)
+                or ""
+            )
+            score = self.context_overlap(str(ctx), task)
+            if score > best_score:
+                best_score = score
+                best_id = getattr(member, "id", member)
+        if best_id is not None and best_score >= threshold:
+            logger.info(
+                "delegation: resume member=%s overlap=%.2f >= threshold=%.2f",
+                best_id,
+                best_score,
+                threshold,
+            )
+            return ("resume", best_id)
+        logger.info(
+            "delegation: spawn (best_overlap=%.2f < threshold=%.2f)",
+            max(best_score, 0.0),
+            threshold,
+        )
+        return ("spawn", task)
 
     @staticmethod
     def context_overlap(worker_context: str, next_task: str) -> float:

@@ -28,7 +28,7 @@ class TestSynthesis:
         mock_response.content = [TextBlock(text='{"known_facts": ["x"], "unknowns": ["y"], "should_delegate": true, "reason": "complex"}')]
         coordinator._provider.send_message = AsyncMock(return_value=mock_response)
 
-        result = await coordinator._synthesize("Build a REST API")
+        result = await coordinator._synthesize("Build a REST API " * 30)
         assert result is not None
         assert result["should_delegate"] is True
 
@@ -38,14 +38,14 @@ class TestSynthesis:
         mock_response.content = [TextBlock(text='{"known_facts": [], "unknowns": [], "should_delegate": false, "reason": "simple question"}')]
         coordinator._provider.send_message = AsyncMock(return_value=mock_response)
 
-        result = await coordinator._synthesize("What is Python?")
+        result = await coordinator._synthesize("What is Python? " * 30)
         assert result is not None
         assert result["should_delegate"] is False
 
     @pytest.mark.asyncio
     async def test_synthesis_failure_returns_none(self, coordinator):
         coordinator._provider.send_message = AsyncMock(side_effect=Exception("network error"))
-        result = await coordinator._synthesize("anything")
+        result = await coordinator._synthesize("anything " * 30)
         assert result is None
 
     @pytest.mark.asyncio
@@ -64,7 +64,7 @@ class TestSynthesis:
         mock_response.content = [TextBlock(text='{"should_delegate": false, "reason": "too simple"}')]
         coordinator._provider.send_message = AsyncMock(return_value=mock_response)
 
-        result = await coordinator.orchestrate("What time is it?")
+        result = await coordinator.orchestrate("What time is it? " * 30)
         assert "Skipping delegation" in result
         assert "too simple" in result
 
@@ -159,7 +159,7 @@ class TestSubagentResume:
         coordinator.TIMEOUT = 1.0
         coordinator.POLL_INTERVAL = 0.05
 
-        result = await coordinator.orchestrate("more work", resume_member_ids=["m1"])
+        result = await coordinator.orchestrate("more work " * 30, resume_member_ids=["m1"])
 
         # Should NOT have called create_member (used resume)
         coordinator._manager.create_member.assert_not_called()
@@ -190,7 +190,7 @@ class TestSubagentResume:
         coordinator.TIMEOUT = 1.0
         coordinator.POLL_INTERVAL = 0.05
 
-        result = await coordinator.orchestrate("task", resume_member_ids=["nonexistent"])
+        result = await coordinator.orchestrate("task " * 50, resume_member_ids=["nonexistent"])
 
         # Should have fallen through to fresh spawn
         coordinator._manager.create_member.assert_called_once()
@@ -217,6 +217,6 @@ class TestSubagentResume:
         coordinator.TIMEOUT = 1.0
         coordinator.POLL_INTERVAL = 0.05
 
-        result = await coordinator.orchestrate("task")
+        result = await coordinator.orchestrate("task " * 50)
         assert "abc123" in result
         assert "Resumable swarm member IDs" in result

@@ -11,6 +11,7 @@ from llm_code.tools.base import PermissionLevel, Tool, ToolResult
 
 class CoordinatorInput(BaseModel):
     task: str
+    resume_member_ids: list[str] | None = None
 
 
 class CoordinatorTool(Tool):
@@ -40,6 +41,11 @@ class CoordinatorTool(Tool):
                     "type": "string",
                     "description": "High-level task to decompose and delegate to worker agents.",
                 },
+                "resume_member_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional swarm member IDs to reuse instead of spawning.",
+                },
             },
             "required": ["task"],
         }
@@ -54,6 +60,7 @@ class CoordinatorTool(Tool):
 
     def execute(self, args: dict) -> ToolResult:
         task = args["task"]
+        resume_member_ids = args.get("resume_member_ids")
         try:
             try:
                 asyncio.get_running_loop()
@@ -65,10 +72,16 @@ class CoordinatorTool(Tool):
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     result = pool.submit(
                         asyncio.run,
-                        self._coordinator.orchestrate(task),
+                        self._coordinator.orchestrate(
+                            task, resume_member_ids=resume_member_ids
+                        ),
                     ).result()
             else:
-                result = asyncio.run(self._coordinator.orchestrate(task))
+                result = asyncio.run(
+                    self._coordinator.orchestrate(
+                        task, resume_member_ids=resume_member_ids
+                    )
+                )
 
             return ToolResult(output=result)
         except Exception as exc:

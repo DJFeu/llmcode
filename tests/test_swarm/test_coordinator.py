@@ -200,7 +200,7 @@ class TestOrchestrate:
             # Pre-populate mailbox so wait_for_completion returns immediately
             manager.mailbox.send(from_id="fake01", to_id="coordinator", text="DONE")
             coord = Coordinator(manager, provider, config)
-            result = await coord.orchestrate("Build feature X")
+            result = await coord.orchestrate("Build feature X " * 30)
 
         assert "Summary" in result or "implement" in result.lower()
 
@@ -211,7 +211,7 @@ class TestOrchestrate:
             "not json",  # decompose fails
         )
         coord = Coordinator(manager, provider, _make_config())
-        result = await coord.orchestrate("some task")
+        result = await coord.orchestrate("some task " * 30)
         assert "No subtasks" in result
 
     @pytest.mark.asyncio
@@ -238,7 +238,7 @@ class TestOrchestrate:
             # Don't send done messages – will timeout quickly
             coord.TIMEOUT = 0.05
             coord.POLL_INTERVAL = 0.01
-            await coord.orchestrate("big task")
+            await coord.orchestrate("big task " * 30)
 
         # Only 2 members should have been created
         assert len(created_members) <= 2
@@ -251,7 +251,7 @@ class TestOrchestrate:
 
         with patch.object(manager, "create_member", new=AsyncMock(side_effect=ValueError("max reached"))):
             coord = Coordinator(manager, provider, config)
-            result = await coord.orchestrate("some task")
+            result = await coord.orchestrate("some task " * 30)
 
         assert "Failed" in result or "no swarm" in result.lower() or len(result) >= 0
 
