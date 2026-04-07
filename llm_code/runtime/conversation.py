@@ -350,6 +350,20 @@ class ConversationRuntime:
         logger.debug("Starting turn: %s", user_input[:80])
         _turn_start = time.monotonic()
         self._fire_hook("prompt_submit", {"text": user_input[:200]})
+        # Keyword-driven action detection (Feature 6, opt-in via keywords.enabled).
+        try:
+            _kw_cfg = getattr(self._config, "keywords", None)
+            if _kw_cfg is not None and getattr(_kw_cfg, "enabled", False):
+                from llm_code.runtime.keyword_actions import detect_action
+                _action = detect_action(user_input)
+                if _action:
+                    logger.info("keyword_action detected: %s", _action)
+                    self._fire_hook(
+                        "keyword_action",
+                        {"action": _action, "message": user_input[:200]},
+                    )
+        except Exception as _exc:  # pragma: no cover - defensive
+            logger.debug("keyword_action detection failed: %s", _exc)
         if self._vcr_recorder is not None:
             self._vcr_recorder.record("user_input", {"text": user_input})
         # 1. Add user message to session (with optional images)
