@@ -9,6 +9,7 @@ from textual.reactive import reactive
 from textual.app import RenderResult
 from rich.text import Text
 
+from llm_code.tui.diff_render import render_diff_lines
 from llm_code.tui.spinner_verbs import get_verb
 from llm_code.tui.tool_render import render_tool_args
 
@@ -156,18 +157,11 @@ class ToolBlock(Widget):
                 text.append(f"  {icon} ", style=icon_style)
                 text.append(d.result, style="dim")
 
-        # Diff lines with line numbers and colored backgrounds
-        for dl in d.diff_lines:
+        # Diff lines: delegate to structured renderer (hunk headers,
+        # gutter line numbers, color blocks, truncation footer)
+        if d.diff_lines:
             text.append("\n")
-            if dl.startswith("+"):
-                # Added line: green background
-                text.append(f"    {dl}", style="green on #0a2e0a")
-            elif dl.startswith("-"):
-                # Removed line: red background
-                text.append(f"    {dl}", style="red on #2e0a0a")
-            else:
-                # Context line
-                text.append(f"    {dl}", style="dim")
+            text.append(render_diff_lines(d.diff_lines, max_lines=40))
 
         return text
 
