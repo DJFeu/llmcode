@@ -314,6 +314,11 @@ class InputBar(Widget):
         if self._cursor > len(self.value):
             self._cursor = len(self.value)
         self._update_dropdown()
-        # layout=True is essential — value can grow vertically (Shift+Enter)
-        # and the InputBar height: auto needs to recompute
+        # Manually set height to force immediate layout update.
+        # height: auto in CSS is unreliable here because reactive changes
+        # land one frame before layout recomputes — first newline appears
+        # to do nothing, second one finally triggers re-layout.
+        line_count = self.value.count("\n") + 1
+        # +2 for prompt line padding, clamped to [3, 14] (matching CSS)
+        self.styles.height = max(3, min(line_count + 2, 14))
         self.refresh(layout=True)
