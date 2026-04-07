@@ -204,6 +204,14 @@ class DiminishingReturnsConfig:
 
 
 @dataclass(frozen=True)
+class TuiConfig:
+    """TUI-specific settings (spinner verbs, etc.)."""
+
+    spinner_verbs: tuple[str, ...] = ()
+    spinner_verbs_mode: str = "append"  # "append" | "replace"
+
+
+@dataclass(frozen=True)
 class SkillRouterConfig:
     """Configuration for the 3-tier skill router."""
 
@@ -267,6 +275,7 @@ class RuntimeConfig:
     knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
     skill_router: SkillRouterConfig = field(default_factory=lambda: SkillRouterConfig())
     diminishing_returns: DiminishingReturnsConfig = field(default_factory=lambda: DiminishingReturnsConfig())
+    tui: TuiConfig = field(default_factory=TuiConfig)
 
 
 class ConfigSchema(BaseModel):
@@ -484,6 +493,13 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         compile_model=knowledge_raw.get("compile_model", ""),
     )
 
+    # TUI config
+    tui_raw = data.get("tui", {})
+    tui = TuiConfig(
+        spinner_verbs=tuple(tui_raw.get("spinner_verbs", ())),
+        spinner_verbs_mode=tui_raw.get("spinner_verbs_mode", "append"),
+    )
+
     # Harness config
     harness_data = data.get("harness", {})
     harness_controls: list[HarnessControl] = []
@@ -542,6 +558,7 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         lsp_auto_diagnose=data.get("lsp_auto_diagnose", True),
         harness=harness,
         knowledge=knowledge,
+        tui=tui,
     )
 
 
