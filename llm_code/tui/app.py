@@ -161,7 +161,7 @@ class LLMCodeTUI(App):
         text.append("\n")
         for label, value in [
             ("Quick start", "/help · /skill · /mcp"),
-            ("Multiline", "Shift+Enter"),
+            ("Multiline", "Ctrl+J or Alt+Enter"),
             ("Images", paste_key),
             ("Scroll", "PageUp/Down · Shift+↑/↓"),
             ("Cycle agent", "Shift+Tab or Ctrl+Y (build/plan/suggest)"),

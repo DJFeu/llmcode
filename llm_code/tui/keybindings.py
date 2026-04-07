@@ -105,6 +105,12 @@ class KeybindingManager:
         for name, action in ACTION_REGISTRY.items():
             self._bindings[action.default_key] = name
             self._reverse[name] = action.default_key
+        # Aliases for keys that terminals don't reliably distinguish
+        # newline: macOS Terminal sends shift+enter as plain enter, so we
+        # need explicit alternatives that work everywhere.
+        self._bindings["ctrl+j"] = "newline"      # Linux convention
+        self._bindings["alt+enter"] = "newline"   # macOS convention
+        self._bindings["ctrl+enter"] = "newline"  # Windows convention
 
     def get_all_bindings(self) -> dict[str, str]:
         return dict(self._reverse)
