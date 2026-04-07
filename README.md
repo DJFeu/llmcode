@@ -1,23 +1,23 @@
 # llmcode
 
 <p align="center">
-  <strong>Open-source AI agent runtime for any LLM</strong><br>
-  Production-grade coding agent with Claude Code-level architecture — your model, your hardware, zero vendor lock-in
+  <strong>Python-native coding agent runtime tuned for local LLMs</strong><br>
+  5-layer memory · synthesis-first multi-agent · per-model prompts for Qwen / Llama / DeepSeek
 </p>
 
 <p align="center">
   <a href="#quick-start">Quick Start</a> ·
   <a href="#why-llmcode">Why llmcode</a> ·
   <a href="#features">Features</a> ·
-  <a href="#marketplace">Marketplace</a> ·
+  <a href="#how-it-compares">vs Other Tools</a> ·
   <a href="#configuration">Configuration</a> ·
-  <a href="#architecture">Architecture</a> ·
-  <a href="#contributing">Contributing</a>
+  <a href="#docs">Docs</a>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-3646%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-3696%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/cold%20start-370ms-brightgreen" alt="Cold start">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
   <img src="https://img.shields.io/pypi/v/llmcode-cli" alt="PyPI">
 </p>
@@ -26,9 +26,22 @@
 
 ## Why llmcode?
 
-Most AI coding tools lock you into a single provider. **llmcode doesn't.**
+There are several great open-source AI coding agents now ([opencode](https://github.com/anomalyco/opencode), Aider, Continue, etc). llmcode exists for a specific niche they don't fully serve:
 
-Run the same agent experience with a free local model on your own GPU, or with any cloud API. Switch between them with one config change. No API key required for local models.
+> **You want a Claude Code-style coding agent that runs your own model on your own GPU, written in Python so it integrates with your existing Python LLM stack, with deep optimization for the smaller models you'll actually run locally.**
+
+If you check any of these boxes:
+
+- You run **vLLM, Ollama, or LM Studio** with Qwen / Llama / DeepSeek locally
+- You don't want **another Node.js runtime** in your stack (you already have Python)
+- You've tried tools tuned for Claude/GPT and watched smaller models drown in the system prompt
+- You need **multi-agent coordination that doesn't over-spawn** on local models
+- You want **persistent project memory** that survives across sessions
+- You care about **CJK / multi-language** terminal handling
+
+then llmcode is for you.
+
+If you mostly use cloud APIs and don't need any of the above, **opencode is more mature** and you should probably use it.
 
 ```
  ██╗      ██╗      ███╗   ███╗
@@ -45,15 +58,6 @@ Run the same agent experience with a free local model on your own GPU, or with a
   ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝
 ```
 
-**Not just a CLI tool** — a complete AI Agent Runtime with:
-
-- **ReAct engine** with 5-stage turn loop and streaming tool execution
-- **7-layer error recovery** that self-heals instead of crashing
-- **5-layer memory system** with governance, working, project, task, and summary memory
-- **3-tier skill router** — keyword + TF-IDF + LLM classifier for intent-based skill activation
-- **Multi-agent orchestration** with coordinator pattern and inter-agent messaging
-- **Defense-in-depth security** with 21-point bash checks, MCP sanitization, secret scanning, env filtering
-
 ## Quick Start
 
 ```bash
@@ -62,11 +66,10 @@ pip install llmcode-cli
 
 > **`llmcode: command not found`?** pip installs scripts to `~/.local/bin` (Linux/macOS) or `%APPDATA%\Python\Scripts` (Windows). Add it to your PATH:
 > ```bash
-> # Linux / macOS (add to ~/.bashrc or ~/.zshrc)
 > export PATH="$HOME/.local/bin:$PATH"
 > ```
 
-**With a local model (zero cost):**
+**With a local model (zero cost, fully offline):**
 
 ```bash
 mkdir -p ~/.llmcode
@@ -87,10 +90,10 @@ llmcode
 ```bash
 cat > ~/.llmcode/config.json << 'EOF'
 {
-  "model": "gpt-4o",
+  "model": "claude-sonnet-4-6",
   "provider": {
-    "base_url": "https://api.openai.com/v1",
-    "api_key_env": "OPENAI_API_KEY"
+    "base_url": "https://api.anthropic.com/v1",
+    "api_key_env": "ANTHROPIC_API_KEY"
   }
 }
 EOF
@@ -98,23 +101,218 @@ EOF
 llmcode
 ```
 
+**Docker (self-hosted):**
+
+```bash
+docker pull ghcr.io/djfeu/llmcode:latest
+docker run -it --rm \
+  -v "$PWD:/workspace" \
+  -v "$HOME/.llmcode:/home/llmcode/.llmcode" \
+  --network host \
+  ghcr.io/djfeu/llmcode
+```
+
 ### Modes
 
 ```bash
-llmcode                       # Default: Fullscreen TUI
+llmcode                       # Default fullscreen TUI
 llmcode --provider ollama     # Auto-detect Ollama + interactive model selector
-llmcode --mode suggest        # Confirm each tool call before execution
-llmcode --mode plan           # Read-only mode, show plan without executing
+llmcode --mode plan           # Read-only mode, plan before execution
+llmcode --yolo                # Auto-accept all permissions (dangerous)
 llmcode -x "find large files" # Shell assistant: translate to command + execute
-llmcode -q "explain this"     # Quick Q&A without TUI (supports stdin pipe)
+llmcode -q "explain this"     # Quick Q&A without TUI
 llmcode --serve --port 8765   # Remote WebSocket server
 llmcode --connect host:8765   # Connect to remote agent
-llmcode --ssh user@host       # SSH tunnel + auto-connect
-llmcode --replay <file>       # Replay a recorded session
 llmcode --resume              # Resume from checkpoint
 ```
 
-### Optional Features
+---
+
+## How it compares
+
+llmcode is **deeply influenced by Claude Code's architecture** and borrows proven patterns from [opencode](https://github.com/anomalyco/opencode). Here's where it lands:
+
+| Feature | llmcode | opencode | Claude Code |
+|---------|:-------:|:--------:|:-----------:|
+| Open source | ✅ MIT | ✅ MIT | ❌ |
+| Language | Python | TypeScript | TypeScript |
+| Local model first | ✅ | ⚠️ | ❌ |
+| AGENTS.md / CLAUDE.md fallback | ✅ | ✅ | ⚠️ |
+| LLM-driven `/init` | ✅ | ✅ | ✅ |
+| Per-model system prompts | ✅ (8) | ✅ (7) | N/A |
+| **Qwen / Llama / DeepSeek tuned prompts** | ✅ | ❌ | ❌ |
+| Custom slash commands | ✅ | ✅ | ✅ |
+| Tab agent cycling | ✅ | ✅ | ❌ |
+| Skill router (auto match) | **3-tier** | manual | ❌ |
+| Memory system | **5-layer** | basic | basic |
+| Multi-agent coordinator | **synthesis-first** | task tool | ❌ |
+| Context overlap detection | ✅ | ❌ | ❌ |
+| Diminishing returns auto-stop | ✅ | ❌ | ❌ |
+| Subagent resume (task_id) | ✅ | ✅ | ❌ |
+| Plugin compatible with Claude Code ecosystem | ✅ | ✅ | ✅ |
+| Cold start | **370ms** | unknown | 600ms+ |
+| MCP servers | ✅ | ✅ | ✅ |
+| YOLO mode | ✅ | ✅ | ✅ |
+
+**Where llmcode is uniquely strong**: 5-layer memory, synthesis-first multi-agent, diminishing returns detection, Qwen/Llama prompt tuning, Python-native integration.
+
+**Where opencode is stronger**: Desktop & IDE variants, much wider community, more mature.
+
+---
+
+## Features
+
+### Local-LLM optimization
+
+This is llmcode's core focus. Local models behave very differently from Claude / GPT:
+
+- **They drown in big system prompts.** llmcode's 3-tier skill router only injects skills that match the current intent — keyword match → TF-IDF similarity → optional LLM classifier. No more "all 28 skills loaded every turn".
+- **They follow instructions too literally.** llmcode has separate per-model system prompts for Qwen, Llama, DeepSeek, Kimi, Codex, Gemini, GPT, and Claude — auto-selected from model name.
+- **They tend to repeat themselves.** llmcode's diminishing returns detection auto-stops when continuation produces < 500 new tokens for 3+ iterations in a row.
+- **They over-spawn agents.** llmcode's coordinator forces a synthesis step before delegation, asking "should I delegate at all?" before splitting work.
+
+### Memory system (5 layers)
+
+| Layer | Purpose | Lifetime |
+|-------|---------|----------|
+| **L0 Governance** | Project rules from `CLAUDE.md` / `AGENTS.md` / `.llmcode/governance.md` | Permanent, always loaded |
+| **L1 Working** | Current task scratch space | Ephemeral |
+| **L2 Project** | Long-term project knowledge with 4-type taxonomy (user/feedback/project/reference) | Persistent, DreamTask consolidates |
+| **L3 Task** | Multi-session task state machine (PLAN→DO→VERIFY→CLOSE→DONE) | Cross-session |
+| **L4 Summary** | Past session summaries | Persistent |
+
+Plus typed memory with `MEMORY.md` index, 25KB hard limit, and content validation that rejects derivable content (git logs, code dumps, file path lists).
+
+See [docs/memory.md](docs/memory.md) for the full guide.
+
+### Coordinator with synthesis-first
+
+```
+user task → synthesize → should_delegate? → decompose → spawn/resume → wait → aggregate
+```
+
+The coordinator's first action is **not** decomposition — it's a synthesis check that asks the LLM "do I actually need to delegate this, and if so, what do I already know vs. what needs investigation?" This catches 30-50% of cases where naive coordinators would have spawned 3-5 unnecessary workers for trivial tasks.
+
+Plus subagent resume — pass `resume_member_ids` to continue existing workers instead of spawning fresh, so multi-stage workflows keep their accumulated context.
+
+See [docs/coordinator.md](docs/coordinator.md) for the full tutorial.
+
+### Tools
+
+| Category | Tools |
+|----------|-------|
+| **File I/O** | read_file, write_file, edit_file, multi_edit (with resolve_path workspace boundary check) |
+| **Search** | glob_search, grep_search, tool_search |
+| **Execution** | bash (21-point security), agent (sub-agents) |
+| **Git** | git_status, git_diff, git_log, git_commit, git_push, git_stash, git_branch |
+| **Notebook** | notebook_read, notebook_edit |
+| **Computer Use** | screenshot, mouse_click, keyboard_type, key_press, scroll, mouse_drag |
+| **Task Lifecycle** | task_plan, task_verify, task_close |
+| **Scheduling** | cron_create, cron_list, cron_delete |
+| **IDE** | ide_open, ide_diagnostics, ide_selection |
+| **Swarm** | swarm_create, swarm_list, swarm_message, swarm_delete, coordinate |
+| **Skills** | skill_load (LLM-driven loading on top of auto-router) |
+
+**Smart per-model tool selection**: GPT models get `apply_patch` (unified diff format), other models get `edit_file`. Auto-detected from model name.
+
+**Path resolution**: `resolve_path()` auto-corrects wrong absolute paths from LLM (e.g. `llm-code` vs `llm_code` confusion) with workspace boundary check to prevent path traversal.
+
+### Security
+
+- **21-point bash security** — injection detection, network access control, credential paths, recursive operation warnings, etc.
+- **MCP instruction sanitization** — strips prompt injection patterns
+- **Bash output secret scanning** — auto-redacts AWS/GitHub/JWT keys before they enter LLM context
+- **Environment variable filtering** — sensitive vars replaced with `[FILTERED]`
+- **File protection** — `.env`, SSH keys, `*.pem` blocked on write
+- **Workspace boundary checks** — file tools refuse paths outside the project tree
+
+### Terminal UI
+
+- **Native text selection** — uses `mouse=False` + plain Text rendering so terminal native selection works (handles CJK correctly)
+- **Cmd+V auto-detect** — text via bracketed paste, image via clipboard fallback
+- **Shift+Tab cycles agents** — BUILD → PLAN → SUGGEST → BUILD
+- **PageUp/Down + Shift+↑/↓** — scrollback navigation
+- **`/yolo`** — toggle auto-accept
+- **`/init`** — generate `AGENTS.md` from repo analysis
+- **`/copy`** — copy last response to clipboard
+- **`/search`** — cross-session FTS5 search
+- **Background task indicator** — status bar shows running/pending tasks
+- **Vim mode** — full motions, operators, text objects
+
+### Hooks (24 events)
+
+```json
+{
+  "hooks": [
+    {"event": "post_tool_use", "tool_pattern": "write_file|edit_file", "command": "ruff format {path}"},
+    {"event": "session.*", "command": "echo $HOOK_EVENT >> ~/agent.log", "on_error": "ignore"}
+  ]
+}
+```
+
+Categories: tool, command, prompt, agent, session, http.
+
+### Marketplace
+
+Compatible with Claude Code's plugin ecosystem.
+
+```bash
+/skill                       # Browse skills
+/plugin install obra/superpowers
+/mcp                         # Browse MCP servers
+```
+
+Sources: Official (`anthropics/claude-plugins-official`), Community, npm, GitHub.
+
+---
+
+## Configuration
+
+```json
+{
+  "model": "qwen3.5",
+  "provider": {
+    "base_url": "http://localhost:8000/v1",
+    "timeout": 120
+  },
+  "permissions": {
+    "mode": "prompt"
+  },
+  "model_routing": {
+    "sub_agent": "qwen3.5-32b",
+    "compaction": "qwen3.5-7b",
+    "fallback": "qwen3.5-7b"
+  },
+  "skill_router": {
+    "enabled": true,
+    "tier_a": true,
+    "tier_b": true,
+    "tier_c": false
+  },
+  "diminishing_returns": {
+    "enabled": true,
+    "min_continuations": 3,
+    "min_delta_tokens": 500
+  },
+  "swarm": {
+    "enabled": true,
+    "synthesis_enabled": true,
+    "max_members": 5
+  },
+  "thinking": { "mode": "adaptive", "budget_tokens": 10000 },
+  "dream": { "enabled": true, "min_turns": 3 },
+  "hooks": []
+}
+```
+
+### Config locations (low → high precedence)
+
+1. `~/.llmcode/config.json` — User global
+2. `.llmcode/config.json` — Project
+3. `.llmcode/config.local.json` — Local (gitignored)
+4. CLI flags / env vars
+
+### Optional features
 
 ```bash
 pip install llmcode-cli[voice]          # Voice input via STT
@@ -126,329 +324,14 @@ pip install llmcode-cli[treesitter]     # Tree-sitter multi-language repo map
 
 ---
 
-## Features
-
-### Model Freedom
-
-| Provider | Examples | Cost |
-|----------|----------|------|
-| **Local (vLLM)** | Qwen 3.5, Llama, Mistral, DeepSeek | Free |
-| **Local (Ollama)** | Any GGUF model | Free |
-| **Local (LM Studio)** | Any supported model | Free |
-| **OpenAI** | GPT-4o, GPT-4o-mini, o3 | Pay-per-use |
-| **Anthropic** | Claude Opus, Sonnet, Haiku | Pay-per-use |
-| **Google** | Gemini 2.5 Pro, Gemini 2.5 Flash | Pay-per-use |
-| **xAI** | Grok | Pay-per-use |
-| **DeepSeek** | DeepSeek V3, R1 | Pay-per-use |
-
-- **Model aliases** — `qwen`, `gpt`, `opus`, `sonnet` resolve to full model paths
-- **Model routing** — different models for sub-agents, compaction, and fallback
-- **Local models get unlimited token output** — no artificial cap on localhost
-
-### Skill Router
-
-Auto-skills are matched to user intent per turn — not dumped wholesale into the system prompt. Works with any model (Claude, Qwen, Gemini).
-
-```
-User message → Tier A: Keyword match (0ms)
-                  ↓ miss
-               Tier B: TF-IDF similarity (~10ms)
-                  ↓ miss
-               Tier C: LLM classifier (optional, ~2-5s)
-                  ↓ miss
-               No skill injected (clean prompt)
-```
-
-- **CJK-aware tokenization** — Chinese, Japanese, Korean text handled correctly
-- **Zero external dependencies** — pure Python TF-IDF with `collections.Counter`
-- **Per-turn caching** — identical messages return cached results instantly
-- Skills can declare `keywords` in YAML frontmatter for precise routing
-
-### Agent Runtime Engine
-
-The core loop follows a 5-stage **ReAct** (Reason + Act) pattern:
-
-1. **Context preparation** — compress history, route skills, load relevant memory, apply HIDA filtering
-2. **Streaming model call** — send conversation + tools, stream response in real-time
-3. **Tool execution** — read-only tools run concurrently during streaming; writes wait
-4. **Attachment collection** — gather file changes, task state, memory updates
-5. **Continue or stop** — loop back if tools were called, stop if model is done
-
-**Resilience features:**
-
-- **7-layer error recovery** — API retry with exponential backoff, 529 overload handling (30/60/120s), native-to-XML tool fallback, reactive context compression, token limit auto-upgrade, context drain, model fallback after 3 consecutive failures
-- **Speculative execution** — writes pre-execute in a tmpdir overlay before user confirms; confirm copies back, deny discards
-- **5-level context compression** — snip (truncate tool results), microcompact (deduplicate reads), context collapse (summarize old tool calls), autocompact (AI summary), reactive (emergency on 413)
-- **Proactive compaction** — auto-detects model context window via `/v1/models` API, compresses before hitting limit (not after)
-- **Cache-aware compression** — preferentially removes non-API-cached messages to preserve cache hits
-- **3-tier prompt cache** — global/project/session scope boundaries for optimal API cache utilization
-- **HIDA dynamic loading** — classifies input into 10 task types, loads only relevant tools/memory/governance rules
-
-### Tools
-
-Built-in tools with smart permission classification:
-
-| Category | Tools |
-|----------|-------|
-| **File I/O** | read_file, write_file, edit_file (with fuzzy quote matching + mtime conflict detection) |
-| **Search** | glob_search, grep_search, tool_search (deferred tool discovery) |
-| **Execution** | bash (21-point security), agent (sub-agents) |
-| **Git** | git_status, git_diff, git_log, git_commit, git_push, git_stash, git_branch |
-| **Notebook** | notebook_read, notebook_edit (Jupyter .ipynb) |
-| **Computer Use** | screenshot, mouse_click, keyboard_type, key_press, scroll, mouse_drag |
-| **Task Lifecycle** | task_plan, task_verify, task_close |
-| **Scheduling** | cron_create, cron_list, cron_delete |
-| **IDE** | ide_open, ide_diagnostics, ide_selection |
-| **Swarm** | swarm_create, swarm_list, swarm_message, swarm_delete, coordinate |
-| **Memory** | LSP, memory tools |
-
-**Smart path resolution** — auto-corrects LLM path mistakes (e.g. `llm-code` vs `llm_code` confusion) with workspace boundary checks to prevent path traversal.
-
-When tool count exceeds 20, non-core tools are deferred and discoverable via `tool_search`.
-
-### Multi-Agent Collaboration
-
-```bash
-/swarm create coder "Implement the login API"
-/swarm create tester "Write tests for the login API"
-/swarm create reviewer "Review the login implementation"
-/swarm coordinate "Build a complete user auth system"
-```
-
-- **Coordinator** auto-decomposes complex tasks into subtasks and dispatches to workers
-- **tmux backend** — each agent in its own terminal pane (subprocess fallback for non-tmux)
-- **Mailbox** — file-based JSONL message passing between agents
-- **Shared memory** — all agents access the same project memory with file locking
-- **Built-in roles** — `coder`, `reviewer`, `researcher`, `tester`, or define custom roles
-
-### Security
-
-**21-point Bash security:**
-
-Injection detection, newline attack prevention, pipe chain limits, interpreter REPL blacklist, environment variable leak protection, network access control, file permission change detection, system package operation alerts, redirect overwrite detection, credential path protection, background execution detection, recursive operation warnings, multi-command chain limits, and Zsh dangerous builtin blocking.
-
-**MCP instruction sanitization:** Strips prompt injection patterns (override_safety, role_hijack, secret_exfil, tool_override) from MCP server instructions before system prompt injection. 4096 char limit.
-
-**Bash output secret scanning:** Automatically redacts AWS keys, GitHub PATs, JWTs, private keys, Slack tokens, and generic API keys from tool output before they enter LLM context. Zero user friction.
-
-**Environment variable filtering:** Subprocess inherits safe env only. Sensitive vars (`*_KEY`, `*SECRET*`, `*TOKEN*`, `*PASSWORD*`) replaced with `[FILTERED]`. Allowlist preserves PATH, HOME, SSH_AUTH_SOCK, etc.
-
-**File protection:** Sensitive files (`.env`, SSH keys, `credentials.*`, `*.pem`) are blocked on write and warned on read.
-
-**Permission system:** 6 modes (read_only / workspace_write / full_access / prompt / plan / auto_accept) with allow/deny lists, shadowed rule detection, and input-aware classification (`ls` auto-approved, `rm -rf` needs confirmation). Switch at runtime with `/mode suggest|normal|plan`.
-
-### Memory System
-
-| Layer | Scope | Lifetime | Purpose |
-|-------|-------|----------|---------|
-| **L0 Governance** | Project | Permanent | Rules from CLAUDE.md + .llmcode/rules/ — always loaded |
-| **L1 Working** | Session | Ephemeral | In-memory scratch space for current task |
-| **L2 Project** | Project | Long-term | DreamTask-consolidated knowledge with tag-based queries |
-| **L3 Task** | Cross-session | Until done | PLAN/DO/VERIFY/CLOSE state machine persisted as JSON |
-| **L4 Summary** | Per-session | Long-term | Conversation summaries for future reference |
-
-**DreamTask:** On session exit, automatically consolidates conversation into structured long-term memory — files modified, decisions made, patterns learned.
-
-**Checkpoint recovery:** Auto-saves every 60 seconds. Resume with `--resume` or `/checkpoint resume`.
-
-### Task Lifecycle
-
-```
-PLAN --> DO --> VERIFY --> CLOSE --> DONE
-                  |
-           [auto checks]
-            pass --> CLOSE
-            fail --> diagnostics
-                     |-- continue (minor fix)
-                     |-- replan (redo PLAN)
-                     |-- escalate (ask user)
-```
-
-- **VERIFY** runs automated checks: pytest, ruff, file existence — then LLM judges
-- **Cross-session:** incomplete tasks persist and resume in the next session
-- **CLOSE** writes summaries to L3 task memory and L2 project memory
-
-### Terminal UI
-
-- **Fullscreen TUI** — Python Textual, no Node.js required
-  - Native terminal text selection (mouse=False, plain Text rendering for CJK compatibility)
-  - Welcome banner, inline markdown styling (bold, code, headings)
-  - Scrollable slash command dropdown with fuzzy match on typos ("did you mean /search?")
-  - `Cmd+V` clipboard paste (auto-detects text vs image)
-  - Interactive marketplace browser for skills, plugins, and MCP servers
-  - Hot-reload for skills, plugins, MCP — no restart needed after install
-  - Tabbed `/help` modal (general / commands / custom-commands)
-  - ToolBlock diff view with colored +/- lines and line numbers
-  - Spinner with orange→red color transition on long operations
-  - Permission prompts with single-key y/n/a
-  - Cursor movement (←→, Home/End) in input bar
-- **Vim mode** — full motions (hjkl, w/b/e, 0/$, gg/G, f/F/t/T), operators (d/c/y), text objects (iw, i", i()
-- **Diff visualization** — colored inline diffs on every file change
-- **Search** — `/search` or Ctrl+F with match highlighting
-- **OSC8 hyperlinks** — clickable URLs in supporting terminals
-- **Voice input** — hold-to-talk STT (Whisper, Google, Anthropic backends)
-- **Extended thinking** — collapsible thinking panel with adaptive/enabled/disabled modes
-
-### Hook System
-
-6 event categories, 24 events, glob pattern matching:
-
-| Category | Events |
-|----------|--------|
-| **tool** | pre_tool_use, post_tool_use, tool_error, tool_denied |
-| **command** | pre_command, post_command, command_error |
-| **prompt** | prompt_submit, prompt_compile, prompt_cache_hit, prompt_cache_miss |
-| **agent** | agent_spawn, agent_complete, agent_error, agent_message |
-| **session** | session_start, session_end, session_save, session_compact, session_dream |
-| **http** | http_request, http_response, http_error, http_retry, http_fallback |
-
-```json
-{
-  "hooks": [
-    {"event": "post_tool_use", "tool_pattern": "write_file|edit_file", "command": "ruff format {path}"},
-    {"event": "session.*", "command": "echo $HOOK_EVENT >> ~/agent.log", "on_error": "ignore"}
-  ]
-}
-```
-
-### IDE Integration
-
-llmcode runs a WebSocket JSON-RPC server that any IDE can connect to:
-
-- **Open files** at specific lines in your editor
-- **Read diagnostics** (lint errors, type errors) from the IDE
-- **Get selection** — the agent can read your currently selected code
-- **Auto-detection** — scans for running VSCode, JetBrains, Neovim, Sublime
-
-### Observability
-
-- **OpenTelemetry** — spans for turns and tool executions with LLM semantic conventions
-- **VCR recording** — structured JSONL event streams for debugging and replay
-- **Cost tracking** — per-model pricing with cache-aware calculations and budget enforcement
-- **Version check** — notifies on startup if a newer release is available
-
----
-
-## Marketplace
-
-Compatible with Claude Code's plugin ecosystem — skills, plugins, and MCP servers work out of the box.
-
-### Skills — `/skill`
-
-```
- > brainstorming          (installed)
-   test-driven-development (installed)
-   code-review-fix         [ClawHub]
-   security-check          [npm]
-```
-
-Sources: **Official** (anthropics/claude-plugins-official), **Community**, **npm**, **local**
-
-### Plugins — `/plugin`
-
-```bash
-/plugin install obra/superpowers
-```
-
-Sources: **Official** (anthropics/claude-plugins-official), **Community**, **npm**, **GitHub**
-
-### MCP Servers — `/mcp`
-
-```json
-{
-  "mcpServers": {
-    "github": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": {"GITHUB_TOKEN": "<your-github-token>"}
-    }
-  }
-}
-```
-
-Supports **stdio**, **HTTP**, **SSE**, and **WebSocket** transports with health monitoring and auto-reconnection.
-
----
-
-## Configuration
-
-### Config Locations (precedence low -> high)
-
-1. `~/.llmcode/config.json` — User global
-2. `.llmcode/config.json` — Project
-3. `.llmcode/config.local.json` — Local (gitignored)
-4. CLI flags / env vars — Highest
-
-### Example Config
-
-```json
-{
-  "model": "qwen3.5",
-  "provider": {
-    "base_url": "http://localhost:8000/v1",
-    "api_key_env": "LLM_API_KEY",
-    "timeout": 120
-  },
-  "permissions": {
-    "mode": "prompt",
-    "allow_tools": ["read_file", "glob_search", "grep_search"]
-  },
-  "model_routing": {
-    "sub_agent": "qwen3.5-32b",
-    "compaction": "qwen3.5-7b",
-    "fallback": "qwen3.5-7b"
-  },
-  "skill_router": {
-    "enabled": true,
-    "tier_a": true,
-    "tier_b": true,
-    "tier_c": false,
-    "similarity_threshold": 0.3
-  },
-  "thinking": { "mode": "adaptive", "budget_tokens": 10000 },
-  "dream": { "enabled": true, "min_turns": 3 },
-  "hooks": [
-    {"event": "post_tool_use", "tool_pattern": "write_*|edit_*", "command": "ruff format {path}"}
-  ],
-  "mcpServers": {}
-}
-```
-
-### Commands
-
-| Command | Description |
-|---------|-------------|
-| `/help` | Show all commands |
-| `/model <name>` | Switch model |
-| `/config` | View/set runtime configuration |
-| `/session` | Session management |
-| `/skill` | Browse & install skills |
-| `/plugin` | Browse & install plugins |
-| `/mcp` | Browse & install MCP servers |
-| `/memory` | View project memory |
-| `/memory consolidate` | Run DreamTask now |
-| `/task` | Task lifecycle (new/verify/close) |
-| `/swarm` | Multi-agent (create/coordinate/stop) |
-| `/search <query>` | Search conversation history |
-| `/thinking` | Toggle thinking mode |
-| `/vim` | Toggle vim keybindings |
-| `/voice` | Toggle voice input |
-| `/image` | Paste/load an image |
-| `/copy` | Copy last response to clipboard |
-| `/cron` | Scheduled tasks |
-| `/vcr` | Session recording |
-| `/checkpoint` | Session checkpoints |
-| `/ide` | IDE connection status |
-| `/lsp` | Language Server Protocol status |
-| `/index` | Codebase indexing |
-| `/cd <path>` | Change working directory |
-| `/mode <suggest\|normal\|plan>` | Switch interaction mode |
-| `/diff` | Show changes since last checkpoint |
-| `/undo [N]` | Undo last N file changes |
-| `/cost` | Token usage + cost |
-| `/budget <n>` | Set token budget |
-| `/clear` | Clear conversation |
-| `/exit` | Quit |
+## Docs
+
+- [Memory system](docs/memory.md) — 5-layer architecture, typed taxonomy, DreamTask
+- [Coordinator](docs/coordinator.md) — synthesis-first orchestration, resume mechanism
+- [Architecture](docs/architecture.md) — high-level system overview
+- [Plugins](docs/plugins.md) — building plugins
+- [Tools](docs/tools.md) — tool reference
+- [Configuration](docs/configuration.md) — all config options
 
 ---
 
@@ -458,11 +341,14 @@ Supports **stdio**, **HTTP**, **SSE**, and **WebSocket** transports with health 
 llm_code/               29,000+ lines Python
 ├── api/                Provider abstraction (OpenAI-compat + Anthropic)
 ├── cli/                CLI entry point, TUI launcher, oneshot modes (-x/-q)
-├── runtime/            ReAct engine, memory layers, skill router,
+│   └── templates/      LLM-driven command templates (init.md, etc)
+├── runtime/            ReAct engine, 5-layer memory, skill router,
 │                       compression, hooks, permissions, checkpoint,
 │                       dream, VCR, speculative execution, telemetry,
-│                       file protection, sandbox, prompt guard, secret
-│                       scanner, conversation DB, tree-sitter repo map
+│                       file protection, sandbox, secret scanner,
+│                       conversation DB, tree-sitter repo map
+│   └── prompts/        Per-model system prompts (anthropic, gpt,
+│                       gemini, qwen, llama, deepseek, kimi, codex)
 ├── tools/              30+ tools with deferred loading + security
 ├── task/               PLAN/DO/VERIFY/CLOSE state machine
 ├── hida/               Dynamic context loading (10-type classifier)
@@ -470,14 +356,14 @@ llm_code/               29,000+ lines Python
 ├── marketplace/        Plugin system + security scanning
 ├── lsp/                Language Server Protocol client
 ├── remote/             WebSocket server/client + SSH proxy
-├── vim/                Vim engine (motions, operators, text objects)
+├── vim/                Vim engine
 ├── voice/              STT (Whisper, Google, Anthropic backends)
-├── computer_use/       GUI automation (screenshot + input control)
-├── cron/               Task scheduler (cron parser + async poller)
-├── ide/                IDE bridge (WebSocket JSON-RPC server)
-├── swarm/              Multi-agent (coordinator, tmux/subprocess, mailbox)
-├── utils/              Notebook, diff, hyperlinks, search, text normalize
-tests/                  3,578 tests across 263 test files
+├── computer_use/       GUI automation
+├── cron/               Task scheduler
+├── ide/                IDE bridge (WebSocket JSON-RPC)
+├── swarm/              Multi-agent coordinator (synthesis-first)
+└── utils/              Notebook, diff, hyperlinks, search
+tests/                  3,696 tests across 270+ files
 ```
 
 ---
@@ -489,14 +375,24 @@ git clone https://github.com/DJFeu/llmcode
 cd llmcode
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest                  # 3,578 tests
+pytest                  # 3,696 tests
 ruff check llm_code/    # lint
 ```
+
+Looking for contributors interested in:
+
+- More provider integrations (Anthropic native, OpenAI, Google, xAI, DeepSeek)
+- More built-in skills (especially for Python-specific workflows)
+- IDE integrations (VS Code, JetBrains, Neovim)
+- i18n / l10n
+- Per-model prompt tuning for additional model families
+- Documentation, tutorials, examples
+- Real-world usage feedback (especially on local Qwen/Llama/DeepSeek)
 
 ### Requirements
 
 - Python 3.11+
-- An LLM server (vLLM, Ollama, LM Studio, or cloud API)
+- An LLM server (vLLM, Ollama, LM Studio, or any OpenAI-compatible cloud API)
 
 ---
 
