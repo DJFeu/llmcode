@@ -8,6 +8,7 @@ to enable a specific subset (driven by ``config.hooks.builtin_enabled``).
 """
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from . import (
@@ -35,15 +36,27 @@ def register_all(hook_runner: "HookRunner") -> None:
         module.register(hook_runner)
 
 
+_logger = logging.getLogger(__name__)
+
+
 def register_named(hook_runner: "HookRunner", names: tuple[str, ...]) -> list[str]:
-    """Register only the named builtins. Returns the names that were registered."""
+    """Register only the named builtins. Returns the names that were registered.
+
+    Unknown names log a warning rather than raising. Registration failures of
+    individual hooks are caught and logged so a single bad hook never crashes
+    runtime startup.
+    """
     registered: list[str] = []
     for name in names:
         module = BUILTIN_HOOKS.get(name)
         if module is None:
+            _logger.warning("builtin_hooks: unknown hook name %r (skipped)", name)
             continue
-        module.register(hook_runner)
-        registered.append(name)
+        try:
+            module.register(hook_runner)
+            registered.append(name)
+        except Exception as exc:  # pragma: no cover - defensive
+            _logger.warning("builtin_hooks: failed to register %r: %s", name, exc)
     return registered
 
 

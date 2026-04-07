@@ -139,6 +139,15 @@ class ConversationRuntime:
         self._tool_registry = tool_registry
         self._permissions = permission_policy
         self._hooks = hook_runner
+        # Register opt-in builtin Python hooks (config.builtin_hooks.enabled).
+        try:
+            _builtin_cfg = getattr(config, "builtin_hooks", None)
+            _enabled_names = tuple(getattr(_builtin_cfg, "enabled", ()) or ())
+            if _enabled_names and hook_runner is not None:
+                from llm_code.runtime.builtin_hooks import register_named
+                register_named(hook_runner, _enabled_names)
+        except Exception as _exc:  # pragma: no cover - defensive
+            logger.warning("builtin hooks registration failed: %s", _exc)
         self._prompt_builder = prompt_builder
         self._config = config
         self.session = session
