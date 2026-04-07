@@ -10,6 +10,44 @@ from llm_code.tools.base import PermissionLevel
 _log = logging.getLogger(__name__)
 
 
+# Tools that never mutate state — allowed in PLAN mode regardless of declared level.
+PLAN_MODE_READ_ONLY_TOOLS: frozenset[str] = frozenset({
+    "read_file",
+    "glob_search",
+    "grep_search",
+    "web_search",
+    "web_fetch",
+    "notebook_read",
+    "task_get",
+    "task_list",
+    "swarm_list",
+    "cron_list",
+    "tool_search",
+    "ide_diagnostics",
+    "ide_selection",
+    "git_status",
+    "git_diff",
+    "git_log",
+})
+
+
+def is_read_only_tool(tool_name: str) -> bool:
+    """Return True if the tool is known to be safe in plan mode.
+
+    Matches by exact name or common read-only prefixes (lsp_*, git_status/diff/log).
+    """
+    if tool_name in PLAN_MODE_READ_ONLY_TOOLS:
+        return True
+    if tool_name.startswith("lsp_"):
+        return True
+    return False
+
+
+PLAN_MODE_DENY_MESSAGE = (
+    "Plan mode active — switch to build mode (Shift+Tab) to execute mutating tools"
+)
+
+
 class PermissionMode(Enum):
     READ_ONLY = "read_only"
     WORKSPACE_WRITE = "workspace_write"
@@ -182,9 +220,11 @@ class PermissionPolicy:
                 return PermissionOutcome.ALLOW
             return PermissionOutcome.NEED_PROMPT
 
-        # 4b. PLAN mode: read-only always allowed, elevated needs planning confirmation
+        # 4b. PLAN mode: read-only tools allowed by name or declared level.
+        # All mutating tools are gated (NEED_PLAN) — runtime blocks execution and
+        # surfaces PLAN_MODE_DENY_MESSAGE. User switches mode (Shift+Tab) to execute.
         if self._mode == PermissionMode.PLAN:
-            if level == PermissionLevel.READ_ONLY:
+            if is_read_only_tool(tool_name) or level == PermissionLevel.READ_ONLY:
                 return PermissionOutcome.ALLOW
             return PermissionOutcome.NEED_PLAN
 
