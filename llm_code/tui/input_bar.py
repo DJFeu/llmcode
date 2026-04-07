@@ -87,6 +87,13 @@ class InputBar(Widget):
     _IMAGE_STYLE = "bold #e05880"
     _IMAGE_MARKER = "\x00IMG\x00"  # sentinel in value text
 
+    def insert_text(self, text: str) -> None:
+        """Insert arbitrary text at current cursor position."""
+        if not text:
+            return
+        self.value = self.value[:self._cursor] + text + self.value[self._cursor:]
+        self._cursor += len(text)
+
     def insert_image_marker(self) -> None:
         """Insert an [image] marker at current cursor position."""
         self.value = self.value[:self._cursor] + self._IMAGE_MARKER + self.value[self._cursor:]

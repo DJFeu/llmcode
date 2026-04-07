@@ -81,9 +81,11 @@ class LLMCodeTUI(App):
         self._context_warned: bool = False  # one-shot 80% warning
 
     def compose(self) -> ComposeResult:
+        from llm_code.tui.chat_widgets import RateLimitBar
         yield HeaderBar(id="header-bar")
         yield ChatScrollView(id="chat-view")
         yield InputBar()
+        yield RateLimitBar()
         yield StatusBar(id="status-bar")
 
     def on_mount(self) -> None:
@@ -99,6 +101,17 @@ class LLMCodeTUI(App):
             url = self._config.provider_base_url
             status = self.query_one(StatusBar)
             status.is_local = "localhost" in url or "127.0.0.1" in url or "0.0.0.0" in url
+        # Populate reactive fields from runtime + cwd (model, cwd, branch, mode)
+        try:
+            status = self.query_one(StatusBar)
+            if self._config and getattr(self._config, "model", None):
+                status.model = str(self._config.model)
+            status.cwd_basename = self._cwd.name
+            status.refresh_git_branch(self._cwd)
+            if self._config and getattr(self._config, "permission_mode", None):
+                status.permission_mode = str(self._config.permission_mode)
+        except Exception:
+            pass
         # Initialize context window meter
         try:
             status = self.query_one(StatusBar)
@@ -112,6 +125,15 @@ class LLMCodeTUI(App):
             pass
         # Periodic task count polling for status bar
         self.set_interval(3.0, self._poll_bg_tasks)
+        # Wire RateLimitBar to cost tracker (hide when no rate-limit info)
+        try:
+            from llm_code.tui.chat_widgets import RateLimitBar as _RLB
+            rl_bar = self.query_one(_RLB)
+            rl_bar.set_tracker(self._cost_tracker)
+            self._refresh_rate_limit_bar()
+            self.set_interval(5.0, self._refresh_rate_limit_bar)
+        except Exception:
+            pass
         # Apply initial mode from CLI --mode flag
         if self._initial_mode:
             self._cmd_mode(self._initial_mode)
@@ -884,8 +906,150 @@ class LLMCodeTUI(App):
         """Handle Escape — cancel running generation."""
         pass  # Phase 2: cancel runtime
 
+    def _refresh_rate_limit_bar(self) -> None:
+        """Hide RateLimitBar when no rate-limit info; refresh otherwise."""
+        try:
+            from llm_code.tui.chat_widgets import RateLimitBar as _RLB
+            bar = self.query_one(_RLB)
+            info = getattr(self._cost_tracker, "rate_limit_info", None) if self._cost_tracker else None
+            bar.display = info is not None
+            bar.refresh()
+        except Exception:
+            pass
+
+    def _insert_text_into_input(self, text: str) -> None:
+        """Insert text at the InputBar cursor (used by Quick Open selection)."""
+        try:
+            self.query_one(InputBar).insert_text(text)
+        except Exception:
+            pass
+
+    def _last_error_tool_block(self):
+        """Return the most recently mounted ToolBlock with is_error=True, or None."""
+        from llm_code.tui.chat_widgets import ToolBlock
+        try:
+            chat = self.query_one(ChatScrollView)
+            blocks = list(chat.query(ToolBlock))
+        except Exception:
+            return None
+        for blk in reversed(blocks):
+            if getattr(blk._data, "is_error", False):
+                return blk
+        return None
+
+    def _toggle_last_error_verbose(self) -> bool:
+        """Toggle verbose on the last error ToolBlock. Returns True if a block was toggled."""
+        blk = self._last_error_tool_block()
+        if blk is None:
+            return False
+        blk.set_verbose(not blk._verbose)
+        return True
+
+    def _open_quick_open(self) -> None:
+        """Mount QuickOpen modal screen. On selection, insert path into InputBar."""
+        from textual.screen import ModalScreen
+        from textual.containers import VerticalScroll
+        from textual.widgets import Static
+        from llm_code.tui.quick_open import fuzzy_find_files
+        from rich.text import Text as RichText
+
+        app_ref = self
+        cwd = self._cwd
+
+        class QuickOpenScreen(ModalScreen):
+            DEFAULT_CSS = """
+            QuickOpenScreen { align: center middle; }
+            #qo-box {
+                width: 80%;
+                height: 60%;
+                background: $surface;
+                border: round $accent;
+                padding: 1 2;
+            }
+            #qo-content { height: 1fr; }
+            #qo-footer { dock: bottom; height: 1; color: $text-muted; text-align: center; }
+            """
+
+            def __init__(self) -> None:
+                super().__init__()
+                self._query = ""
+                self._cursor = 0
+                self._results: list = []
+
+            def compose(self):
+                with VerticalScroll(id="qo-box"):
+                    yield Static("", id="qo-content")
+                yield Static("type to filter · ↑↓ navigate · Enter select · Esc close", id="qo-footer")
+
+            def on_mount(self) -> None:
+                self._refresh()
+
+            def _refresh(self) -> None:
+                try:
+                    self._results = fuzzy_find_files(self._query, cwd, limit=12)
+                except Exception:
+                    self._results = []
+                if self._cursor >= len(self._results):
+                    self._cursor = max(0, len(self._results) - 1)
+                text = RichText()
+                text.append(f"> {self._query}\n\n", style="bold cyan")
+                if not self._results:
+                    text.append("  (no matches)\n", style="dim")
+                else:
+                    for i, r in enumerate(self._results):
+                        if i == self._cursor:
+                            text.append("  > ", style="bold cyan")
+                            text.append(f"{r.path}\n", style="bold white")
+                        else:
+                            text.append(f"    {r.path}\n", style="white")
+                try:
+                    self.query_one("#qo-content", Static).update(text)
+                except Exception:
+                    pass
+
+            def on_key(self, event) -> None:
+                key = event.key
+                if key == "escape":
+                    self.dismiss()
+                elif key == "up":
+                    self._cursor = max(0, self._cursor - 1)
+                    self._refresh()
+                elif key == "down":
+                    if self._results:
+                        self._cursor = min(len(self._results) - 1, self._cursor + 1)
+                        self._refresh()
+                elif key == "enter":
+                    if 0 <= self._cursor < len(self._results):
+                        path = self._results[self._cursor].path
+                        self.dismiss()
+                        app_ref._insert_text_into_input(path)
+                elif key == "backspace":
+                    self._query = self._query[:-1]
+                    self._refresh()
+                elif len(key) == 1 and key.isprintable():
+                    self._query += key
+                    self._refresh()
+                else:
+                    return
+                event.prevent_default()
+                event.stop()
+
+        self.push_screen(QuickOpenScreen())
+
     def on_key(self, event: "events.Key") -> None:
-        """Handle single-key permission responses (y/n/a), image paste, and scroll."""
+        """Handle single-key permission responses (y/n/a), Ctrl+P quick open, Ctrl+V verbose toggle."""
+        # Ctrl+P — Quick Open (does not conflict with paste; paste is on_paste / Ctrl+I)
+        if event.key == "ctrl+p":
+            self._open_quick_open()
+            event.prevent_default()
+            event.stop()
+            return
+        # Ctrl+V — toggle verbose on last error ToolBlock only (no-op otherwise, pastes unaffected)
+        if event.key == "ctrl+v":
+            if self._toggle_last_error_verbose():
+                event.prevent_default()
+                event.stop()
+            return
         # Permission handling (y/n/a)
         if not self._permission_pending or self._runtime is None:
             return
@@ -936,6 +1100,7 @@ class LLMCodeTUI(App):
 
         input_bar.disabled = True
         status.is_streaming = True
+        status.turn_count = int(getattr(status, "turn_count", 0) or 0) + 1
 
         # Reset per-turn counters
         turn_input_tokens = 0
@@ -1434,6 +1599,13 @@ class LLMCodeTUI(App):
         next_mode, status_label, agent_name = cycle[next_idx]
         policy._mode = next_mode
         status.plan_mode = status_label
+        # Map cycle label to permission_mode reactive for status bar
+        _perm_label_map = {
+            "BUILD": "build",
+            "PLAN": "plan",
+            "SUGGEST": "suggest",
+        }
+        status.permission_mode = _perm_label_map.get(agent_name, "")
         chat.add_entry(AssistantText(f"Agent: {agent_name}"))
 
     def action_scroll_chat_up(self) -> None:
@@ -2245,6 +2417,53 @@ class LLMCodeTUI(App):
         if not tokens:
             return query
         return " ".join(f'"{t}"' for t in tokens)
+
+    def _cmd_settings(self, args: str) -> None:
+        """Open the read-only settings panel (Tier 2 wiring)."""
+        from textual.screen import ModalScreen
+        from textual.containers import VerticalScroll
+        from textual.widgets import Static
+        from llm_code.tui.settings_modal import (
+            build_settings_sections, render_sections_text,
+        )
+
+        runtime_like = type("_RT", (), {
+            "model": getattr(self._config, "model", "") if self._config else "",
+            "permission_mode": getattr(self._config, "permission_mode", "") if self._config else "",
+            "plan_mode": self._plan_mode,
+            "config": self._config,
+            "cost_tracker": self._cost_tracker,
+            "keybindings": None,
+            "active_skills": [],
+        })()
+        sections = build_settings_sections(runtime_like)
+        body = render_sections_text(sections)
+
+        class SettingsScreen(ModalScreen):
+            DEFAULT_CSS = """
+            SettingsScreen { align: center middle; }
+            #settings-box {
+                width: 80%;
+                height: 80%;
+                background: $surface;
+                border: round $accent;
+                padding: 1 2;
+            }
+            #settings-footer { dock: bottom; height: 1; color: $text-muted; text-align: center; }
+            """
+
+            def compose(self):
+                with VerticalScroll(id="settings-box"):
+                    yield Static(body)
+                yield Static("Esc close", id="settings-footer")
+
+            def on_key(self, event) -> None:
+                if event.key == "escape":
+                    self.dismiss()
+                    event.prevent_default()
+                    event.stop()
+
+        self.push_screen(SettingsScreen())
 
     def _cmd_config(self, args: str) -> None:
         chat = self.query_one(ChatScrollView)
