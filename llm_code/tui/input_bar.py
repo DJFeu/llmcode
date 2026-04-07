@@ -37,7 +37,7 @@ class InputBar(Widget):
         dock: bottom;
         height: auto;
         min-height: 3;
-        max-height: 14;
+        max-height: 30;
         padding: 0 1;
         background: $surface;
     }
@@ -314,11 +314,23 @@ class InputBar(Widget):
         if self._cursor > len(self.value):
             self._cursor = len(self.value)
         self._update_dropdown()
-        # Manually set height to force immediate layout update.
-        # height: auto in CSS is unreliable here because reactive changes
-        # land one frame before layout recomputes — first newline appears
-        # to do nothing, second one finally triggers re-layout.
+        self._recompute_height()
+
+    def _recompute_height(self) -> None:
+        """Recalculate height based on input lines + dropdown rows.
+
+        height: auto in CSS doesn't update in time for reactive value changes,
+        so we set height explicitly here.
+        """
         line_count = self.value.count("\n") + 1
-        # +2 for prompt line padding, clamped to [3, 14] (matching CSS)
-        self.styles.height = max(3, min(line_count + 2, 14))
+        # Dropdown rows: count visible items, capped at 12 (matching render)
+        dropdown_rows = 0
+        if self._show_dropdown and self._dropdown_items:
+            dropdown_rows = min(len(self._dropdown_items), 12)
+            # +1 if there's a "↓ N more" line
+            if len(self._dropdown_items) > 12:
+                dropdown_rows += 1
+        # +2 for prompt line padding, max 30 to fit reasonable terminals
+        total = line_count + dropdown_rows + 2
+        self.styles.height = max(3, min(total, 30))
         self.refresh(layout=True)
