@@ -173,15 +173,17 @@ def _cosine_similarity(a: dict[str, float], b: dict[str, float]) -> float:
 # ------------------------------------------------------------------
 
 _CLASSIFY_PROMPT = """\
-You are an intent classifier. Given the skill list below, reply with ONLY \
-the skill name that best matches the user's request. If none match, reply "none".
-Do not explain.
+You are an intent classifier. Reply with ONLY the skill name on a single line.
+No thinking, no explanation, no markdown, no analysis. Just the bare skill name.
+If none match, reply: none
 
 Skills:
 {skill_list}
 
 User request: {user_message}
-Skill name:"""
+
+/no_think
+Answer:"""
 
 
 async def _classify_with_llm_debug(
@@ -200,13 +202,24 @@ async def _classify_with_llm_debug(
         request = MessageRequest(
             model=model,
             messages=(user_msg,),
-            max_tokens=20,
+            max_tokens=512,  # generous: thinking models burn tokens before answering
             temperature=0.0,
             stream=False,
         )
         response = await provider.send_message(request)
         raw = response.content[0].text if response.content else ""
-        answer = raw.strip().lower()
+        # Strip thinking blocks emitted by reasoning models (Qwen3, DeepSeek, etc.)
+        cleaned = raw
+        for tag in ("</think>", "</thinking>", "Answer:", "answer:"):
+            if tag in cleaned:
+                cleaned = cleaned.rsplit(tag, 1)[-1]
+        # Take just the first non-empty line — that's the bare answer
+        for line in cleaned.splitlines():
+            line = line.strip()
+            if line:
+                cleaned = line
+                break
+        answer = cleaned.strip().lower()
         if not answer or answer == "none":
             return None, raw
         answer = answer.strip(" .,:;!?\"'`*[](){}\n\t")
