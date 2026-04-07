@@ -750,7 +750,7 @@ class ConversationRuntime:
                     precomputed = _precomputed_by_id[call.id]
                     yield StreamToolExecStart(
                         tool_name=call.name,
-                        args_summary=str(call.args)[:80],
+                        args_summary=repr(call.args),
                         tool_id=call.id,
                     )
                     yield StreamToolExecResult(
@@ -1020,7 +1020,9 @@ class ConversationRuntime:
                 args = hook_result
 
         # 6. Emit tool execution start event
-        args_preview = str(args)[:80]
+        # Use repr() so the formatter can ast.literal_eval it back to a dict.
+        # Don't truncate here — render_tool_args() handles truncation per-tool.
+        args_preview = repr(args)
         if self._vcr_recorder is not None:
             self._vcr_recorder.record("tool_call", {"name": call.name, "args": args_preview})
         yield StreamToolExecStart(

@@ -130,13 +130,12 @@ class ToolBlock(Widget):
         text.append(file_path, style="bold white")
         text.append(")", style="bold white")
 
-        # For bash: show command
+        # For bash: show the actual command (not the raw args dict).
+        # render_tool_args already returns "$ command" for bash.
         if d.tool_name == "bash":
-            args = d.args_display
-            if not args.startswith("$"):
-                args = f"$ {args}"
+            cmd = render_tool_args(d.tool_name, d.args_display)
             text.append("\n")
-            text.append(f"  │ {args}", style="white on #2a2a3a")
+            text.append(f"  │ {cmd}", style="white on #2a2a3a")
 
         # Result summary
         if d.result:
