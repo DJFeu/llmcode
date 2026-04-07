@@ -426,6 +426,12 @@ class ConversationRuntime:
             _routed: tuple = ()
             if self._skill_router is not None:
                 _routed = tuple(self._skill_router.route(user_input))
+            # Track routed skills on runtime so TUI can show them in status
+            self._last_routed_skills = tuple(s.name for s in _routed) if _routed else ()
+            if _routed:
+                self._fire_hook("skill_routed", {
+                    "skills": list(self._last_routed_skills),
+                })
 
             system_prompt = self._prompt_builder.build(
                 self._context,
@@ -702,10 +708,18 @@ class ConversationRuntime:
                         "Diminishing returns: iteration %d, delta %d tokens < %d threshold",
                         _continuation_count, _delta, _dr_cfg.min_delta_tokens,
                     )
-                    yield StreamTextDelta(
-                        text=f"\n[Auto-stopped: diminishing returns — "
-                        f"iteration {_continuation_count}, {_delta} new tokens]"
+                    _msg_template = getattr(
+                        _dr_cfg,
+                        "auto_stop_message",
+                        "\n[Auto-stopped: diminishing returns — iteration {iteration}, {delta} new tokens]",
                     )
+                    try:
+                        _msg = _msg_template.format(
+                            iteration=_continuation_count, delta=_delta
+                        )
+                    except (KeyError, IndexError, ValueError):
+                        _msg = _msg_template
+                    yield StreamTextDelta(text=_msg)
                     break
             elif parsed_calls:
                 # Reset counter when model is actively using tools

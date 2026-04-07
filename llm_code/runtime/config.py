@@ -115,6 +115,13 @@ class SwarmConfig:
     max_members: int = 5
     role_models: dict[str, str] = field(default_factory=dict)
     worktree: WorktreeConfig = field(default_factory=WorktreeConfig)
+    overlap_threshold: float = 0.6
+    synthesis_enabled: bool = True
+
+
+@dataclass(frozen=True)
+class MemoryConfig:
+    strict_derivable_check: bool = False
 
 
 @dataclass(frozen=True)
@@ -191,6 +198,9 @@ class DiminishingReturnsConfig:
     enabled: bool = True
     min_continuations: int = 3   # minimum iterations before checking
     min_delta_tokens: int = 500  # stop if delta below this
+    auto_stop_message: str = (
+        "\n[Auto-stopped: diminishing returns — iteration {iteration}, {delta} new tokens]"
+    )
 
 
 @dataclass(frozen=True)
@@ -239,6 +249,7 @@ class RuntimeConfig:
     computer_use: ComputerUseConfig = field(default_factory=ComputerUseConfig)
     ide: IDEConfig = field(default_factory=IDEConfig)
     swarm: SwarmConfig = field(default_factory=SwarmConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
     vcr: VCRConfig = field(default_factory=VCRConfig)
     hida: HidaConfig = field(default_factory=HidaConfig)
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
@@ -408,6 +419,13 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         max_members=swarm_raw.get("max_members", 5),
         role_models=swarm_raw.get("role_models", {}),
         worktree=worktree,
+        overlap_threshold=float(swarm_raw.get("overlap_threshold", 0.6)),
+        synthesis_enabled=bool(swarm_raw.get("synthesis_enabled", True)),
+    )
+
+    memory_raw = data.get("memory", {})
+    memory = MemoryConfig(
+        strict_derivable_check=bool(memory_raw.get("strict_derivable_check", False)),
     )
 
     vcr_raw = data.get("vcr", {})
@@ -512,6 +530,7 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         computer_use=computer_use,
         ide=ide,
         swarm=swarm,
+        memory=memory,
         vcr=vcr,
         hida=hida,
         telemetry=telemetry,
