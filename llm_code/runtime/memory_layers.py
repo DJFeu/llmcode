@@ -4,8 +4,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -465,3 +466,111 @@ class LayeredMemory:
     def get_incomplete_tasks(self) -> tuple[TaskRecord, ...]:
         """Scan for incomplete tasks (useful on startup)."""
         return self._tasks.list_incomplete()
+
+
+# ----------------------------------------------------------------------
+# Daily distillation: today-*.md -> recent.md -> archive.md
+# TODO(cron): wire into scheduler (see docs/superpowers/plans/*-cron.md)
+# ----------------------------------------------------------------------
+
+_TODAY_FILE_RE = re.compile(r"^today-(\d{4}-\d{2}-\d{2})(?:[._-].*)?\.md$")
+_RECENT_BLOCK_RE = re.compile(
+    r"<!-- entry: (\d{4}-\d{2}-\d{2}) -->\n(.*?)(?=\n<!-- entry: |\Z)",
+    re.DOTALL,
+)
+
+
+def _parse_date(s: str) -> date | None:
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _read_text(path: Path) -> str:
+    if not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _append_text(path: Path, text: str) -> None:
+    existing = _read_text(path)
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+    path.write_text(existing + text, encoding="utf-8")
+
+
+def distill_daily(memory_dir: Path, today: date) -> None:
+    """Roll today-*.md into recent.md, and entries >7 days old into archive.md.
+
+    Idempotent: running multiple times on the same day yields the same state.
+    """
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    recent_path = memory_dir / "recent.md"
+    archive_path = memory_dir / "archive.md"
+
+    drained_blocks: list[tuple[date, str]] = []
+    for path in sorted(memory_dir.glob("today-*.md")):
+        m = _TODAY_FILE_RE.match(path.name)
+        if not m:
+            continue
+        entry_date = _parse_date(m.group(1))
+        if entry_date is None or entry_date >= today:
+            continue
+        body = _read_text(path).strip()
+        if body:
+            drained_blocks.append((entry_date, body))
+        try:
+            path.unlink()
+        except OSError:
+            logger.warning("distill_daily: failed to unlink %s", path)
+
+    if drained_blocks:
+        existing_recent = _read_text(recent_path)
+        existing_dates = {d for d, _ in _RECENT_BLOCK_RE.findall(existing_recent)}
+        new_chunks: list[str] = []
+        for entry_date, body in drained_blocks:
+            iso = entry_date.isoformat()
+            if iso in existing_dates:
+                continue
+            new_chunks.append(f"<!-- entry: {iso} -->\n{body}\n")
+            existing_dates.add(iso)
+        if new_chunks:
+            _append_text(recent_path, "\n".join(new_chunks))
+
+    cutoff = today - timedelta(days=7)
+    recent_text = _read_text(recent_path)
+    if not recent_text:
+        return
+
+    keep_chunks: list[str] = []
+    archive_chunks: list[tuple[date, str]] = []
+    for m in _RECENT_BLOCK_RE.finditer(recent_text):
+        iso, body = m.group(1), m.group(2).rstrip()
+        entry_date = _parse_date(iso)
+        block_text = f"<!-- entry: {iso} -->\n{body}\n"
+        if entry_date is None or entry_date >= cutoff:
+            keep_chunks.append(block_text)
+        else:
+            archive_chunks.append((entry_date, block_text))
+
+    if archive_chunks:
+        existing_archive = _read_text(archive_path)
+        archived_dates = {d for d, _ in _RECENT_BLOCK_RE.findall(existing_archive)}
+        new_archive: list[str] = []
+        for entry_date, block_text in archive_chunks:
+            iso = entry_date.isoformat()
+            if iso in archived_dates:
+                continue
+            new_archive.append(block_text)
+            archived_dates.add(iso)
+        if new_archive:
+            _append_text(archive_path, "\n".join(new_archive))
+
+        recent_path.write_text(
+            ("\n".join(keep_chunks) + "\n") if keep_chunks else "",
+            encoding="utf-8",
+        )

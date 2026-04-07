@@ -5,11 +5,79 @@ should be read from the source, not stored in memory.
 """
 from __future__ import annotations
 
+import logging
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from llm_code.runtime.memory_taxonomy import MemoryType
+
+logger = logging.getLogger(__name__)
+
+
+class DerivableContentError(ValueError):
+    """Raised in strict mode when memory text contains derivable artifacts."""
+
+    def __init__(self, reasons: list[str]) -> None:
+        super().__init__("Derivable content rejected: " + "; ".join(reasons))
+        self.reasons = tuple(reasons)
+
+
+_FENCED_CODE_RE = re.compile(r"```")
+_GIT_SHA_RE = re.compile(r"\b[0-9a-f]{40}\b")
+_ABS_PATH_RE = re.compile(r"(?<![\w/])(/[\w./\-]+)")
+
+
+def _find_derivable(text: str, repo_root: Path) -> list[str]:
+    reasons: list[str] = []
+    if _FENCED_CODE_RE.search(text):
+        reasons.append("contains fenced code blocks (```)")
+    if _GIT_SHA_RE.search(text):
+        reasons.append("contains 40-char git SHA")
+    try:
+        root_resolved = repo_root.resolve()
+    except OSError:
+        root_resolved = repo_root
+    for match in _ABS_PATH_RE.findall(text):
+        candidate = Path(match)
+        try:
+            if not candidate.exists():
+                continue
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        try:
+            resolved.relative_to(root_resolved)
+        except ValueError:
+            continue
+        reasons.append(f"references on-disk path under repo root: {match}")
+        break
+    return reasons
+
+
+def validate_non_derivable(
+    text: str,
+    repo_root: Path,
+    *,
+    strict: bool = False,
+) -> None:
+    """Reject memory text that duplicates derivable artifacts.
+
+    In strict mode, raises :class:`DerivableContentError` when *text* contains
+    fenced code blocks, 40-char git SHAs, or absolute paths that exist under
+    *repo_root*. In the default warn-only mode (``strict=False``), logs a
+    warning and returns silently.
+    """
+    reasons = _find_derivable(text, repo_root)
+    if not reasons:
+        return
+    if strict:
+        raise DerivableContentError(reasons)
+    logger.warning(
+        "memory.derivable_content_warning: %s",
+        "; ".join(reasons),
+    )
 
 # Patterns that indicate derivable content
 _GIT_LOG_PATTERN = re.compile(r"^[a-f0-9]{7,40}\s+\w", re.MULTILINE)

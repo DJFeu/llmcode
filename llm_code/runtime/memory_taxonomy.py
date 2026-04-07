@@ -5,6 +5,7 @@ Compatible with Claude Code's memdir architecture.
 """
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -13,9 +14,27 @@ from pathlib import Path
 
 import yaml
 
+logger = logging.getLogger(__name__)
+
 _MAX_FILE_BYTES = 25_600  # 25 KB
 _MAX_INDEX_LINES = 200
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)", re.DOTALL)
+
+
+class MemoryFileTooLargeError(ValueError):
+    """Raised when a memory entry serialization exceeds the per-file byte cap.
+
+    Subclasses ``ValueError`` for backward compatibility with older callers
+    that catch ``ValueError`` from :class:`TypedMemoryStore.store`/``update``.
+    """
+
+    def __init__(self, slug: str, size: int, limit: int = _MAX_FILE_BYTES) -> None:
+        super().__init__(
+            f"Memory file {slug!r} would be {size} bytes, exceeds limit {limit}"
+        )
+        self.slug = slug
+        self.size = size
+        self.limit = limit
 
 
 class MemoryType(Enum):
@@ -166,6 +185,40 @@ class TypedMemoryStore:
         if path.exists():
             path.unlink()
         self._rebuild_index()
+
+    def write(self, entry: TypedMemoryEntry) -> TypedMemoryEntry:
+        """Create or overwrite a memory entry on disk (upsert).
+
+        Enforces the 25KB per-file cap by raising
+        :class:`MemoryFileTooLargeError`. Preserves ``created_at`` if a
+        file with the same slug already exists; always bumps ``updated_at``
+        to now. The index is rebuilt on success.
+        """
+        path = self._topics_dir / f"{entry.slug}.md"
+        now = datetime.now(timezone.utc).isoformat()
+        created_at = entry.created_at or now
+        if path.exists():
+            try:
+                existing = TypedMemoryEntry.from_file(path)
+                created_at = existing.created_at or created_at
+            except ValueError:
+                pass
+        materialized = TypedMemoryEntry(
+            slug=entry.slug,
+            name=entry.name,
+            description=entry.description,
+            memory_type=entry.memory_type,
+            content=entry.content,
+            created_at=created_at,
+            updated_at=now,
+        )
+        md = materialized.to_frontmatter_md()
+        size = len(md.encode("utf-8"))
+        if size > _MAX_FILE_BYTES:
+            raise MemoryFileTooLargeError(entry.slug, size)
+        path.write_text(md, encoding="utf-8")
+        self._rebuild_index()
+        return materialized
 
     def get(self, slug: str) -> TypedMemoryEntry | None:
         """Retrieve a single entry by slug."""

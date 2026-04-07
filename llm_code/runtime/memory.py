@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -37,6 +40,13 @@ class MemoryStore:
         relates_to: tuple[str, ...] = (),
     ) -> None:
         """Store or update a key-value pair with optional tags and links."""
+        # Best-effort derivable-content check (warn-only by default).
+        try:
+            from llm_code.runtime.memory_validator import validate_non_derivable
+
+            validate_non_derivable(value, self._dir.parent, strict=False)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("memory validator skipped: %s", exc)
         data = self._load()
         now = datetime.now(timezone.utc).isoformat()
         if key in data:
