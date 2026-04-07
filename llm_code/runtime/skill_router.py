@@ -82,12 +82,73 @@ def _content_tokens(text: str) -> list[str]:
 # Keyword extraction
 # ------------------------------------------------------------------
 
+_CJK_ALIASES: dict[str, tuple[str, ...]] = {
+    # creative / brainstorming
+    "design": ("設計", "设计"),
+    "create": ("建立", "創建", "创建"),
+    "creating": ("建立", "創建"),
+    "feature": ("功能", "特性"),
+    "features": ("功能",),
+    "build": ("建立", "建構"),
+    "building": ("建立", "建構"),
+    "component": ("元件", "組件"),
+    "components": ("元件", "組件"),
+    "brainstorm": ("發想", "腦力激盪", "构思"),
+    "idea": ("想法", "點子"),
+    "ideas": ("想法", "點子"),
+    "implementation": ("實作", "實現"),
+    "modify": ("修改",),
+    "behavior": ("行為",),
+    # debugging
+    "debug": ("除錯", "调试", "排錯"),
+    "debugging": ("除錯", "调试"),
+    "bug": ("錯誤", "瑕疵", "問題"),
+    "error": ("錯誤", "异常"),
+    "fix": ("修復", "修正", "修理"),
+    "troubleshoot": ("排除", "故障"),
+    # testing
+    "test": ("測試", "测试"),
+    "testing": ("測試", "测试"),
+    "tdd": ("測試驅動",),
+    "coverage": ("覆蓋率",),
+    # code review
+    "review": ("審查", "檢查", "评审"),
+    "refactor": ("重構", "重构"),
+    "quality": ("品質",),
+    # planning
+    "plan": ("計畫", "規劃", "计划"),
+    "planning": ("計畫", "規劃"),
+    "task": ("任務", "工作"),
+    # general engineering
+    "code": ("程式碼", "代碼"),
+    "function": ("函式", "函数"),
+    "file": ("檔案", "文件"),
+    "search": ("搜尋", "搜索"),
+    "git": ("git",),
+    "commit": ("提交",),
+    "branch": ("分支",),
+    "merge": ("合併", "合并"),
+    "deploy": ("部署",),
+    "tool": ("工具",),
+    "tools": ("工具",),
+    "agent": ("代理",),
+    "memory": ("記憶", "记忆"),
+    "skill": ("技能",),
+    "skills": ("技能",),
+    "performance": ("效能", "性能"),
+    "security": ("安全",),
+    "documentation": ("文件", "文档"),
+}
+
+
 def _extract_keywords(skill: Any) -> frozenset[str]:
     """Extract routing keywords from a skill.
 
     Sources (priority order):
     1. Explicit ``keywords`` tuple from SKILL.md frontmatter
     2. Auto-extracted content words from name + description + tags
+    3. CJK aliases for common English engineering terms (so Chinese
+       prompts can match English skill descriptions)
     """
     kws: set[str] = set()
 
@@ -100,6 +161,13 @@ def _extract_keywords(skill: Any) -> frozenset[str]:
     for tok in _content_tokens(text):
         if len(tok) >= 2:  # skip single-char tokens from descriptions
             kws.add(tok)
+
+    # Add CJK aliases for any English keywords we recognize
+    for kw in list(kws):
+        for alias in _CJK_ALIASES.get(kw, ()):
+            for ch in alias:  # CJK chars are single-token
+                kws.add(ch)
+            kws.add(alias)
 
     return frozenset(kws)
 
