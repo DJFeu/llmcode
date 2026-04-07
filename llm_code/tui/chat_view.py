@@ -29,34 +29,82 @@ class UserMessage(Widget):
 def _styled_text(raw: str) -> Text:
     """Convert markdown text to Rich Text with inline styles.
 
-    Uses plain Text (not Markdown renderable) so terminal native
-    text selection works correctly — no padding/borders/indentation
-    that break character-cell contiguity.
+    Hardened renderer:
+      - **bold** / `code` / # headings
+      - ~~strike~~ rendered as plain text (no strikethrough)
+      - [label](url) → cyan + link
+      - bare https?://... → cyan + link
+      - > blockquote → indent + dim
+      - triple-backtick fence → dim bg with language label
+    Uses plain Text so terminal text selection still works.
     """
+    # Process fenced code blocks first by splitting them out, render the
+    # remainder line-by-line for blockquotes, then run the inline regex.
     t = Text()
+    fence_re = re.compile(r"^```([a-zA-Z0-9_+-]*)\n(.*?)(?:^```\s*$)", re.MULTILINE | re.DOTALL)
     pos = 0
-    # Combine patterns: bold, inline code, headings
-    combined = re.compile(
-        r"\*\*(.+?)\*\*"       # bold
-        r"|`([^`]+)`"          # inline code
-        r"|^(#{1,3})\s+(.+)$"  # heading
-        , re.MULTILINE
-    )
-    for m in combined.finditer(raw):
-        # Append text before match
+    for m in fence_re.finditer(raw):
         if m.start() > pos:
-            t.append(raw[pos:m.start()])
-        if m.group(1) is not None:       # **bold**
-            t.append(m.group(1), style="bold")
-        elif m.group(2) is not None:     # `code`
-            t.append(m.group(2), style="bold cyan")
-        elif m.group(4) is not None:     # ## heading
-            t.append(m.group(4), style="bold underline")
+            _render_block(raw[pos:m.start()], t)
+        lang = m.group(1) or ""
+        code = m.group(2)
+        if lang:
+            t.append(f"⌐ {lang}\n", style="dim italic")
+        for line in code.splitlines():
+            t.append(line + "\n", style="white on grey11")
         pos = m.end()
-    # Append remainder
     if pos < len(raw):
-        t.append(raw[pos:])
+        _render_block(raw[pos:], t)
     return t
+
+
+def _render_block(raw: str, t: Text) -> None:
+    """Render a non-fenced text block into `t` line-by-line."""
+    for line in raw.splitlines(keepends=True):
+        stripped = line.rstrip("\n")
+        if stripped.startswith("> "):
+            t.append("  ", style="dim")
+            _render_inline(stripped[2:], t, base_style="dim italic")
+            t.append("\n")
+        else:
+            _render_inline(stripped, t)
+            if line.endswith("\n"):
+                t.append("\n")
+
+
+_INLINE_RE = re.compile(
+    r"\*\*(.+?)\*\*"                                       # 1: bold
+    r"|`([^`]+)`"                                          # 2: code
+    r"|^(#{1,3})\s+(.+)$"                                  # 3,4: heading
+    r"|~~(.+?)~~"                                          # 5: strike (plain)
+    r"|\[([^\]]+)\]\(([^)]+)\)"                            # 6,7: link
+    r"|(https?://[^\s<>\)\]]+)"                            # 8: bare url
+    , re.MULTILINE,
+)
+
+
+def _render_inline(raw: str, t: Text, base_style: str = "") -> None:
+    pos = 0
+    for m in _INLINE_RE.finditer(raw):
+        if m.start() > pos:
+            t.append(raw[pos:m.start()], style=base_style)
+        if m.group(1) is not None:
+            t.append(m.group(1), style=f"bold {base_style}".strip())
+        elif m.group(2) is not None:
+            t.append(m.group(2), style="bold cyan")
+        elif m.group(4) is not None:
+            t.append(m.group(4), style="bold underline")
+        elif m.group(5) is not None:
+            t.append(m.group(5), style=base_style)  # strikethrough disabled
+        elif m.group(6) is not None:
+            label, url = m.group(6), m.group(7)
+            t.append(label, style=f"cyan underline link {url}")
+        elif m.group(8) is not None:
+            url = m.group(8)
+            t.append(url, style=f"cyan underline link {url}")
+        pos = m.end()
+    if pos < len(raw):
+        t.append(raw[pos:], style=base_style)
 
 
 class AssistantText(Widget):
