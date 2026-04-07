@@ -59,6 +59,7 @@ COMMAND_REGISTRY: tuple[CommandDef, ...] = (
     CommandDef("yolo", "Toggle YOLO mode (auto-accept all permissions)", no_arg=True),
     CommandDef("copy", "Copy last response to clipboard", no_arg=True),
     CommandDef("compact", "Compact conversation to free context window"),
+    CommandDef("export", "Export conversation to markdown file"),
     CommandDef("exit", "Quit", no_arg=True),
     CommandDef("quit", "Quit", no_arg=True),
 )
