@@ -184,13 +184,13 @@ User request: {user_message}
 Skill name:"""
 
 
-async def _classify_with_llm(
+async def _classify_with_llm_debug(
     user_message: str,
     skills: Sequence[Any],
     provider: Any,
     model: str,
-) -> str | None:
-    """Ask the LLM to classify user intent. Returns skill name or None."""
+) -> tuple[str | None, str]:
+    """Ask the LLM to classify user intent. Returns (skill_name, raw_answer)."""
     skill_list = "\n".join(f"- {s.name}: {s.description[:80]}" for s in skills)
     prompt = _CLASSIFY_PROMPT.format(skill_list=skill_list, user_message=user_message)
 
@@ -205,24 +205,32 @@ async def _classify_with_llm(
             stream=False,
         )
         response = await provider.send_message(request)
-        answer = response.content[0].text.strip().lower() if response.content else ""
+        raw = response.content[0].text if response.content else ""
+        answer = raw.strip().lower()
         if not answer or answer == "none":
-            return None
-        # Strip common LLM response decorations: punctuation, quotes, code fences.
+            return None, raw
         answer = answer.strip(" .,:;!?\"'`*[](){}\n\t")
         skill_names = {s.name.lower(): s.name for s in skills}
-        # 1) exact match
         if answer in skill_names:
-            return skill_names[answer]
-        # 2) any skill name appearing as a substring of the answer
-        # (handles "the answer is brainstorming" or "brainstorming." style replies)
+            return skill_names[answer], raw
         for lname, original in skill_names.items():
             if lname in answer:
-                return original
-        return None
-    except Exception:
+                return original, raw
+        return None, raw
+    except Exception as e:
         logger.debug("Tier C classification failed", exc_info=True)
-        return None
+        return None, f"<exception: {e!r}>"
+
+
+async def _classify_with_llm(
+    user_message: str,
+    skills: Sequence[Any],
+    provider: Any,
+    model: str,
+) -> str | None:
+    """Backward-compat wrapper around _classify_with_llm_debug."""
+    name, _ = await _classify_with_llm_debug(user_message, skills, provider, model)
+    return name
 
 
 # ------------------------------------------------------------------
@@ -265,6 +273,8 @@ class SkillRouter:
         # Cache for route results
         self._cache: dict[str, list[Any]] = {}
         self._cache_max = 128
+        # Debug: last Tier C trace (for TUI surfacing)
+        self.last_tier_c_debug: str = ""
 
     # ------------------------------------------------------------------
     # Public API
@@ -305,21 +315,29 @@ class SkillRouter:
         English; keyword/TF-IDF matching can't bridge the language gap, but an
         LLM classifier can judge intent semantically.
         """
+        self.last_tier_c_debug = ""
         result = self.route(user_message)
         if result:
             return result
 
         # Decide whether Tier C should fire
         tier_c_enabled = self._config.tier_c
+        has_cjk = any(_is_cjk(ch) for ch in user_message)
         if not tier_c_enabled and self._config.tier_c_auto_for_cjk:
-            tier_c_enabled = any(_is_cjk(ch) for ch in user_message)
+            tier_c_enabled = has_cjk
+
+        self.last_tier_c_debug = (
+            f"AB-miss cjk={has_cjk} tc_enabled={tier_c_enabled} "
+            f"provider={self._provider is not None}"
+        )
 
         # Tier C fallback
         if tier_c_enabled and self._provider:
             model = self._config.tier_c_model or self._model
-            name = await _classify_with_llm(
+            name, raw = await _classify_with_llm_debug(
                 user_message, self._skills, self._provider, model,
             )
+            self.last_tier_c_debug += f" model={model!r} raw={raw!r} matched={name!r}"
             if name:
                 for skill in self._skills:
                     if skill.name == name:

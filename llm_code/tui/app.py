@@ -927,8 +927,9 @@ class LLMCodeTUI(App):
                     skill_names = ", ".join(s.name for s in _matched)
                     chat.add_entry(AssistantText(f"⚡ Skills: {skill_names}"))
                 else:
+                    _dbg = getattr(_router, "last_tier_c_debug", "")
                     chat.add_entry(AssistantText(
-                        f"[skill router: 0/{_n_skills} skills matched]"
+                        f"[skill router: 0/{_n_skills} matched | {_dbg}]"
                     ))
             except Exception as _e:
                 chat.add_entry(AssistantText(f"[skill router error: {_e!r}]"))
