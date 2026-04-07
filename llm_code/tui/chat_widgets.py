@@ -231,6 +231,7 @@ class SpinnerLine(Widget):
         "processing": "Processing…",
         "running": "Reading {tool}…",
         "streaming": "Streaming…",
+        "routing": "Routing skills…",
     }
 
     def __init__(self, tool_name: str = "") -> None:

@@ -919,27 +919,24 @@ class LLMCodeTUI(App):
         # Show skill router activations (run router here so user sees it
         # before the LLM call starts)
         if self._runtime._skill_router is not None:
+            _routing_spinner = SpinnerLine()
+            _routing_spinner.phase = "routing"
+            chat.add_entry(_routing_spinner)
             try:
-                _router = self._runtime._skill_router
-                _n_skills = len(getattr(_router, "_skills", ()))
-                _matched = await _router.route_async(user_input)
+                _matched = await self._runtime._skill_router.route_async(user_input)
                 if _matched:
                     skill_names = ", ".join(s.name for s in _matched)
                     chat.add_entry(AssistantText(f"⚡ Skills: {skill_names}"))
-                else:
-                    _dbg = getattr(_router, "last_tier_c_debug", "")
-                    chat.add_entry(AssistantText(
-                        f"[skill router: 0/{_n_skills} matched | {_dbg}]"
-                    ))
-            except Exception as _e:
-                chat.add_entry(AssistantText(f"[skill router error: {_e!r}]"))
-        else:
-            _n_auto = len(self._runtime._skills.auto_skills) if (
-                self._runtime._skills and self._runtime._skills.auto_skills
-            ) else 0
-            chat.add_entry(AssistantText(
-                f"[skill router not initialized — auto_skills={_n_auto}]"
-            ))
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "skill router failed", exc_info=True,
+                )
+            finally:
+                try:
+                    _routing_spinner.remove()
+                except Exception:
+                    pass
 
         spinner = SpinnerLine()
         spinner.phase = "waiting"
