@@ -2581,6 +2581,17 @@ class LLMCodeTUI(App):
 
     # ── Swarm ─────────────────────────────────────────────────────────
 
+    def _cmd_personas(self, args: str) -> None:
+        """List available built-in agent personas for the swarm."""
+        chat = self.query_one(ChatScrollView)
+        from llm_code.swarm.personas import BUILTIN_PERSONAS
+
+        lines = ["Available built-in personas:", ""]
+        for name in sorted(BUILTIN_PERSONAS):
+            persona = BUILTIN_PERSONAS[name]
+            lines.append(f"  /{name:18s} — {persona.description}")
+        chat.add_entry(AssistantText("\n".join(lines)))
+
     def _cmd_swarm(self, args: str) -> None:
         chat = self.query_one(ChatScrollView)
         parts = args.strip().split(None, 1)

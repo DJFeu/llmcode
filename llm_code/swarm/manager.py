@@ -53,6 +53,7 @@ class SwarmManager:
         task: str,
         backend: str = "auto",
         model: str | None = None,
+        persona: str = "",
     ) -> SwarmMember:
         """Spawn a new swarm worker.
 
@@ -76,7 +77,19 @@ class SwarmManager:
 
         member_id = uuid.uuid4().hex[:8]
         effective_backend = self._resolve_backend(backend)
-        effective_model = self._resolve_model(role, model)
+
+        # Apply persona overrides if requested.
+        persona_obj = None
+        if persona:
+            from llm_code.swarm.personas import BUILTIN_PERSONAS
+
+            persona_obj = BUILTIN_PERSONAS.get(persona)
+            if persona_obj is None:
+                raise ValueError(f"Unknown persona: {persona}")
+            # Persona system prompt is prepended to the task description.
+            task = f"{persona_obj.system_prompt}\n\n---\n\nTASK: {task}"
+
+        effective_model = self._resolve_model(role, model, persona_obj)
 
         pid: int | str | None = None
         if effective_backend == "tmux":
@@ -109,19 +122,28 @@ class SwarmManager:
         self._members[member_id] = member
         return member
 
-    def _resolve_model(self, role: str, explicit: str | None) -> str:
-        """Determine the effective model using a 4-level fallback chain.
+    def _resolve_model(self, role: str, explicit: str | None, persona=None) -> str:
+        """Determine the effective model using a 5-level fallback chain.
 
         Priority (highest to lowest):
           1. explicit argument
-          2. config.swarm.role_models[role]
-          3. config.model_routing.sub_agent
-          4. config.model
+          2. persona.model_hint resolved against config.model_routing
+          3. config.swarm.role_models[role]
+          4. config.model_routing.sub_agent
+          5. config.model
 
         The resolved value is then looked up in config.model_aliases.
         """
         if explicit:
             model = explicit
+        elif persona is not None and persona.model_hint:
+            routing = self._config.model_routing
+            hint = persona.model_hint
+            model = (
+                getattr(routing, hint, None)
+                or getattr(routing, "sub_agent", None)
+                or self._config.model
+            )
         elif role in self._config.swarm.role_models:
             model = self._config.swarm.role_models[role]
         elif self._config.model_routing.sub_agent:
