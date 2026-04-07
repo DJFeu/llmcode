@@ -907,6 +907,17 @@ class LLMCodeTUI(App):
         turn_input_tokens = 0
         turn_output_tokens = 0
 
+        # Show skill router activations (run router here so user sees it
+        # before the LLM call starts)
+        if self._runtime._skill_router is not None:
+            try:
+                _matched = self._runtime._skill_router.route(user_input)
+                if _matched:
+                    skill_names = ", ".join(s.name for s in _matched)
+                    chat.add_entry(AssistantText(f"⚡ Skills: {skill_names}"))
+            except Exception:
+                pass
+
         spinner = SpinnerLine()
         spinner.phase = "waiting"
         chat.add_entry(spinner)
