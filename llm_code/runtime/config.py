@@ -226,6 +226,20 @@ class SkillRouterConfig:
 
 
 @dataclass(frozen=True)
+class BuiltinHooksConfig:
+    """Opt-in registration of in-process Python builtin hooks."""
+
+    enabled: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class KeywordsConfig:
+    """Keyword-driven action detection (Feature 6)."""
+
+    enabled: bool = False
+
+
+@dataclass(frozen=True)
 class RuntimeConfig:
     config_version: str = ""
     model: str = ""
@@ -276,6 +290,8 @@ class RuntimeConfig:
     skill_router: SkillRouterConfig = field(default_factory=lambda: SkillRouterConfig())
     diminishing_returns: DiminishingReturnsConfig = field(default_factory=lambda: DiminishingReturnsConfig())
     tui: TuiConfig = field(default_factory=TuiConfig)
+    builtin_hooks: BuiltinHooksConfig = field(default_factory=BuiltinHooksConfig)
+    keywords: KeywordsConfig = field(default_factory=KeywordsConfig)
 
 
 class ConfigSchema(BaseModel):

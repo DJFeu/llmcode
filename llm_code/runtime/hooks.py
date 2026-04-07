@@ -60,6 +60,11 @@ _EVENT_GROUP: dict[str, str] = {
     "http_error": "http.http_error",
     "http_retry": "http.http_retry",
     "http_fallback": "http.http_fallback",
+    # extended (oh-my-opencode parity)
+    "skill_routed": "skill.skill_routed",
+    "context_compacted": "context.context_compacted",
+    "task_completed": "task.task_completed",
+    "stop": "session.stop",
 }
 
 
@@ -104,6 +109,39 @@ class HookOutcome:
 class HookRunner:
     def __init__(self, hooks: tuple[HookConfig, ...] = ()) -> None:
         self._hooks = hooks
+        # Python-callable subscriptions: event -> list of callables(event, context) -> None | HookOutcome
+        self._subscribers: dict[str, list] = {}
+
+    def subscribe(self, event: str, callback) -> None:
+        """Subscribe a Python callable to *event*.
+
+        Callback signature: ``fn(event: str, context: dict) -> HookOutcome | None``.
+        Used by the builtin_hooks module for in-process hook implementations.
+        """
+        self._subscribers.setdefault(event, []).append(callback)
+
+    def fire_python(self, event: str, context: dict) -> HookOutcome:
+        """Fire only the in-process Python subscribers for *event*.
+
+        Separate from :meth:`fire` so the existing shell-command path is unchanged.
+        Subscribers raising exceptions are caught and surfaced as warnings.
+        """
+        outcome = HookOutcome()
+        for pattern, callbacks in self._subscribers.items():
+            if not _event_matches(pattern, event):
+                continue
+            for cb in callbacks:
+                try:
+                    result = cb(event, context)
+                except Exception as exc:  # pragma: no cover - defensive
+                    outcome.messages.append(f"builtin hook error ({pattern}): {exc}")
+                    continue
+                if result is None:
+                    continue
+                if result.denied:
+                    return result
+                outcome.messages.extend(result.messages)
+        return outcome
 
     # ------------------------------------------------------------------
     # Public generic entry point
