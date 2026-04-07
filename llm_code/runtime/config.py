@@ -211,6 +211,7 @@ class SkillRouterConfig:
     tier_a: bool = True            # keyword matching
     tier_b: bool = True            # TF-IDF similarity
     tier_c: bool = False           # LLM classifier (adds latency)
+    tier_c_auto_for_cjk: bool = True  # auto-enable Tier C when prompt has CJK and Tier A/B miss
     similarity_threshold: float = 0.3
     max_skills_per_turn: int = 2
     tier_c_model: str = ""         # empty = use same model

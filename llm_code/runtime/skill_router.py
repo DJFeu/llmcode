@@ -284,13 +284,28 @@ class SkillRouter:
         return result
 
     async def route_async(self, user_message: str) -> list[Any]:
-        """Route with all 3 tiers (async, includes optional Tier C)."""
+        """Route with all 3 tiers (async, includes optional Tier C).
+
+        Tier C is consulted when:
+          1. Tier A/B both miss, AND
+          2. Either ``config.tier_c`` is True, OR
+             ``config.tier_c_auto_for_cjk`` is True and the message contains CJK.
+
+        The CJK auto-fallback exists because skill descriptions are typically
+        English; keyword/TF-IDF matching can't bridge the language gap, but an
+        LLM classifier can judge intent semantically.
+        """
         result = self.route(user_message)
         if result:
             return result
 
+        # Decide whether Tier C should fire
+        tier_c_enabled = self._config.tier_c
+        if not tier_c_enabled and self._config.tier_c_auto_for_cjk:
+            tier_c_enabled = any(_is_cjk(ch) for ch in user_message)
+
         # Tier C fallback
-        if self._config.tier_c and self._provider:
+        if tier_c_enabled and self._provider:
             model = self._config.tier_c_model or self._model
             name = await _classify_with_llm(
                 user_message, self._skills, self._provider, model,

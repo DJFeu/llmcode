@@ -911,7 +911,7 @@ class LLMCodeTUI(App):
         # before the LLM call starts)
         if self._runtime._skill_router is not None:
             try:
-                _matched = self._runtime._skill_router.route(user_input)
+                _matched = await self._runtime._skill_router.route_async(user_input)
                 if _matched:
                     skill_names = ", ".join(s.name for s in _matched)
                     chat.add_entry(AssistantText(f"⚡ Skills: {skill_names}"))

@@ -425,7 +425,7 @@ class ConversationRuntime:
             # Route auto-skills based on user intent
             _routed: tuple = ()
             if self._skill_router is not None:
-                _routed = tuple(self._skill_router.route(user_input))
+                _routed = tuple(await self._skill_router.route_async(user_input))
             # Track routed skills on runtime so TUI can show them in status
             self._last_routed_skills = tuple(s.name for s in _routed) if _routed else ()
             if _routed:
