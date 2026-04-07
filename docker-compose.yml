@@ -1,0 +1,27 @@
+# llmcode — example self-hosted setup
+#
+# Usage:
+#   1. Edit ./config/config.json to point at your LLM endpoint
+#   2. docker compose run --rm llmcode
+#
+# This compose file does NOT include an LLM server — it's expected
+# you already run vLLM, Ollama, or LM Studio on the host or in
+# another container. Configure llmcode to point at it.
+
+services:
+  llmcode:
+    build: .
+    image: llmcode:latest
+    container_name: llmcode
+    stdin_open: true   # required for TUI
+    tty: true          # required for TUI
+    network_mode: host # to reach LLM server on localhost
+    volumes:
+      # Your code workspace (the project llmcode will work on)
+      - ./workspace:/workspace
+      # llmcode config + memory + checkpoints (persisted across runs)
+      - ./config:/home/llmcode/.llmcode
+    environment:
+      - TERM=xterm-256color
+    # Override default command to drop into a shell instead:
+    # command: /bin/bash
