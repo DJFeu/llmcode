@@ -5,6 +5,59 @@ import dataclasses
 import subprocess
 from pathlib import Path
 
+# Instruction filenames in priority order — first match wins per directory.
+# Compatible with: opencode (AGENTS.md), Claude Code (CLAUDE.md), Cursor (.cursorrules)
+INSTRUCTION_FILENAMES = (
+    "AGENTS.md",
+    "CLAUDE.md",
+    "CONTEXT.md",  # legacy / opencode-deprecated
+)
+
+
+def find_instruction_files(cwd: Path) -> list[Path]:
+    """Walk upward from cwd to git root, collecting all instruction files.
+
+    Returns paths in walk order (deepest first). Project root file takes precedence.
+    Also includes ~/.llmcode/INSTRUCTIONS.md as global fallback if present.
+    """
+    found: list[Path] = []
+
+    # 1. Project-level: walk up from cwd to git root (or stop at filesystem root)
+    current = cwd.resolve()
+    git_root = current
+    # Find git root if any
+    for ancestor in [current, *current.parents]:
+        if (ancestor / ".git").exists():
+            git_root = ancestor
+            break
+
+    walked: set[Path] = set()
+    while True:
+        if current in walked:
+            break
+        walked.add(current)
+        # First match per directory wins
+        for name in INSTRUCTION_FILENAMES:
+            candidate = current / name
+            if candidate.is_file():
+                found.append(candidate)
+                break
+        if current == git_root or current == current.parent:
+            break
+        current = current.parent
+
+    # 2. Legacy .llmcode/INSTRUCTIONS.md (kept for backward compat)
+    legacy = cwd / ".llmcode" / "INSTRUCTIONS.md"
+    if legacy.is_file() and legacy not in found:
+        found.append(legacy)
+
+    # 3. Global ~/.llmcode/AGENTS.md
+    home = Path.home() / ".llmcode" / "AGENTS.md"
+    if home.is_file():
+        found.append(home)
+
+    return found
+
 
 @dataclasses.dataclass(frozen=True)
 class ProjectContext:
@@ -33,13 +86,16 @@ class ProjectContext:
             except (subprocess.TimeoutExpired, FileNotFoundError):
                 pass
 
-        instructions = ""
-        instructions_path = cwd / ".llmcode" / "INSTRUCTIONS.md"
-        if instructions_path.exists():
+        # Aggregate instructions from all discovered files (multi-file fallback)
+        instruction_parts: list[str] = []
+        for path in find_instruction_files(cwd):
             try:
-                instructions = instructions_path.read_text(encoding="utf-8")
+                content = path.read_text(encoding="utf-8")
+                if content.strip():
+                    instruction_parts.append(f"# Instructions from: {path}\n\n{content}")
             except OSError:
-                pass
+                continue
+        instructions = "\n\n---\n\n".join(instruction_parts)
 
         return cls(
             cwd=cwd,

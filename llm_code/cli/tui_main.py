@@ -32,6 +32,7 @@ _PERMISSION_CHOICES = ["prompt", "auto_accept", "read_only", "workspace_write", 
 @click.option("--replay-speed", type=float, default=1.0, help="Playback speed for --replay (0 = instant)")
 @click.option("--resume", default=None, help="Resume from a checkpoint (session_id or 'last')")
 @click.option("--mode", "cli_mode", type=click.Choice(["suggest", "normal", "plan"]), default=None, help="Interaction mode (suggest/normal/plan)")
+@click.option("--yolo", is_flag=True, default=False, help="YOLO mode: auto-accept all permissions (dangerous)")
 @click.option("-x", "--execute", "execute_prompt", default=None, help="Translate to shell command and execute")
 @click.option("-q", "--quick", "quick_prompt", default=None, help="Quick Q&A (no TUI)")
 def main(
@@ -51,6 +52,7 @@ def main(
     replay_speed: float = 1.0,
     resume: str | None = None,
     cli_mode: str | None = None,
+    yolo: bool = False,
     execute_prompt: str | None = None,
     quick_prompt: str | None = None,
 ) -> None:
@@ -76,6 +78,8 @@ def main(
     _MODE_PERMISSION_MAP = {"suggest": "prompt", "normal": "workspace_write", "plan": "prompt"}
     if cli_mode:
         cli_overrides.setdefault("permissions", {})["mode"] = _MODE_PERMISSION_MAP[cli_mode]
+    if yolo:
+        cli_overrides.setdefault("permissions", {})["mode"] = "auto_accept"
 
     # Ollama provider setup
     if provider == "ollama":

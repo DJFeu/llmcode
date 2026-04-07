@@ -226,7 +226,7 @@ class TestCommandConsistency:
 
         expected_no_arg = {"help", "clear", "cost", "config", "vim",
                           "skill", "plugin", "mcp", "lsp", "cancel",
-                          "copy", "exit", "quit", "hida", "gain"}
+                          "copy", "yolo", "exit", "quit", "hida", "gain"}
         actual_no_arg = {c.name for c in COMMAND_REGISTRY if c.no_arg}
         assert expected_no_arg == actual_no_arg
 

@@ -436,6 +436,7 @@ class ConversationRuntime:
                 project_index=self._project_index,
                 routed_skills=_routed,
                 is_local_model=_is_local,
+                model_name=self._active_model,
             )
             if _deferred_hint:
                 system_prompt = system_prompt + "\n\n" + _deferred_hint
@@ -492,6 +493,7 @@ class ConversationRuntime:
                         project_index=self._project_index,
                         routed_skills=_routed,
                         is_local_model=_is_local,
+                        model_name=self._active_model,
                     )
                     request = MessageRequest(
                         model=self._active_model,

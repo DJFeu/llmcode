@@ -54,3 +54,4 @@ test_output.log
 python_tutorial.py
 九九乘法表.py
 *.log
+.llmcode/

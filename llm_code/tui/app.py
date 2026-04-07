@@ -1581,6 +1581,26 @@ class LLMCodeTUI(App):
         else:
             chat.add_entry(AssistantText("No changes since last checkpoint."))
 
+    def _cmd_init(self, args: str) -> None:
+        """Run an LLM-driven analysis of the repo to generate AGENTS.md."""
+        from pathlib import Path as _Path
+        chat = self.query_one(ChatScrollView)
+        template_path = _Path(__file__).parent.parent / "cli" / "templates" / "init.md"
+        if not template_path.is_file():
+            chat.add_entry(AssistantText(f"Init template not found: {template_path}"))
+            return
+        try:
+            template = template_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            chat.add_entry(AssistantText(f"Failed to read init template: {exc}"))
+            return
+        prompt = template.replace("$ARGUMENTS", args.strip() or "(none)")
+        chat.add_entry(AssistantText("Analyzing repo and generating AGENTS.md..."))
+        images = list(self._pending_images)
+        self._pending_images.clear()
+        self.query_one(InputBar).pending_image_count = 0
+        self.run_worker(self._run_turn(prompt, images=images), name="run_turn")
+
     def _cmd_index(self, args: str) -> None:
         chat = self.query_one(ChatScrollView)
         if args.strip() == "rebuild":
@@ -1668,6 +1688,37 @@ class LLMCodeTUI(App):
             ))
         if self._runtime:
             self._runtime.plan_mode = self._plan_mode
+
+    def _cmd_yolo(self, args: str) -> None:
+        """Toggle YOLO mode — auto-accept all permission prompts.
+
+        Equivalent to --dangerously-skip-permissions in Claude Code.
+        """
+        from llm_code.runtime.permissions import PermissionMode
+
+        chat = self.query_one(ChatScrollView)
+        status = self.query_one(StatusBar)
+
+        if self._runtime is None or self._runtime._permissions is None:
+            chat.add_entry(AssistantText("Runtime not initialized."))
+            return
+
+        policy = self._runtime._permissions
+        # Toggle: if already in AUTO_ACCEPT, switch to PROMPT; otherwise enable YOLO
+        current_mode = getattr(policy, "_mode", PermissionMode.PROMPT)
+        if current_mode == PermissionMode.AUTO_ACCEPT:
+            policy._mode = PermissionMode.PROMPT
+            status.plan_mode = ""
+            chat.add_entry(AssistantText(
+                "YOLO mode OFF — permissions will prompt again."
+            ))
+        else:
+            policy._mode = PermissionMode.AUTO_ACCEPT
+            status.plan_mode = "YOLO"
+            chat.add_entry(AssistantText(
+                "YOLO mode ON — all permissions auto-accepted. "
+                "⚠️  Be careful: write/delete operations will execute without confirmation."
+            ))
 
     def _cmd_mode(self, args: str) -> None:
         """Switch between suggest/normal/plan modes."""

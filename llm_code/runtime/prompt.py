@@ -21,6 +21,54 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_PROMPTS_DIR = Path(__file__).parent / "prompts"
+
+
+def select_intro_prompt(model: str) -> str:
+    """Pick a model-tuned system intro prompt based on model name.
+
+    Returns the file content from prompts/<family>.md, falling back to default.md.
+    """
+    if not model:
+        return _read_prompt("default")
+
+    m = model.lower()
+    # Order matters — check more specific patterns first
+    if "codex" in m:
+        return _read_prompt("codex")
+    if "gpt-" in m or "gpt4" in m or "gpt5" in m or "/gpt" in m or m.startswith("gpt") or "o1" in m or "o3" in m:
+        return _read_prompt("gpt")
+    if "claude" in m or "anthropic" in m or "sonnet" in m or "opus" in m or "haiku" in m:
+        return _read_prompt("anthropic")
+    if "gemini" in m:
+        return _read_prompt("gemini")
+    if "qwen" in m:
+        return _read_prompt("qwen")
+    if "llama" in m:
+        return _read_prompt("llama")
+    if "deepseek" in m:
+        return _read_prompt("deepseek")
+    if "kimi" in m or "moonshot" in m:
+        return _read_prompt("kimi")
+    return _read_prompt("default")
+
+
+def _read_prompt(name: str) -> str:
+    """Read a prompt file from prompts/ directory. Falls back to embedded default."""
+    path = _PROMPTS_DIR / f"{name}.md"
+    if path.is_file():
+        try:
+            return path.read_text(encoding="utf-8").rstrip()
+        except OSError:
+            pass
+    # Fallback when file missing (e.g. during tests, partial install)
+    return (
+        "You are a coding assistant running inside a terminal. "
+        "You have access to tools that let you read, write, and edit files, "
+        "search code, and run shell commands."
+    )
+
+
 _INTRO = """\
 You are a coding assistant running inside a terminal. \
 You have access to tools that let you read, write, and edit files, \
@@ -101,6 +149,7 @@ class SystemPromptBuilder:
         task_manager: "TaskLifecycleManager | None" = None,
         routed_skills: "tuple[Skill, ...] | None" = None,
         is_local_model: bool = False,
+        model_name: str = "",
     ) -> str:
         sections: list[PromptSection] = []
 
@@ -108,7 +157,8 @@ class SystemPromptBuilder:
         # GLOBAL scope — governance rules, behavior rules, tool instructions
         # Shared across all projects; cached at global boundary.
         # ------------------------------------------------------------------ #
-        sections.append(PromptSection(content=_INTRO, scope="global", priority=0))
+        intro = select_intro_prompt(model_name) if model_name else _INTRO
+        sections.append(PromptSection(content=intro, scope="global", priority=0))
 
         # Governance rules (L0) — injected before behavior rules
         if governance_rules:

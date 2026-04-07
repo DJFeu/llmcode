@@ -46,7 +46,8 @@ class TestProjectContextDiscover:
         instructions_dir.mkdir()
         (instructions_dir / "INSTRUCTIONS.md").write_text("Do the thing.", encoding="utf-8")
         ctx = ProjectContext.discover(tmp_path)
-        assert ctx.instructions == "Do the thing."
+        # New format wraps with "# Instructions from: <path>" header
+        assert "Do the thing." in ctx.instructions
 
     def test_no_instructions_file(self, tmp_path: Path) -> None:
         ctx = ProjectContext.discover(tmp_path)
