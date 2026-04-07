@@ -1,0 +1,11 @@
+{
+  "model": "qwen2.5-coder:32b",
+  "provider": {
+    "base_url": "http://localhost:11434/v1",
+    "api_key_env": "OLLAMA_API_KEY"
+  },
+  "max_tokens": 8192,
+  "temperature": 0.2,
+  "native_tools": true,
+  "compact_after_tokens": 60000
+}

@@ -35,6 +35,8 @@ _PERMISSION_CHOICES = ["prompt", "auto_accept", "read_only", "workspace_write", 
 @click.option("--yolo", is_flag=True, default=False, help="YOLO mode: auto-accept all permissions (dangerous)")
 @click.option("-x", "--execute", "execute_prompt", default=None, help="Translate to shell command and execute")
 @click.option("-q", "--quick", "quick_prompt", default=None, help="Quick Q&A (no TUI)")
+@click.option("--config-schema", is_flag=True, default=False, help="Print the ConfigSchema JSON schema and exit")
+@click.option("--preset", default=None, help="Load a built-in config preset (local-qwen, claude-cloud, mixed-routing, cost-saving)")
 def main(
     prompt: str | None,
     model: str | None,
@@ -55,16 +57,31 @@ def main(
     yolo: bool = False,
     execute_prompt: str | None = None,
     quick_prompt: str | None = None,
+    config_schema: bool = False,
+    preset: str | None = None,
 ) -> None:
     """llm-code: AI coding assistant CLI."""
     from llm_code.logging import setup_logging
     from llm_code.runtime.config import load_config
+
+    if config_schema:
+        import json as _json
+        from llm_code.runtime.config import ConfigSchema
+        click.echo(_json.dumps(ConfigSchema.model_json_schema(), indent=2))
+        return
 
     setup_logging(verbose=verbose)
     cwd = Path.cwd()
 
     # Build CLI overrides
     cli_overrides: dict = {}
+    if preset:
+        from llm_code.runtime.config_presets import load_preset
+        preset_data = load_preset(preset)
+        if preset_data is None:
+            click.echo(f"Error: unknown preset '{preset}'", err=True)
+            raise SystemExit(2)
+        cli_overrides.update(preset_data)
     if model:
         cli_overrides["model"] = model
     if api:

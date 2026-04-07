@@ -1,0 +1,12 @@
+{
+  "model": "claude-haiku-4-5",
+  "max_tokens": 4096,
+  "temperature": 0.2,
+  "compact_after_tokens": 40000,
+  "max_turn_iterations": 3,
+  "output_compression": true,
+  "compressor": {
+    "llm_summarize": false,
+    "max_summary_tokens": 500
+  }
+}
