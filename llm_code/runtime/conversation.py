@@ -188,6 +188,14 @@ class ConversationRuntime:
         # Callback for MCP approval requests from non-root agents.
         # When None, request_mcp_approval auto-denies (CLI-safe default).
         self._mcp_approval_callback: Any = None
+        # Event sink for out-of-band MCP approval prompts. TUI installs this
+        # via set_mcp_event_sink to receive StreamMCPApprovalRequest events
+        # raised from request_mcp_approval (called by McpServerManager).
+        self._mcp_event_sink: Any = None
+        self._mcp_approval_future: "asyncio.Future[str] | None" = None
+        self._mcp_approval_pending: bool = False
+        # In-session allowlist for "always allow this server" responses.
+        self._mcp_approved_servers: set[str] = set()
         self._memory_store = memory_store
         self._task_manager = task_manager
         self._project_index = project_index
@@ -299,15 +307,101 @@ class ConversationRuntime:
         """Install a callback used to approve non-root MCP spawns."""
         self._mcp_approval_callback = callback
 
+    def set_mcp_event_sink(self, sink: Any) -> None:
+        """Install a sink callable that receives out-of-band MCP events.
+
+        The sink is called as ``sink(event)`` where event is a
+        :class:`StreamMCPApprovalRequest`. It must mount a UI widget and
+        eventually resolve the approval by calling
+        :meth:`send_mcp_approval_response`.
+        """
+        self._mcp_event_sink = sink
+
+    def send_mcp_approval_response(self, response: str) -> None:
+        """Resolve a pending MCP approval prompt with 'allow', 'always', or 'deny'.
+
+        Safe to call from Textual ``on_key`` since the runtime and the widget
+        live on the same asyncio event loop.
+        """
+        fut = self._mcp_approval_future
+        if fut is not None and not fut.done():
+            fut.set_result(response)
+
     async def request_mcp_approval(self, request: Any) -> bool:
-        """Ask the attached UI to approve *request*; default-deny if none."""
+        """Ask the attached UI to approve *request*; default-deny if none.
+
+        Behavior:
+          * If a custom callback was installed via ``set_mcp_approval_callback``,
+            defer to it (backwards compatible).
+          * Otherwise yield a StreamMCPApprovalRequest to the installed event
+            sink and suspend on a future until the user responds.
+          * If no sink is installed, default-deny (CLI-safe).
+          * A server approved with "always" is cached per-session and
+            auto-approved on subsequent requests.
+        """
+        # Legacy callback path (tests + custom integrations).
         callback = self._mcp_approval_callback
-        if callback is None:
+        if callback is not None:
+            try:
+                return bool(await callback(request))
+            except Exception:  # noqa: BLE001
+                return False
+
+        # Extract a server name from the request shape (MCPApprovalRequest uses
+        # server_names tuple; stream event uses a single server_name).
+        server_name = ""
+        owner_agent_id = ""
+        description = ""
+        if hasattr(request, "server_names") and request.server_names:
+            server_name = request.server_names[0]
+        elif hasattr(request, "server_name"):
+            server_name = request.server_name
+        if hasattr(request, "agent_name"):
+            owner_agent_id = request.agent_name
+        elif hasattr(request, "owner_agent_id"):
+            owner_agent_id = request.owner_agent_id
+        if hasattr(request, "reason"):
+            description = request.reason or ""
+
+        # In-session allowlist short-circuit.
+        if server_name and server_name in self._mcp_approved_servers:
+            return True
+
+        sink = self._mcp_event_sink
+        if sink is None:
             return False
+
+        from llm_code.api.types import StreamMCPApprovalRequest
+        event = StreamMCPApprovalRequest(
+            server_name=server_name,
+            owner_agent_id=owner_agent_id,
+            command="",
+            description=description,
+        )
         try:
-            return bool(await callback(request))
+            sink(event)
         except Exception:  # noqa: BLE001
+            logger.warning("mcp approval sink raised", exc_info=True)
             return False
+
+        loop = asyncio.get_running_loop()
+        self._mcp_approval_future = loop.create_future()
+        self._mcp_approval_pending = True
+        try:
+            response = await asyncio.wait_for(
+                self._mcp_approval_future, timeout=120,
+            )
+        except asyncio.TimeoutError:
+            response = "deny"
+        finally:
+            self._mcp_approval_future = None
+            self._mcp_approval_pending = False
+
+        if response in ("allow", "always"):
+            if response == "always" and server_name:
+                self._mcp_approved_servers.add(server_name)
+            return True
+        return False
 
     def _fire_hook(self, event: str, context: dict | None = None) -> None:
         """Fire a hook event if the hook runner supports the generic fire() method."""

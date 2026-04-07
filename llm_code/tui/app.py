@@ -71,6 +71,8 @@ class LLMCodeTUI(App):
         self._lsp_manager = None
         self._project_index = None
         self._permission_pending = False
+        self._mcp_approval_pending = False
+        self._mcp_approval_widget = None
         self._pending_images: list = []
         self._plan_mode: bool = False
         self._voice_active = False
@@ -754,6 +756,33 @@ class LLMCodeTUI(App):
             project_index=self._project_index,
             lsp_manager=self._lsp_manager,
         )
+        # Install MCP event sink so non-root server spawns surface an
+        # inline approval widget.
+        try:
+            self._runtime.set_mcp_event_sink(self._on_mcp_approval_event)
+        except Exception:
+            pass
+
+    def _on_mcp_approval_event(self, event) -> None:
+        """Sink called by ConversationRuntime.request_mcp_approval.
+
+        Mounts an MCPApprovalInline widget; resolution flows back through
+        ``runtime.send_mcp_approval_response`` when the user presses y/a/n.
+        """
+        try:
+            from llm_code.tui.chat_widgets import MCPApprovalInline
+            chat = self.query_one(ChatScrollView)
+            widget = MCPApprovalInline(
+                server_name=event.server_name,
+                owner_agent_id=event.owner_agent_id,
+                command=event.command,
+                description=event.description,
+            )
+            chat.add_entry(widget)
+            self._mcp_approval_widget = widget
+            self._mcp_approval_pending = True
+        except Exception:
+            logger.warning("failed to mount MCPApprovalInline", exc_info=True)
 
     async def _init_mcp(self) -> None:
         """Start MCP servers and register their tools (async, called after _init_runtime)."""
@@ -1059,6 +1088,30 @@ class LLMCodeTUI(App):
                 event.prevent_default()
                 event.stop()
             return
+        # MCP approval handling (y/a/n) — takes precedence over tool permission
+        if self._mcp_approval_pending and self._runtime is not None:
+            mcp_response_map = {
+                "y": "allow",
+                "a": "always",
+                "n": "deny",
+                "escape": "deny",
+            }
+            mcp_resp = mcp_response_map.get(event.key)
+            if mcp_resp is not None:
+                self._runtime.send_mcp_approval_response(mcp_resp)
+                self._mcp_approval_pending = False
+                if self._mcp_approval_widget is not None:
+                    try:
+                        w = self._mcp_approval_widget
+                        self._mcp_approval_widget = None
+                        if getattr(w, "is_mounted", False):
+                            w.remove()
+                    except Exception:
+                        pass
+                event.prevent_default()
+                event.stop()
+                return
+
         # Permission handling (y/n/a)
         if not self._permission_pending or self._runtime is None:
             return

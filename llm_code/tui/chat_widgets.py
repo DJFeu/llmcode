@@ -462,6 +462,59 @@ class SpinnerLine(Widget):
         self.refresh()
 
 
+class MCPApprovalInline(Widget):
+    """Inline approval prompt for a non-root MCP server spawn."""
+
+    DEFAULT_CSS = """
+    MCPApprovalInline {
+        height: auto;
+        border-left: thick $warning;
+        padding: 0 1;
+        margin: 0 0 0 2;
+    }
+    """
+
+    def __init__(
+        self,
+        server_name: str,
+        owner_agent_id: str,
+        command: str,
+        description: str = "",
+    ) -> None:
+        super().__init__()
+        self._server_name = server_name
+        self._owner_agent_id = owner_agent_id
+        self._command = command
+        self._description = description
+
+    def render(self) -> RenderResult:
+        text = Text()
+        text.append("⚠ MCP server ", style="yellow bold")
+        text.append(f"'{self._server_name}'", style="bold white")
+        text.append(" wants to start\n", style="yellow bold")
+        if self._owner_agent_id:
+            text.append("  Requested by: ", style="dim")
+            text.append(f"{self._owner_agent_id}\n", style="dim")
+        if self._command:
+            text.append("  ")
+            text.append(f" {self._command[:120]} ", style="white on #2a2a3a")
+            text.append("\n")
+        if self._description:
+            text.append(f"  {self._description}\n", style="dim italic")
+        options: list[tuple[str, str]] = [
+            ("y", "Allow once"),
+            ("a", f"Always allow '{self._server_name}' this session"),
+            ("n", "Deny"),
+        ]
+        for i, (key, label) in enumerate(options):
+            text.append("  ")
+            text.append(f"[{key}]", style="bold bright_cyan")
+            text.append(f" {label}", style="dim")
+            if i < len(options) - 1:
+                text.append("\n")
+        return text
+
+
 class PermissionInline(Widget):
     """Inline permission prompt with yellow left border."""
 
