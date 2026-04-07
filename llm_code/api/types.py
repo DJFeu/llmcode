@@ -56,6 +56,8 @@ class MessageRequest:
     temperature: float = 0.7
     stream: bool = True
     extra_body: dict | None = None
+    cache_key: str = ""
+    metadata: dict | None = None
 
 
 @dataclasses.dataclass(frozen=True)

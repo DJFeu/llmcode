@@ -22,8 +22,11 @@ async def inline_persona_executor(
     """
     try:
         from llm_code.api.types import Message, MessageRequest, TextBlock
+        from llm_code.runtime.fork_cache import derive_fork_key
 
         model = getattr(getattr(runtime, "_config", None), "model", "") or ""
+        parent_session_id = getattr(getattr(runtime, "session", None), "session_id", "") or ""
+        cache_key = derive_fork_key(parent_session_id, persona.name)
         request = MessageRequest(
             model=model,
             messages=(Message(role="user", content=(TextBlock(text=task),)),),
@@ -31,6 +34,7 @@ async def inline_persona_executor(
             max_tokens=2048,
             temperature=persona.temperature,
             stream=False,
+            cache_key=cache_key,
         )
         response = await runtime._provider.send_message(request)
         text = response.content[0].text if response.content else ""
