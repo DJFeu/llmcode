@@ -915,6 +915,9 @@ class LLMCodeTUI(App):
         # Reset per-turn counters
         turn_input_tokens = 0
         turn_output_tokens = 0
+        # Per-turn map: tool_id → live ToolBlock (so Result events update
+        # the same widget that was created at Start, no second mount)
+        _pending_tools: dict[str, ToolBlock] = {}
 
         # Show skill router activations (run router here so user sees it
         # before the LLM call starts)
@@ -1112,16 +1115,29 @@ class LLMCodeTUI(App):
                         event.tool_name, event.args_summary, "", is_error=False,
                     )
                     chat.add_entry(tool_widget)
+                    # Track by tool_id so the matching Result event updates
+                    # this widget in place instead of mounting a second one.
+                    if event.tool_id:
+                        _pending_tools[event.tool_id] = tool_widget
                     spinner.phase = "running"
                     spinner._tool_name = event.tool_name
                     chat.add_entry(spinner)
 
                 elif isinstance(event, StreamToolExecResult):
                     await remove_spinner()
-                    tool_widget = ToolBlock.create(
-                        event.tool_name, "", event.output[:200], event.is_error,
-                    )
-                    chat.add_entry(tool_widget)
+                    existing = _pending_tools.pop(event.tool_id, None) if event.tool_id else None
+                    if existing is not None:
+                        # Update the running widget in place — no second block
+                        existing.update_result(
+                            event.output[:200], event.is_error,
+                        )
+                    else:
+                        # Fallback: no matching start (shouldn't happen with
+                        # paired emit, but handle gracefully)
+                        tool_widget = ToolBlock.create(
+                            event.tool_name, "", event.output[:200], event.is_error,
+                        )
+                        chat.add_entry(tool_widget)
                     spinner.phase = "processing"
                     thinking_start = time.monotonic()
                     chat.add_entry(spinner)

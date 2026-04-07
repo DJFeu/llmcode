@@ -748,12 +748,17 @@ class ConversationRuntime:
                 if call.id in _precomputed_by_id:
                     # Read-only tool already executed concurrently — emit events and reuse result
                     precomputed = _precomputed_by_id[call.id]
-                    yield StreamToolExecStart(tool_name=call.name, args_summary=str(call.args)[:80])
+                    yield StreamToolExecStart(
+                        tool_name=call.name,
+                        args_summary=str(call.args)[:80],
+                        tool_id=call.id,
+                    )
                     yield StreamToolExecResult(
                         tool_name=call.name,
                         output=precomputed.content[:200],
                         is_error=precomputed.is_error,
                         metadata=None,
+                        tool_id=call.id,
                     )
                     tool_result_blocks.append(precomputed)
                 else:
@@ -1018,7 +1023,9 @@ class ConversationRuntime:
         args_preview = str(args)[:80]
         if self._vcr_recorder is not None:
             self._vcr_recorder.record("tool_call", {"name": call.name, "args": args_preview})
-        yield StreamToolExecStart(tool_name=call.name, args_summary=args_preview)
+        yield StreamToolExecStart(
+            tool_name=call.name, args_summary=args_preview, tool_id=call.id,
+        )
         _tool_start = time.monotonic()
 
         # 7. Execute in thread pool with asyncio.Queue progress bridge
@@ -1089,6 +1096,7 @@ class ConversationRuntime:
             output=tool_result.output[:200],
             is_error=tool_result.is_error,
             metadata=tool_result.metadata,
+            tool_id=call.id,
         )
 
         yield ToolResultBlock(

@@ -116,6 +116,7 @@ class StreamToolExecStart(StreamEvent):
     """Emitted when a tool starts executing."""
     tool_name: str
     args_summary: str
+    tool_id: str = ""  # correlation key for matching with StreamToolExecResult
 
 
 @dataclasses.dataclass(frozen=True)
@@ -125,6 +126,7 @@ class StreamToolExecResult(StreamEvent):
     output: str
     is_error: bool = False
     metadata: dict | None = None
+    tool_id: str = ""  # correlation key matching the StreamToolExecStart that opened it
 
 
 @dataclasses.dataclass(frozen=True)

@@ -60,6 +60,24 @@ class ToolBlock(Widget):
         )
         return ToolBlock(data)
 
+    def update_result(
+        self,
+        result: str,
+        is_error: bool,
+        diff_lines: list[str] | None = None,
+    ) -> None:
+        """Fill in the result on an existing in-place ToolBlock — the
+        Claude Code pattern of one widget per tool_use_id transitioning
+        from running -> done in place rather than mounting a second block."""
+        self._data = ToolBlockData(
+            tool_name=self._data.tool_name,
+            args_display=self._data.args_display,
+            result=result,
+            is_error=is_error,
+            diff_lines=diff_lines or self._data.diff_lines,
+        )
+        self.refresh()
+
     def _extract_file_path(self) -> str:
         """Extract file path from args_display."""
         d = self._data
