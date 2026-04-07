@@ -138,6 +138,20 @@ class StreamThinkingDelta(StreamEvent):
 
 
 @dataclasses.dataclass(frozen=True)
+class StreamCompactionStart(StreamEvent):
+    """Emitted when auto-compaction starts in the background."""
+    used_tokens: int
+    max_tokens: int
+
+
+@dataclasses.dataclass(frozen=True)
+class StreamCompactionDone(StreamEvent):
+    """Emitted when auto-compaction finishes."""
+    before_messages: int
+    after_messages: int
+
+
+@dataclasses.dataclass(frozen=True)
 class StreamPermissionRequest(StreamEvent):
     """Emitted when a tool requires user permission before execution."""
     tool_name: str
