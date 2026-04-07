@@ -67,6 +67,24 @@ llmcode = "llm_code.cli.tui_main:main"
 [tool.hatch.build.targets.wheel]
 packages = ["llm_code"]
 
+[tool.hatch.build.targets.sdist]
+include = [
+    "llm_code/",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+exclude = [
+    ".venv*",
+    ".claude/",
+    "tests/",
+    "docs/",
+    "dist/",
+    "build/",
+    "**/__pycache__",
+    "**/*.pyc",
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
