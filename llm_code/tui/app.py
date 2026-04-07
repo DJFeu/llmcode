@@ -1928,6 +1928,16 @@ class LLMCodeTUI(App):
         cost = self._cost_tracker.format_cost() if self._cost_tracker else "No cost data"
         self.query_one(ChatScrollView).add_entry(AssistantText(cost))
 
+    def _cmd_profile(self, args: str) -> None:
+        """Show per-model token/cost breakdown from the query profiler."""
+        chat = self.query_one(ChatScrollView)
+        profiler = getattr(self._runtime, "_query_profiler", None) if self._runtime else None
+        if profiler is None:
+            chat.add_entry(AssistantText("(profiler not initialized)"))
+            return
+        pricing = getattr(self._config, "pricing", None)
+        chat.add_entry(AssistantText(profiler.format_breakdown(pricing)))
+
     def _cmd_gain(self, args: str) -> None:
         from llm_code.tools.token_tracker import TokenTracker
         days = int(args) if args.strip().isdigit() else 30

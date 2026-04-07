@@ -55,6 +55,7 @@ COMMAND_REGISTRY: tuple[CommandDef, ...] = (
     CommandDef("harness", "Harness controls"),
     CommandDef("knowledge", "Knowledge base"),
     CommandDef("gain", "Token savings report", no_arg=True),
+    CommandDef("profile", "Per-model token/cost breakdown", no_arg=True),
     CommandDef("init", "Generate AGENTS.md from repo analysis"),
     CommandDef("yolo", "Toggle YOLO mode (auto-accept all permissions)", no_arg=True),
     CommandDef("copy", "Copy last response to clipboard", no_arg=True),
