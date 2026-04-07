@@ -36,6 +36,9 @@ class Skill:
     # Frontmatter hooks: mapping event name -> builtin hook callable name.
     # e.g. {"pre_tool_use": "auto_format", "post_tool_use": "auto_lint"}
     hooks: tuple[tuple[str, str], ...] = ()
+    # Dynamic slash commands declared in frontmatter.
+    # Each entry is a dict with keys: name, description, argument_hint (optional).
+    commands: tuple[dict, ...] = ()
 
     def __post_init__(self) -> None:
         # If trigger not set (empty string), default it to name.
@@ -112,6 +115,20 @@ class SkillLoader:
                     ))
             depends = tuple(deps)
 
+        commands_raw = meta.get("commands", [])
+        commands: tuple[dict, ...] = ()
+        if isinstance(commands_raw, list):
+            parsed_cmds: list[dict] = []
+            for item in commands_raw:
+                if not isinstance(item, dict) or "name" not in item:
+                    continue
+                parsed_cmds.append({
+                    "name": str(item["name"]),
+                    "description": str(item.get("description", "")),
+                    "argument_hint": str(item.get("argument_hint", "")),
+                })
+            commands = tuple(parsed_cmds)
+
         hooks_raw = meta.get("hooks", {})
         hooks: tuple[tuple[str, str], ...] = ()
         if isinstance(hooks_raw, dict):
@@ -134,6 +151,7 @@ class SkillLoader:
             depends=depends,
             min_version=min_version,
             hooks=hooks,
+            commands=commands,
         )
 
     @staticmethod

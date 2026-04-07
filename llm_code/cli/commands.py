@@ -67,6 +67,49 @@ COMMAND_REGISTRY: tuple[CommandDef, ...] = (
 KNOWN_COMMANDS: frozenset[str] = frozenset(c.name for c in COMMAND_REGISTRY)
 
 
+# Skill-declared dynamic commands. Registered at skill-load time via
+# ``register_skill_commands``. Name collisions with the static registry are
+# resolved by prefixing the skill name: ``<skill>/<command>``.
+SKILL_COMMANDS: dict[str, CommandDef] = {}
+
+
+def register_skill_commands(skill, registry: dict[str, CommandDef] | None = None) -> list[str]:
+    """Register a skill's declared commands into *registry* (defaults to SKILL_COMMANDS).
+
+    Returns the list of command names that were actually registered.
+    """
+    target = registry if registry is not None else SKILL_COMMANDS
+    registered: list[str] = []
+    for cmd in getattr(skill, "commands", ()) or ():
+        name = str(cmd.get("name", "")).strip()
+        if not name:
+            continue
+        description = str(cmd.get("description", ""))
+        hint = str(cmd.get("argument_hint", ""))
+        no_arg = not hint
+        # Collision: prefix with skill name
+        effective_name = name
+        if effective_name in KNOWN_COMMANDS or effective_name in target:
+            effective_name = f"{skill.name}/{name}"
+        if effective_name in target:
+            # still colliding (duplicate skill+name) — skip
+            continue
+        target[effective_name] = CommandDef(
+            name=effective_name,
+            description=description,
+            no_arg=no_arg,
+        )
+        registered.append(effective_name)
+    return registered
+
+
+def all_known_commands(include_skills: bool = True) -> frozenset[str]:
+    """All known slash commands — static registry plus optionally skill-declared."""
+    if not include_skills:
+        return KNOWN_COMMANDS
+    return KNOWN_COMMANDS | frozenset(SKILL_COMMANDS.keys())
+
+
 @dataclass(frozen=True)
 class SlashCommand:
     name: str
