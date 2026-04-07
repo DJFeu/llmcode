@@ -76,6 +76,27 @@ class AssistantText(Widget):
         return _styled_text(self._text)
 
 
+class SkillBadge(Widget):
+    """Coloured banner showing which auto-skills the router activated."""
+
+    DEFAULT_CSS = "SkillBadge { height: auto; }"
+
+    def __init__(self, skills: list[str]) -> None:
+        super().__init__()
+        self._skills = skills
+
+    def render(self) -> RenderResult:
+        t = Text()
+        t.append("⚡ ", style="bold yellow")
+        t.append("Skills", style="bold #d7af00")
+        t.append(": ", style="dim")
+        for i, name in enumerate(self._skills):
+            if i > 0:
+                t.append(", ", style="dim")
+            t.append(name, style="bold #5fafff")
+        return t
+
+
 class ChatScrollView(VerticalScroll):
     """Scrollable chat area that auto-scrolls to bottom on new content."""
 

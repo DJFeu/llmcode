@@ -13,7 +13,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 
-from llm_code.tui.chat_view import ChatScrollView, UserMessage, AssistantText
+from llm_code.tui.chat_view import ChatScrollView, UserMessage, AssistantText, SkillBadge
 from llm_code.tui.header_bar import HeaderBar
 from llm_code.tui.input_bar import InputBar
 from llm_code.tui.status_bar import StatusBar
@@ -925,8 +925,7 @@ class LLMCodeTUI(App):
             try:
                 _matched = await self._runtime._skill_router.route_async(user_input)
                 if _matched:
-                    skill_names = ", ".join(s.name for s in _matched)
-                    chat.add_entry(AssistantText(f"⚡ Skills: {skill_names}"))
+                    chat.add_entry(SkillBadge([s.name for s in _matched]))
             except Exception:
                 import logging
                 logging.getLogger(__name__).warning(
