@@ -314,4 +314,6 @@ class InputBar(Widget):
         if self._cursor > len(self.value):
             self._cursor = len(self.value)
         self._update_dropdown()
-        self.refresh()
+        # layout=True is essential — value can grow vertically (Shift+Enter)
+        # and the InputBar height: auto needs to recompute
+        self.refresh(layout=True)
