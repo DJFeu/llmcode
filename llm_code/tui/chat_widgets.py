@@ -9,9 +9,83 @@ from textual.reactive import reactive
 from textual.app import RenderResult
 from rich.text import Text
 
+import re
+import time
+
+from llm_code.tui.ansi_strip import strip_ansi
 from llm_code.tui.diff_render import render_diff_lines
 from llm_code.tui.spinner_verbs import get_verb
 from llm_code.tui.tool_render import render_tool_args
+
+
+_SANDBOX_TAG_RE = re.compile(r"<sandbox-violation>.*?</sandbox-violation>", re.DOTALL)
+
+
+def _clean_tool_result(text: str) -> str:
+    """Strip sandbox violation tags + ANSI escapes from a tool result."""
+    if not text:
+        return text
+    text = _SANDBOX_TAG_RE.sub("", text)
+    text = strip_ansi(text)
+    return text
+
+
+def _truncate_lines(text: str, max_lines: int = 8) -> tuple[str, int]:
+    """Return (truncated_text, hidden_line_count)."""
+    lines = text.splitlines()
+    if len(lines) <= max_lines:
+        return text, 0
+    return "\n".join(lines[:max_lines]), len(lines) - max_lines
+
+
+class RateLimitBar(Widget):
+    """Renders a remote-API rate limit usage bar.
+
+    Reads `cost_tracker.rate_limit_info` (dict with `used`, `limit`, `reset_at`).
+    Hidden entirely when info is None (e.g. local models).
+    """
+
+    DEFAULT_CSS = "RateLimitBar { height: auto; }"
+
+    def __init__(self, cost_tracker=None, width: int = 12) -> None:
+        super().__init__()
+        self._cost_tracker = cost_tracker
+        self._width = width
+
+    def set_tracker(self, cost_tracker) -> None:
+        self._cost_tracker = cost_tracker
+        self.refresh()
+
+    def _info(self) -> dict | None:
+        if self._cost_tracker is None:
+            return None
+        return getattr(self._cost_tracker, "rate_limit_info", None)
+
+    def render_text(self) -> str:
+        info = self._info()
+        if not info:
+            return ""
+        used = float(info.get("used", 0))
+        limit = float(info.get("limit", 0))
+        if limit <= 0:
+            return ""
+        pct = min(1.0, used / limit)
+        filled = int(round(pct * self._width))
+        bar = "█" * filled + "░" * (self._width - filled)
+        reset_at = info.get("reset_at")
+        reset_str = ""
+        if reset_at:
+            secs = max(0, int(reset_at - time.time()))
+            hours = secs // 3600
+            mins = (secs % 3600) // 60
+            reset_str = f" · resets in {hours}h {mins:02d}m"
+        return f"[{bar}] {int(pct*100)}%{reset_str}"
+
+    def render(self) -> RenderResult:
+        s = self.render_text()
+        if not s:
+            return Text("")
+        return Text(s, style="cyan")
 
 
 SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -46,6 +120,11 @@ class ToolBlock(Widget):
     def __init__(self, data: ToolBlockData) -> None:
         super().__init__()
         self._data = data
+        self._verbose: bool = False
+
+    def set_verbose(self, verbose: bool) -> None:
+        self._verbose = bool(verbose)
+        self.refresh()
 
     @staticmethod
     def create(
@@ -58,7 +137,7 @@ class ToolBlock(Widget):
         data = ToolBlockData(
             tool_name=tool_name,
             args_display=args_display,
-            result=result,
+            result=_clean_tool_result(result),
             is_error=is_error,
             diff_lines=diff_lines or [],
         )
@@ -76,7 +155,7 @@ class ToolBlock(Widget):
         self._data = ToolBlockData(
             tool_name=self._data.tool_name,
             args_display=self._data.args_display,
-            result=result,
+            result=_clean_tool_result(result),
             is_error=is_error,
             diff_lines=diff_lines or self._data.diff_lines,
         )
@@ -155,7 +234,14 @@ class ToolBlock(Widget):
                 icon = "✗" if d.is_error else "✓"
                 icon_style = "bold red" if d.is_error else "bold green"
                 text.append(f"  {icon} ", style=icon_style)
-                text.append(d.result, style="dim")
+                # Truncate long error output unless verbose
+                if d.is_error and not self._verbose:
+                    body, hidden = _truncate_lines(d.result, max_lines=8)
+                    text.append(body, style="dim")
+                    if hidden:
+                        text.append(f"\n  … +{hidden} more line{'s' if hidden != 1 else ''} (Ctrl+V to expand)", style="dim italic")
+                else:
+                    text.append(d.result, style="dim")
 
         # Diff lines: delegate to structured renderer (hunk headers,
         # gutter line numbers, color blocks, truncation footer)

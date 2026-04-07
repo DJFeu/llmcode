@@ -44,6 +44,7 @@ class CostTracker:
     total_cost_usd: float = 0.0
     custom_pricing: dict | None = None  # from config.json "pricing"
     max_budget_usd: float | None = None
+    rate_limit_info: dict | None = None  # {used, limit, reset_at: epoch seconds} or None
 
     def add_usage(
         self,
