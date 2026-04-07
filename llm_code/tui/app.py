@@ -2601,6 +2601,44 @@ class LLMCodeTUI(App):
             lines.append(f"  /{name:18s} — {persona.description}")
         chat.add_entry(AssistantText("\n".join(lines)))
 
+    def _cmd_orchestrate(self, args: str) -> None:
+        """Run the OrchestratorHook (category routing + retry-on-failure).
+
+        Uses a report-only executor that surfaces the routing plan rather
+        than dispatching to the live swarm coordinator. Real execution
+        wiring is tracked separately.
+        """
+        chat = self.query_one(ChatScrollView)
+        task = args.strip()
+        if not task:
+            chat.add_entry(AssistantText(
+                "Usage: /orchestrate <task description>\n"
+                "Routes the task to a persona by category and retries with "
+                "fallback personas on failure."
+            ))
+            return
+        try:
+            from llm_code.swarm.orchestrator_hook import OrchestratorHook, categorize
+
+            def _executor(persona, task_text):  # report-only: always succeeds
+                return True, f"[plan] persona={persona.name} would handle: {task_text[:200]}"
+
+            hook = OrchestratorHook(executor=_executor)
+            result = hook.orchestrate(task)
+            category = categorize(task)
+            lines = [
+                f"Orchestrator plan (category={category}):",
+                "",
+            ]
+            for a in result.attempts:
+                status = "OK" if a.success else f"FAIL: {a.error}"
+                lines.append(f"  attempt {a.attempt}: {a.persona} -> {status}")
+            if result.success:
+                lines += ["", result.final_output]
+            chat.add_entry(AssistantText("\n".join(lines)))
+        except Exception as exc:
+            chat.add_entry(AssistantText(f"Orchestrate failed: {exc}"))
+
     def _cmd_swarm(self, args: str) -> None:
         chat = self.query_one(ChatScrollView)
         parts = args.strip().split(None, 1)

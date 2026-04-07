@@ -37,6 +37,7 @@ COMMAND_REGISTRY: tuple[CommandDef, ...] = (
     CommandDef("cron", "Scheduled tasks"),
     CommandDef("task", "Task lifecycle"),
     CommandDef("swarm", "Swarm coordination"),
+    CommandDef("orchestrate", "Run orchestrator with category routing + retry"),
     CommandDef("voice", "Voice input"),
     CommandDef("ide", "IDE bridge"),
     CommandDef("vcr", "VCR recording"),

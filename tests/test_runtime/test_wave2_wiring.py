@@ -264,3 +264,50 @@ def test_prompt_build_omits_personas_section_when_empty(tmp_path: Path) -> None:
     assert "Available Personas" not in out
     out2 = SystemPromptBuilder().build(ctx)
     assert "Available Personas" not in out2
+
+
+# ---------------------------------------------------------------------------
+# Task 2 — /orchestrate command wiring
+# ---------------------------------------------------------------------------
+
+
+def test_orchestrate_command_in_registry() -> None:
+    from llm_code.cli.commands import COMMAND_REGISTRY, KNOWN_COMMANDS
+
+    assert "orchestrate" in KNOWN_COMMANDS
+    cmd = next(c for c in COMMAND_REGISTRY if c.name == "orchestrate")
+    assert cmd.no_arg is False  # requires args
+
+
+def test_orchestrate_command_not_in_no_arg_set() -> None:
+    """Regression: /orchestrate must not be in expected_no_arg set."""
+    from llm_code.cli.commands import COMMAND_REGISTRY
+
+    no_arg = {c.name for c in COMMAND_REGISTRY if c.no_arg}
+    assert "orchestrate" not in no_arg
+
+
+def test_orchestrator_hook_dispatches_with_executor() -> None:
+    """Verify the OrchestratorHook contract used by _cmd_orchestrate."""
+    from llm_code.swarm.orchestrator_hook import OrchestratorHook, categorize
+
+    calls: list[tuple[str, str]] = []
+
+    def fake_executor(persona, task_text):
+        calls.append((persona.name, task_text))
+        return True, f"done by {persona.name}"
+
+    hook = OrchestratorHook(executor=fake_executor)
+    result = hook.orchestrate("please refactor the auth module")
+    assert result.success
+    assert categorize("please refactor the auth module") == "refactor"
+    assert len(calls) == 1
+    assert result.attempts[0].success
+
+
+def test_cmd_orchestrate_handler_exists() -> None:
+    """Verify _cmd_orchestrate is defined on the LLMCodeTUI class."""
+    from llm_code.tui.app import LLMCodeTUI
+
+    assert hasattr(LLMCodeTUI, "_cmd_orchestrate")
+    assert callable(getattr(LLMCodeTUI, "_cmd_orchestrate"))
