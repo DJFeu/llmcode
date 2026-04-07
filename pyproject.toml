@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "llmcode-cli"
-version = "1.3.0"
+version = "1.4.0"
 description = "Open-source AI agent runtime for any LLM — production-grade coding agent with multi-layer memory, multi-agent orchestration, and defense-in-depth security"
 license = {text = "MIT"}
 authors = [{name = "Adam Hung"}]

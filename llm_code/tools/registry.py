@@ -1,8 +1,40 @@
 """Tool registry for managing and dispatching tools."""
 from __future__ import annotations
 
+from typing import Iterable
+
 from llm_code.api.types import ToolDefinition
 from llm_code.tools.base import Tool, ToolResult
+
+
+def _is_gpt_codex(model: str) -> bool:
+    """Detect GPT-Codex / GPT-5 models that prefer unified-diff editing."""
+    m = model.lower()
+    return ("gpt-" in m or "codex" in m or "/gpt" in m or m.startswith("gpt")) and "oss" not in m
+
+
+def _filter_by_model(tools: Iterable[Tool], model: str) -> list[Tool]:
+    """Apply model-specific tool selection.
+
+    GPT/Codex: prefer apply_patch when available, hide edit_file
+    Other models: prefer edit_file, hide apply_patch when both exist
+
+    If only one of edit_file/apply_patch is registered, no filtering happens.
+    """
+    tool_list = list(tools)
+    names = {t.name for t in tool_list}
+    has_apply_patch = "apply_patch" in names
+    has_edit = "edit_file" in names
+
+    if not (has_apply_patch and has_edit):
+        return tool_list  # only one available, nothing to filter
+
+    if _is_gpt_codex(model):
+        # GPT prefers apply_patch
+        return [t for t in tool_list if t.name != "edit_file"]
+    else:
+        # Other models prefer edit_file
+        return [t for t in tool_list if t.name != "apply_patch"]
 
 
 class ToolRegistry:
@@ -25,11 +57,23 @@ class ToolRegistry:
         """Return all registered tools as a tuple."""
         return tuple(self._tools.values())
 
-    def definitions(self, allowed: set[str] | None = None) -> tuple[ToolDefinition, ...]:
-        """Return ToolDefinitions, optionally filtered to allowed names."""
+    def definitions(
+        self,
+        allowed: set[str] | None = None,
+        model: str | None = None,
+    ) -> tuple[ToolDefinition, ...]:
+        """Return ToolDefinitions, optionally filtered.
+
+        Args:
+            allowed: If provided, only tools with names in this set are returned.
+            model: If provided, applies model-specific tool selection.
+                   GPT models prefer apply_patch over edit/write when both exist.
+        """
         tools = self._tools.values()
         if allowed is not None:
             tools = (t for t in tools if t.name in allowed)  # type: ignore[assignment]
+        if model:
+            tools = _filter_by_model(tools, model)
         return tuple(t.to_definition() for t in tools)
 
     def definitions_with_deferred(

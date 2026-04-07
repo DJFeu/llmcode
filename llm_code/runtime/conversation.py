@@ -379,7 +379,9 @@ class ConversationRuntime:
             # visible and deferred; inject a hint into the system prompt.
             _deferred_hint: str | None = None
             if self._deferred_tool_manager is not None:
-                all_defs = list(self._tool_registry.definitions(allowed=allowed_tool_names))
+                all_defs = list(self._tool_registry.definitions(
+                    allowed=allowed_tool_names, model=self._active_model,
+                ))
                 max_visible = getattr(self._config, "max_visible_tools", 20)
                 visible_list, deferred_list = self._deferred_tool_manager.select_tools(
                     all_defs, max_visible=max_visible
@@ -395,6 +397,7 @@ class ConversationRuntime:
             else:
                 tool_defs = self._tool_registry.definitions(
                     allowed=allowed_tool_names,
+                    model=self._active_model,
                 )
 
             # Collect MCP instructions if manager is available

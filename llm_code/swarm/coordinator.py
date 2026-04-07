@@ -80,11 +80,15 @@ class Coordinator:
         self._provider = provider
         self._config = config
 
-    async def orchestrate(self, task: str) -> str:
+    async def orchestrate(self, task: str, resume_member_ids: list[str] | None = None) -> str:
         """Synthesize → decompose → dispatch → wait → aggregate.
 
         Args:
             task: High-level task description to decompose and delegate.
+            resume_member_ids: Optional list of existing swarm member IDs to
+                reuse instead of spawning fresh ones. Each member receives the
+                same subtask as before, but in their accumulated context.
+                Set to None for fresh spawn.
 
         Returns:
             Aggregated summary string from all worker results.
@@ -95,28 +99,43 @@ class Coordinator:
             reason = synthesis.get("reason", "Task is simple enough to handle directly.")
             return f"[Coordinator] Skipping delegation: {reason}"
 
-        subtasks = await self._decompose(task)
-        if not subtasks:
-            return f"No subtasks generated for: {task}"
+        members: list = []
+        # Resume path: reuse existing swarm members instead of decomposing fresh
+        if resume_member_ids:
+            for mid in resume_member_ids:
+                member = self._manager.get_member(mid)
+                if member is not None:
+                    members.append(member)
+                    logger.info("Resuming swarm member %s (%s)", member.id, member.role)
+                else:
+                    logger.warning("Cannot resume — member not found: %s", mid)
 
-        max_members = getattr(
-            getattr(self._config, "swarm", None), "max_members", 5
-        )
-        subtasks = subtasks[:max_members]
+            if not members:
+                # Fall through to fresh spawn if all resume targets are gone
+                resume_member_ids = None
 
-        members = []
-        for subtask in subtasks:
-            role = subtask.get("role", "worker")
-            subtask_desc = subtask.get("task", "")
-            if not subtask_desc:
-                continue
-            try:
-                member = await self._manager.create_member(role=role, task=subtask_desc)
-                members.append(member)
-                logger.info("Spawned swarm member %s (%s)", member.id, role)
-            except ValueError as exc:
-                logger.warning("Could not create member for role=%s: %s", role, exc)
-                break
+        if not resume_member_ids:
+            subtasks = await self._decompose(task)
+            if not subtasks:
+                return f"No subtasks generated for: {task}"
+
+            max_members = getattr(
+                getattr(self._config, "swarm", None), "max_members", 5
+            )
+            subtasks = subtasks[:max_members]
+
+            for subtask in subtasks:
+                role = subtask.get("role", "worker")
+                subtask_desc = subtask.get("task", "")
+                if not subtask_desc:
+                    continue
+                try:
+                    member = await self._manager.create_member(role=role, task=subtask_desc)
+                    members.append(member)
+                    logger.info("Spawned swarm member %s (%s)", member.id, role)
+                except ValueError as exc:
+                    logger.warning("Could not create member for role=%s: %s", role, exc)
+                    break
 
         if not members:
             return "Failed to create any swarm members."
@@ -128,7 +147,9 @@ class Coordinator:
         )
 
         summary = await self._aggregate(task, members, results)
-        return summary
+        # Append resumable IDs so caller can continue this group later
+        ids_line = ", ".join(m.id for m in members)
+        return f"{summary}\n\n[Resumable swarm member IDs: {ids_line}]"
 
     async def _synthesize(self, task: str) -> dict | None:
         """Analyze task before delegation — decide whether to delegate at all.

@@ -122,3 +122,101 @@ class TestParseJsonObject:
     def test_json_array_rejected(self):
         result = Coordinator._parse_json_object('[1, 2, 3]')
         assert result is None
+
+
+# ------------------------------------------------------------------
+# Subagent task_id resume
+# ------------------------------------------------------------------
+
+class TestSubagentResume:
+    @pytest.fixture
+    def coordinator(self):
+        manager = MagicMock()
+        provider = MagicMock()
+        config = MagicMock()
+        config.model = "test-model"
+        config.swarm = MagicMock(synthesis_enabled=True, max_members=5)
+        return Coordinator(manager=manager, provider=provider, config=config)
+
+    @pytest.mark.asyncio
+    async def test_resume_uses_existing_members(self, coordinator):
+        # Mock synthesis to return delegate=true
+        synthesis_response = MagicMock()
+        synthesis_response.content = [TextBlock(text='{"should_delegate": true, "reason": "x"}')]
+        # Mock aggregate response (only called once — no decompose since we resume)
+        aggregate_response = MagicMock()
+        aggregate_response.content = [TextBlock(text="Resumed work complete.")]
+        coordinator._provider.send_message = AsyncMock(side_effect=[synthesis_response, aggregate_response])
+
+        # Mock existing member
+        existing = MagicMock(id="m1", role="coder", task="continue work")
+        coordinator._manager.get_member = MagicMock(return_value=existing)
+        coordinator._manager.create_member = AsyncMock()  # should NOT be called
+        coordinator._manager.mailbox = MagicMock()
+        coordinator._manager.mailbox.receive_and_clear = MagicMock(return_value=[
+            MagicMock(text="DONE")
+        ])
+        coordinator.TIMEOUT = 1.0
+        coordinator.POLL_INTERVAL = 0.05
+
+        result = await coordinator.orchestrate("more work", resume_member_ids=["m1"])
+
+        # Should NOT have called create_member (used resume)
+        coordinator._manager.create_member.assert_not_called()
+        coordinator._manager.get_member.assert_called_with("m1")
+        assert "Resumable swarm member IDs" in result
+        assert "m1" in result
+
+    @pytest.mark.asyncio
+    async def test_resume_falls_through_when_member_missing(self, coordinator):
+        synthesis_response = MagicMock()
+        synthesis_response.content = [TextBlock(text='{"should_delegate": true, "reason": "x"}')]
+        decompose_response = MagicMock()
+        decompose_response.content = [TextBlock(text='[{"role": "coder", "task": "fresh task"}]')]
+        aggregate_response = MagicMock()
+        aggregate_response.content = [TextBlock(text="Fresh work complete.")]
+        coordinator._provider.send_message = AsyncMock(side_effect=[
+            synthesis_response, decompose_response, aggregate_response,
+        ])
+
+        # Member doesn't exist
+        coordinator._manager.get_member = MagicMock(return_value=None)
+        fake_member = MagicMock(id="new1", role="coder", task="fresh task")
+        coordinator._manager.create_member = AsyncMock(return_value=fake_member)
+        coordinator._manager.mailbox = MagicMock()
+        coordinator._manager.mailbox.receive_and_clear = MagicMock(return_value=[
+            MagicMock(text="DONE")
+        ])
+        coordinator.TIMEOUT = 1.0
+        coordinator.POLL_INTERVAL = 0.05
+
+        result = await coordinator.orchestrate("task", resume_member_ids=["nonexistent"])
+
+        # Should have fallen through to fresh spawn
+        coordinator._manager.create_member.assert_called_once()
+        assert "Resumable swarm member IDs" in result
+
+    @pytest.mark.asyncio
+    async def test_orchestrate_includes_resumable_ids_in_output(self, coordinator):
+        synthesis_response = MagicMock()
+        synthesis_response.content = [TextBlock(text='{"should_delegate": true}')]
+        decompose_response = MagicMock()
+        decompose_response.content = [TextBlock(text='[{"role": "coder", "task": "x"}]')]
+        aggregate_response = MagicMock()
+        aggregate_response.content = [TextBlock(text="Done.")]
+        coordinator._provider.send_message = AsyncMock(side_effect=[
+            synthesis_response, decompose_response, aggregate_response,
+        ])
+
+        fake_member = MagicMock(id="abc123", role="coder", task="x")
+        coordinator._manager.create_member = AsyncMock(return_value=fake_member)
+        coordinator._manager.mailbox = MagicMock()
+        coordinator._manager.mailbox.receive_and_clear = MagicMock(return_value=[
+            MagicMock(text="DONE")
+        ])
+        coordinator.TIMEOUT = 1.0
+        coordinator.POLL_INTERVAL = 0.05
+
+        result = await coordinator.orchestrate("task")
+        assert "abc123" in result
+        assert "Resumable swarm member IDs" in result

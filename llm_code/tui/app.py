@@ -36,6 +36,7 @@ class LLMCodeTUI(App):
         ("pagedown", "scroll_chat_down", "Scroll Down"),
         ("shift+up", "scroll_chat_up", "Scroll Up"),
         ("shift+down", "scroll_chat_down", "Scroll Down"),
+        ("shift+tab", "cycle_agent", "Cycle Agent"),
     ]
 
     def __init__(
@@ -160,6 +161,7 @@ class LLMCodeTUI(App):
             ("Multiline", "Shift+Enter"),
             ("Images", paste_key),
             ("Scroll", "PageUp/Down · Shift+↑/↓"),
+            ("Cycle agent", "Shift+Tab (build/plan/suggest)"),
         ]:
             text.append(f"  {label:<14}", style="dim")
             text.append(f" {value}\n", style="white")
@@ -1251,6 +1253,40 @@ class LLMCodeTUI(App):
                 self.query_one(StatusBar).bg_tasks = count
             except Exception:
                 pass
+
+    def action_cycle_agent(self) -> None:
+        """Cycle through primary agents (normal → plan → suggest → normal).
+
+        Equivalent to opencode's Tab agent switching between build/plan modes.
+        Each agent has different permission semantics:
+          - normal: workspace_write, all tools available
+          - plan: read-only, planning before execution
+          - suggest: prompts for every elevated tool
+        """
+        from llm_code.runtime.permissions import PermissionMode
+
+        if self._runtime is None or self._runtime._permissions is None:
+            return
+
+        chat = self.query_one(ChatScrollView)
+        status = self.query_one(StatusBar)
+        policy = self._runtime._permissions
+
+        # Cycle order: normal → plan → suggest → normal
+        cycle = [
+            (PermissionMode.WORKSPACE_WRITE, "", "BUILD"),
+            (PermissionMode.PLAN, "PLAN", "PLAN"),
+            (PermissionMode.PROMPT, "SUGGEST", "SUGGEST"),
+        ]
+        current_mode = getattr(policy, "_mode", PermissionMode.WORKSPACE_WRITE)
+        current_idx = next(
+            (i for i, (m, _, _) in enumerate(cycle) if m == current_mode), 0
+        )
+        next_idx = (current_idx + 1) % len(cycle)
+        next_mode, status_label, agent_name = cycle[next_idx]
+        policy._mode = next_mode
+        status.plan_mode = status_label
+        chat.add_entry(AssistantText(f"Agent: {agent_name}"))
 
     def action_scroll_chat_up(self) -> None:
         """Scroll chat view up by one page."""

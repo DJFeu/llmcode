@@ -134,6 +134,10 @@ class SwarmManager:
         """Return all current swarm members."""
         return list(self._members.values())
 
+    def get_member(self, member_id: str) -> SwarmMember | None:
+        """Return a swarm member by id, or None if not found."""
+        return self._members.get(member_id)
+
     async def stop_member(self, member_id: str) -> None:
         """Stop and remove a swarm member.
 
