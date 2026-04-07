@@ -1417,11 +1417,19 @@ class LLMCodeTUI(App):
             assistant.append_text(_raw_text_buffer)
             _raw_text_buffer = ""
 
-        # If no text was ever displayed, show a hint
-        if not assistant_added and turn_output_tokens > 0:
+        # If no text was ever displayed but we DO have thinking content,
+        # surface the thinking as the answer. Reasoning models (Qwen3,
+        # DeepSeek-R1) sometimes emit the entire useful response inside
+        # the <think> block and never produce a "final" text token,
+        # especially on short prompts where they reason themselves into
+        # silence. Better to show the reasoning than a cryptic error.
+        if not assistant_added and thinking_buffer.strip():
+            chat.add_entry(AssistantText(thinking_buffer.strip()))
+            assistant_added = True
+        elif not assistant_added and turn_output_tokens > 0:
             chat.add_entry(AssistantText(
-                "(No text response generated — model may have exhausted output tokens "
-                "on thinking/tool calls. Try a simpler prompt or increase context window.)"
+                "(模型沒有產生任何回應 — 可能 thinking 用光輸出 token。"
+                "試試重新表達或加長 context window。)"
             ))
 
         elapsed = time.monotonic() - start
