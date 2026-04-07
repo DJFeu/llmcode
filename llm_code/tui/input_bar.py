@@ -266,10 +266,15 @@ class InputBar(Widget):
         if action:
             self._handle_action(action)
         elif event.character and len(event.character) == 1:
-            # Ensure cursor is valid before insertion
-            self._cursor = min(self._cursor, len(self.value))
-            self.value = self.value[:self._cursor] + event.character + self.value[self._cursor:]
-            self._cursor += 1
+            # Update cursor BEFORE setting self.value — assigning to a reactive
+            # synchronously fires watch_value() which calls _update_dropdown +
+            # _recompute_height + refresh(layout=True). If cursor is still the
+            # old value at that point, the reflow can desync cursor vs text and
+            # the next keystroke gets inserted at the wrong position.
+            cur = min(self._cursor, len(self.value))
+            new_value = self.value[:cur] + event.character + self.value[cur:]
+            self._cursor = cur + 1
+            self.value = new_value
             event.prevent_default()
             event.stop()
 
