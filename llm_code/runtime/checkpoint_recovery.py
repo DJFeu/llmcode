@@ -52,9 +52,13 @@ class CheckpointRecovery:
             return None
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            # checkpoint_saved_at is extra metadata; Session.from_dict ignores unknown keys
-            # but we strip it to keep from_dict clean
             data.pop("checkpoint_saved_at", None)
+            # Route through session_migration so older schema versions load
+            try:
+                from llm_code.runtime.session_migration import load_and_migrate
+                data["messages"] = load_and_migrate(path)
+            except Exception:  # pragma: no cover - defensive
+                pass
             return Session.from_dict(data)
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
             logger.warning("Failed to load checkpoint %s: %s", session_id, exc)

@@ -167,6 +167,7 @@ class Session:
 
     def to_dict(self) -> dict:
         return {
+            "_schema_version": 3,
             "id": self.id,
             "messages": [_message_to_dict(m) for m in self.messages],
             "created_at": self.created_at,
@@ -227,11 +228,22 @@ class SessionManager:
         return path
 
     def load(self, session_id: str) -> Session:
-        """Load session by ID; raises FileNotFoundError if missing."""
+        """Load session by ID; raises FileNotFoundError if missing.
+
+        Routes through session_migration.load_and_migrate so older schema
+        versions are upgraded, orphan thinking filtered, and tool chains
+        rebuilt before ``Session.from_dict`` deserializes the result.
+        """
         path = self._session_dir / f"{session_id}.json"
         if not path.exists():
             raise FileNotFoundError(f"Session '{session_id}' not found at {path}")
         data = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            from llm_code.runtime.session_migration import load_and_migrate
+            data = dict(data)
+            data["messages"] = load_and_migrate(path)
+        except Exception:  # pragma: no cover - defensive
+            pass
         return Session.from_dict(data)
 
     def list_sessions(self) -> list[SessionSummary]:
