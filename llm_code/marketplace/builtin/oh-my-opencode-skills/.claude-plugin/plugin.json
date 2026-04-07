@@ -1,0 +1,6 @@
+{
+  "name": "oh-my-opencode-skills",
+  "version": "0.1.0",
+  "description": "Built-in skills ported from oh-my-opencode: playwright, agent-browser, frontend-ui-ux, git-master",
+  "skills": "skills"
+}

@@ -318,10 +318,19 @@ class LLMCodeTUI(App):
         try:
             from llm_code.runtime.skills import SkillLoader
             from llm_code.marketplace.installer import PluginInstaller
-            skill_dirs: list[Path] = [
+            # Built-in skills shipped with llm-code (oh-my-opencode-skills, etc.)
+            import llm_code.marketplace as _mkt_pkg
+            _builtin_root = Path(_mkt_pkg.__file__).parent / "builtin"
+            skill_dirs: list[Path] = []
+            if _builtin_root.is_dir():
+                for plugin in sorted(_builtin_root.iterdir()):
+                    sp = plugin / "skills"
+                    if sp.is_dir():
+                        skill_dirs.append(sp)
+            skill_dirs.extend([
                 Path.home() / ".llmcode" / "skills",
                 self._cwd / ".llmcode" / "skills",
-            ]
+            ])
             plugin_dir = Path.home() / ".llmcode" / "plugins"
             if plugin_dir.is_dir():
                 pi = PluginInstaller(plugin_dir)
