@@ -16,6 +16,8 @@ from llm_code.api.types import (
     Message,
     MessageRequest,
     StreamEvent,
+    StreamCompactionDone,
+    StreamCompactionStart,
     StreamMessageStop,
     StreamPermissionRequest,
     StreamTextDelta,
@@ -221,6 +223,9 @@ class ConversationRuntime:
         self._session_allowed_prefixes: set[str] = set()
         self._session_allowed_path_roots: set[str] = set()
         self._has_attempted_reactive_compact = False
+        self._compaction_in_flight: bool = False
+        from llm_code.runtime.query_profiler import QueryProfiler
+        self._query_profiler = QueryProfiler()
         self._consecutive_failures: int = 0
         self._compressor = ContextCompressor()
         self._active_model: str = getattr(config, "model", "")
@@ -701,6 +706,60 @@ class ConversationRuntime:
                     input_tokens=accumulated_usage.input_tokens + stop_event.usage.input_tokens,
                     output_tokens=accumulated_usage.output_tokens + stop_event.usage.output_tokens,
                 )
+
+                # Per-model query profiler (Task 3)
+                try:
+                    self._query_profiler.record(
+                        model=self._active_model, usage_block=stop_event.usage
+                    )
+                except Exception:  # pragma: no cover - defensive
+                    pass
+
+                # Auto-compaction (Task 1): fire after each model turn when
+                # the context crosses the configured trigger threshold.
+                _compaction_cfg = getattr(self._config, "compaction", None)
+                if (
+                    _compaction_cfg is not None
+                    and getattr(_compaction_cfg, "auto_enabled", False)
+                    and not self._compaction_in_flight
+                ):
+                    try:
+                        from llm_code.runtime.auto_compact import (
+                            CompactionThresholds,
+                            should_compact,
+                            compact_messages,
+                        )
+                        _thr_cfg = _compaction_cfg.thresholds
+                        _thresholds = CompactionThresholds(
+                            trigger_pct=_thr_cfg.trigger_pct,
+                            min_messages=_thr_cfg.min_messages,
+                            min_text_blocks=_thr_cfg.min_text_blocks,
+                            target_pct=_thr_cfg.target_pct,
+                        )
+                        _used = stop_event.usage.input_tokens
+                        _max_t = getattr(self._config, "compact_after_tokens", 0) or 128_000
+                        if should_compact(
+                            self.session.messages, _used, _max_t, _thresholds
+                        ):
+                            self._compaction_in_flight = True
+                            yield StreamCompactionStart(
+                                used_tokens=_used, max_tokens=_max_t,
+                            )
+                            try:
+                                _before = len(self.session.messages)
+                                _target = int(_max_t * _thresholds.target_pct)
+                                self.session = compact_messages(
+                                    self.session, target_tokens=_target,
+                                )
+                                yield StreamCompactionDone(
+                                    before_messages=_before,
+                                    after_messages=len(self.session.messages),
+                                )
+                            finally:
+                                self._compaction_in_flight = False
+                    except Exception as _exc:  # pragma: no cover - defensive
+                        logger.warning("auto-compaction failed: %s", _exc)
+                        self._compaction_in_flight = False
 
                 # Use ACTUAL API token count for compaction (not estimated)
                 actual_input = stop_event.usage.input_tokens

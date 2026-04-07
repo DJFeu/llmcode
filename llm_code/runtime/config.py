@@ -37,6 +37,23 @@ class ModelRoutingConfig:
 
 
 @dataclass(frozen=True)
+class CompactionThresholdsConfig:
+    trigger_pct: float = 0.85
+    min_messages: int = 30
+    min_text_blocks: int = 10
+    target_pct: float = 0.50
+
+
+@dataclass(frozen=True)
+class CompactionConfig:
+    """Auto-compaction settings consumed by the conversation turn loop."""
+    auto_enabled: bool = False
+    thresholds: CompactionThresholdsConfig = field(
+        default_factory=CompactionThresholdsConfig
+    )
+
+
+@dataclass(frozen=True)
 class ThinkingConfig:
     mode: str = "adaptive"        # "adaptive" | "enabled" | "disabled"
     budget_tokens: int = 10000
@@ -292,6 +309,8 @@ class RuntimeConfig:
     tui: TuiConfig = field(default_factory=TuiConfig)
     builtin_hooks: BuiltinHooksConfig = field(default_factory=BuiltinHooksConfig)
     keywords: KeywordsConfig = field(default_factory=KeywordsConfig)
+    compaction: CompactionConfig = field(default_factory=CompactionConfig)
+    use_streaming_tool_executor: bool = False
 
 
 class ConfigSchema(BaseModel):

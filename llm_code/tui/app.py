@@ -1092,7 +1092,7 @@ class LLMCodeTUI(App):
         from llm_code.api.types import (
             StreamPermissionRequest, StreamTextDelta, StreamThinkingDelta,
             StreamToolExecStart, StreamToolExecResult, StreamToolProgress,
-            StreamMessageStop,
+            StreamMessageStop, StreamCompactionStart, StreamCompactionDone,
         )
         from llm_code.tui.chat_widgets import (
             PermissionInline, SpinnerLine, ThinkingBlock, ToolBlock, TurnSummary,
@@ -1364,6 +1364,23 @@ class LLMCodeTUI(App):
                     # on its own asyncio.Future. The async for loop blocks on
                     # __anext__ until y/n/a resolves the Future via on_key →
                     # send_permission_response. Cleanup at top of loop.
+
+                elif isinstance(event, StreamCompactionStart):
+                    spinner.phase = "compacting"
+                    try:
+                        chat.add_entry(AssistantText(
+                            f"[auto-compacting: {event.used_tokens}/{event.max_tokens} tokens]"
+                        ))
+                    except Exception:
+                        pass
+
+                elif isinstance(event, StreamCompactionDone):
+                    try:
+                        chat.add_entry(AssistantText(
+                            f"[compacted: {event.before_messages} → {event.after_messages} messages]"
+                        ))
+                    except Exception:
+                        pass
 
                 elif isinstance(event, StreamMessageStop):
                     if event.usage:
