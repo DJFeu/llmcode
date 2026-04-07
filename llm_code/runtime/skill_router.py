@@ -208,27 +208,38 @@ async def _classify_with_llm_debug(
         )
         response = await provider.send_message(request)
         raw = response.content[0].text if response.content else ""
-        # Strip thinking blocks emitted by reasoning models (Qwen3, DeepSeek, etc.)
+        skill_names = {s.name.lower(): s.name for s in skills}
+
+        # 1) Try clean answer extraction: strip thinking blocks, take first line
         cleaned = raw
         for tag in ("</think>", "</thinking>", "Answer:", "answer:"):
             if tag in cleaned:
                 cleaned = cleaned.rsplit(tag, 1)[-1]
-        # Take just the first non-empty line — that's the bare answer
+        first_line = ""
         for line in cleaned.splitlines():
             line = line.strip()
             if line:
-                cleaned = line
+                first_line = line
                 break
-        answer = cleaned.strip().lower()
-        if not answer or answer == "none":
-            return None, raw
-        answer = answer.strip(" .,:;!?\"'`*[](){}\n\t")
-        skill_names = {s.name.lower(): s.name for s in skills}
-        if answer in skill_names:
+        answer = first_line.strip().lower().strip(" .,:;!?\"'`*[](){}\n\t")
+        if answer and answer != "none" and answer in skill_names:
             return skill_names[answer], raw
-        for lname, original in skill_names.items():
-            if lname in answer:
-                return original, raw
+
+        # 2) Fallback: scan the FULL raw text (including thinking) for any
+        # skill name as a substring. Reasoning models often discuss the
+        # candidate skills by name in their thinking block — that's good
+        # enough signal even if no clean answer line was emitted.
+        raw_lower = raw.lower()
+        # Score by occurrence count to pick the dominant skill if multiple appear
+        scores = {
+            name: raw_lower.count(lname)
+            for lname, name in skill_names.items()
+        }
+        scores = {n: c for n, c in scores.items() if c > 0}
+        if scores:
+            best = max(scores.items(), key=lambda kv: kv[1])
+            return best[0], raw
+
         return None, raw
     except Exception as e:
         logger.debug("Tier C classification failed", exc_info=True)
