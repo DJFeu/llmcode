@@ -1,5 +1,9 @@
-"""Harness Engine — unified quality control framework."""
-from llm_code.harness.config import HarnessConfig, HarnessControl, HarnessFinding
-from llm_code.harness.engine import HarnessEngine
+"""Harness Engine — unified quality control framework.
 
-__all__ = ["HarnessConfig", "HarnessControl", "HarnessFinding", "HarnessEngine"]
+Note: HarnessEngine is intentionally NOT eagerly imported to keep cold
+start fast. Use ``from llm_code.harness.engine import HarnessEngine``
+explicitly when you need it.
+"""
+from llm_code.harness.config import HarnessConfig, HarnessControl, HarnessFinding
+
+__all__ = ["HarnessConfig", "HarnessControl", "HarnessFinding"]
