@@ -162,6 +162,17 @@ class ConversationRuntime:
         self._recovery_checkpoint = recovery_checkpoint
         self._cost_tracker = cost_tracker
         self._skills = skills
+        # Task 4: register frontmatter-declared hooks from every loaded skill
+        if skills is not None and hook_runner is not None:
+            try:
+                from llm_code.runtime.frontmatter_hooks import register_skillset_hooks
+                _all_skills = tuple(getattr(skills, "auto_skills", ()) or ()) + tuple(
+                    getattr(skills, "command_skills", ()) or ()
+                )
+                if _all_skills:
+                    register_skillset_hooks(_all_skills, hook_runner)
+            except Exception as _exc:  # pragma: no cover - defensive
+                logger.warning("frontmatter hook registration failed: %s", _exc)
         self._skill_router = None
         if skills and skills.auto_skills:
             from llm_code.runtime.skill_router import SkillRouter
