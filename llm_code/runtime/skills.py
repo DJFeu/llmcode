@@ -33,6 +33,9 @@ class Skill:
     model: str = ""
     depends: tuple[SkillDependency, ...] = ()
     min_version: str = ""
+    # Frontmatter hooks: mapping event name -> builtin hook callable name.
+    # e.g. {"pre_tool_use": "auto_format", "post_tool_use": "auto_lint"}
+    hooks: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         # If trigger not set (empty string), default it to name.
@@ -109,6 +112,15 @@ class SkillLoader:
                     ))
             depends = tuple(deps)
 
+        hooks_raw = meta.get("hooks", {})
+        hooks: tuple[tuple[str, str], ...] = ()
+        if isinstance(hooks_raw, dict):
+            hooks = tuple(
+                (str(event), str(handler))
+                for event, handler in hooks_raw.items()
+                if isinstance(handler, str) and handler
+            )
+
         return Skill(
             name=name,
             description=description,
@@ -121,6 +133,7 @@ class SkillLoader:
             model=model,
             depends=depends,
             min_version=min_version,
+            hooks=hooks,
         )
 
     @staticmethod
