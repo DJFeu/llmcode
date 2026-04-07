@@ -7,6 +7,7 @@ real swarm members. Small enough to unit-test without a full session.
 from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
+from uuid import uuid4
 
 from llm_code.swarm.personas import AgentPersona
 
@@ -19,7 +20,11 @@ async def inline_persona_executor(
     Returns ``(True, text)`` on success, ``(False, repr(exc))`` on failure.
     Model resolution falls back to the runtime default — model_hint routing
     is intentionally out of scope here.
+
+    Any MCP servers the persona spawned under its agent_id are torn down in
+    a finally block so root-owned servers survive the attempt.
     """
+    agent_id = f"persona-{persona.name}-{uuid4().hex[:8]}"
     try:
         from llm_code.api.types import Message, MessageRequest, TextBlock
         from llm_code.runtime.fork_cache import derive_fork_key
@@ -41,6 +46,13 @@ async def inline_persona_executor(
         return True, text
     except Exception as exc:  # noqa: BLE001
         return False, repr(exc)
+    finally:
+        mcp_manager = getattr(runtime, "_mcp_manager", None)
+        if mcp_manager is not None and hasattr(mcp_manager, "cleanup_for_agent"):
+            try:
+                await mcp_manager.cleanup_for_agent(agent_id)
+            except Exception:  # noqa: BLE001
+                pass
 
 
 def make_inline_persona_executor(

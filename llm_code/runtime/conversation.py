@@ -185,6 +185,9 @@ class ConversationRuntime:
                 model=getattr(config, "model", ""),
             )
         self._mcp_manager = mcp_manager
+        # Callback for MCP approval requests from non-root agents.
+        # When None, request_mcp_approval auto-denies (CLI-safe default).
+        self._mcp_approval_callback: Any = None
         self._memory_store = memory_store
         self._task_manager = task_manager
         self._project_index = project_index
@@ -291,6 +294,20 @@ class ConversationRuntime:
             )
         except Exception:
             pass
+
+    def set_mcp_approval_callback(self, callback: Any) -> None:
+        """Install a callback used to approve non-root MCP spawns."""
+        self._mcp_approval_callback = callback
+
+    async def request_mcp_approval(self, request: Any) -> bool:
+        """Ask the attached UI to approve *request*; default-deny if none."""
+        callback = self._mcp_approval_callback
+        if callback is None:
+            return False
+        try:
+            return bool(await callback(request))
+        except Exception:  # noqa: BLE001
+            return False
 
     def _fire_hook(self, event: str, context: dict | None = None) -> None:
         """Fire a hook event if the hook runner supports the generic fire() method."""

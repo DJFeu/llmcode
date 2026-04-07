@@ -29,7 +29,9 @@ class SwarmManager:
         max_members: int = 5,
         backend_preference: str = "auto",
         config: RuntimeConfig | None = None,
+        mcp_manager: "object | None" = None,
     ) -> None:
+        self._mcp_manager = mcp_manager
         self._swarm_dir = Path(swarm_dir)
         self._swarm_dir.mkdir(parents=True, exist_ok=True)
         self._max_members = max_members
@@ -174,6 +176,13 @@ class SwarmManager:
             self._tmux_backend.stop(member_id)
         else:
             await self._subprocess_backend.stop(member_id)
+
+        # Tear down any MCP servers this swarm member owned.
+        if self._mcp_manager is not None and hasattr(self._mcp_manager, "cleanup_for_agent"):
+            try:
+                await self._mcp_manager.cleanup_for_agent(f"swarm-{member_id}")
+            except Exception:  # noqa: BLE001
+                pass
 
         del self._members[member_id]
 

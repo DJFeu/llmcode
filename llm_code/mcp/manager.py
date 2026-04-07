@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import warnings
+from dataclasses import dataclass
+from typing import Awaitable, Callable
 
 from llm_code.logging import get_logger
+from llm_code.mcp.agent_approval import AgentMCPRegistry, MCPApprovalRequest
 from llm_code.mcp.bridge import McpToolBridge
 from llm_code.mcp.client import McpClient
 from llm_code.mcp.health import MCPHealthChecker
@@ -18,6 +22,24 @@ logger = get_logger(__name__)
 _BACKOFF_BASE = 5.0
 _BACKOFF_MAX = 60.0
 
+ROOT_AGENT_ID = "root"
+
+ApprovalCallback = Callable[[MCPApprovalRequest], Awaitable[bool]]
+
+
+class MCPApprovalDeniedError(RuntimeError):
+    """Raised when a user (or default-deny policy) rejects an MCP spawn request."""
+
+
+@dataclass(frozen=True)
+class ServerInstance:
+    """Bookkeeping record for a running MCP server."""
+
+    client: McpClient
+    owner_agent_id: str
+    started_at: float
+    config: McpServerConfig
+
 
 def _backoff_delay(attempt: int) -> float:
     """Return the delay in seconds for *attempt* (0-indexed), capped at _BACKOFF_MAX."""
@@ -30,25 +52,70 @@ class McpServerManager:
     def __init__(self) -> None:
         self._transports: dict[str, McpTransport] = {}
         self._clients: dict[str, McpClient] = {}
+        self._instances: dict[str, ServerInstance] = {}
         self._configs: dict[str, McpServerConfig] = {}
         self._instructions: dict[str, str] = {}
         self._health: MCPHealthChecker = MCPHealthChecker()
         # Track consecutive reconnect failures for backoff
         self._reconnect_failures: dict[str, int] = {}
+        # Per-agent ownership registry (Wave B/C Feature 8 integration)
+        self._registry: AgentMCPRegistry = AgentMCPRegistry()
+
+    @property
+    def registry(self) -> AgentMCPRegistry:
+        """Expose the agent-ownership registry (read-only use recommended)."""
+        return self._registry
 
     # ------------------------------------------------------------------
     # Connection management
     # ------------------------------------------------------------------
 
-    async def start_server(self, name: str, config: McpServerConfig) -> McpClient:
-        """Start a single MCP server, returning an initialised McpClient."""
-        logger.debug("Starting MCP server: %s", name)
+    async def start_server(
+        self,
+        name: str,
+        config: McpServerConfig,
+        owner_agent_id: str = ROOT_AGENT_ID,
+        approval_callback: ApprovalCallback | None = None,
+    ) -> McpClient:
+        """Start a single MCP server, returning an initialised McpClient.
+
+        Non-root agents must pass ``approval_callback``; if the callback
+        returns False the spawn is aborted with :class:`MCPApprovalDeniedError`
+        and no state is mutated.  Root (default) always skips approval for
+        backward compatibility.
+        """
+        if owner_agent_id != ROOT_AGENT_ID and approval_callback is not None:
+            request = MCPApprovalRequest(
+                agent_id=owner_agent_id,
+                agent_name=owner_agent_id,
+                server_names=(name,),
+                reason=f"spawn MCP server '{name}'",
+            )
+            approved = False
+            try:
+                approved = await approval_callback(request)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("MCP approval callback raised for %s: %s", name, exc)
+                approved = False
+            if not approved:
+                raise MCPApprovalDeniedError(
+                    f"User denied MCP server '{name}' for agent '{owner_agent_id}'"
+                )
+
+        logger.debug("Starting MCP server: %s (owner=%s)", name, owner_agent_id)
         transport = self._build_transport(config)
         await transport.start()
         client = McpClient(transport)
         info = await client.initialize()
         self._transports[name] = transport
         self._clients[name] = client
+        self._instances[name] = ServerInstance(
+            client=client,
+            owner_agent_id=owner_agent_id,
+            started_at=time.monotonic(),
+            config=config,
+        )
+        self._registry.track_owner(owner_agent_id, (name,))
         self._configs[name] = config
         self._reconnect_failures[name] = 0
 
@@ -74,7 +141,7 @@ class McpServerManager:
                 )
 
     async def stop_all(self) -> None:
-        """Close all active clients and clear internal state."""
+        """Close ALL active clients and clear internal state (superuser op)."""
         logger.debug("Stopping all MCP servers (%d active)", len(self._clients))
         self._health.stop_monitor()
         for name, client in list(self._clients.items()):
@@ -85,10 +152,43 @@ class McpServerManager:
                 logger.warning("Error stopping MCP server '%s': %s", name, exc)
         self._clients.clear()
         self._transports.clear()
+        self._instances.clear()
+        # Drop all ownership records — parity with the full clear above.
+        for agent_id in self._registry.all_agents():
+            self._registry.cleanup_owned_servers(agent_id)
+
+    async def cleanup_for_agent(self, agent_id: str) -> list[str]:
+        """Stop only servers owned by *agent_id*.
+
+        Returns the list of server names that were stopped. Root-owned
+        servers are never touched by this call.
+        """
+        owned = list(self._registry.owned_by(agent_id))
+        stopped: list[str] = []
+        for name in owned:
+            instance = self._instances.get(name)
+            if instance is None:
+                continue
+            try:
+                await instance.client.close()
+                stopped.append(name)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to stop MCP server '%s': %s", name, exc)
+            finally:
+                self._instances.pop(name, None)
+                self._clients.pop(name, None)
+                self._transports.pop(name, None)
+        # Drop ownership bookkeeping for the agent as a whole.
+        self._registry.cleanup_owned_servers(agent_id)
+        return stopped
 
     def get_client(self, name: str) -> McpClient | None:
         """Return the client for *name*, or None if not registered."""
         return self._clients.get(name)
+
+    def get_instance(self, name: str) -> ServerInstance | None:
+        """Return the full ServerInstance record for *name*, or None."""
+        return self._instances.get(name)
 
     def get_all_instructions(self) -> dict[str, str]:
         """Return a mapping of server name → instructions for all servers that provided them."""

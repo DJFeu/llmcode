@@ -152,6 +152,15 @@ class StreamCompactionDone(StreamEvent):
 
 
 @dataclasses.dataclass(frozen=True)
+class StreamMCPApprovalRequest(StreamEvent):
+    """Emitted when a non-root agent wants to spawn an MCP server."""
+    server_name: str
+    owner_agent_id: str
+    command: str
+    description: str
+
+
+@dataclasses.dataclass(frozen=True)
 class StreamPermissionRequest(StreamEvent):
     """Emitted when a tool requires user permission before execution."""
     tool_name: str
