@@ -150,6 +150,7 @@ class SystemPromptBuilder:
         routed_skills: "tuple[Skill, ...] | None" = None,
         is_local_model: bool = False,
         model_name: str = "",
+        personas: dict | None = None,
     ) -> str:
         sections: list[PromptSection] = []
 
@@ -175,6 +176,13 @@ class SystemPromptBuilder:
             sections.append(PromptSection(content="\n".join(gov_lines), scope="global", priority=5))
 
         sections.append(PromptSection(content=_BEHAVIOR_RULES, scope="global", priority=10))
+
+        # Personas section (Wave 2 wiring) — only rendered when personas provided.
+        if personas:
+            from llm_code.runtime.prompt_sections import build_personas_section
+            personas_text = build_personas_section(personas)
+            if personas_text:
+                sections.append(PromptSection(content=personas_text, scope="global", priority=12))
 
         if is_local_model:
             sections.append(PromptSection(content=_LOCAL_MODEL_RULES, scope="global", priority=11))

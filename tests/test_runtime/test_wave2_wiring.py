@@ -232,3 +232,35 @@ def test_keyword_disabled_no_event(tmp_path: Path) -> None:
     rt, hooks = _make_runtime_for_keywords(tmp_path, kw_enabled=False)
     _trigger_keyword_path(rt, hooks, "please refactor this module")
     assert not [e for e in hooks.events if e[0] == "keyword_action"]
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — prompt sections wiring
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_build_includes_personas_section(tmp_path: Path) -> None:
+    from llm_code.runtime.context import ProjectContext
+    from llm_code.runtime.prompt import SystemPromptBuilder
+
+    @dataclass
+    class _P:
+        description: str
+
+    personas = {"sisyphus": _P("relentless refactor specialist"), "oracle": _P("debug whisperer")}
+    ctx = ProjectContext(cwd=tmp_path, instructions="", is_git_repo=False, git_status="")
+    out = SystemPromptBuilder().build(ctx, personas=personas)
+    assert "Available Personas" in out
+    assert "sisyphus" in out
+    assert "oracle" in out
+
+
+def test_prompt_build_omits_personas_section_when_empty(tmp_path: Path) -> None:
+    from llm_code.runtime.context import ProjectContext
+    from llm_code.runtime.prompt import SystemPromptBuilder
+
+    ctx = ProjectContext(cwd=tmp_path, instructions="", is_git_repo=False, git_status="")
+    out = SystemPromptBuilder().build(ctx, personas={})
+    assert "Available Personas" not in out
+    out2 = SystemPromptBuilder().build(ctx)
+    assert "Available Personas" not in out2
