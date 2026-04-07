@@ -1260,13 +1260,29 @@ class LLMCodeTUI(App):
         self.run_worker(self._graceful_exit(), name="graceful_exit")
 
     def _poll_bg_tasks(self) -> None:
-        """Periodic update of background task count in status bar."""
+        """Periodic update of background task count in status bar.
+
+        Combines lifecycle task count (PLAN/DO/VERIFY) with the in-flight
+        asyncio task registry (background read-tool execution, etc.).
+        """
+        count = 0
         if self._task_manager is not None:
             try:
-                count = self._task_manager.running_task_count()
-                self.query_one(StatusBar).bg_tasks = count
+                count += self._task_manager.running_task_count()
             except Exception:
                 pass
+        try:
+            from llm_code.runtime.background_task_registry import (
+                global_async_registry,
+            )
+
+            count += global_async_registry().active_count()
+        except Exception:
+            pass
+        try:
+            self.query_one(StatusBar).bg_tasks = count
+        except Exception:
+            pass
 
     def action_cycle_agent(self) -> None:
         """Cycle through primary agents (normal → plan → suggest → normal).
@@ -1315,10 +1331,19 @@ class LLMCodeTUI(App):
         chat.resume_auto_scroll()
 
     async def _graceful_exit(self) -> None:
-        """Dream consolidation (best-effort) + exit."""
+        """Dream consolidation + cancel background tasks + exit."""
         import asyncio as _aio
         try:
             await _aio.wait_for(self._dream_on_exit(), timeout=5.0)
+        except Exception:
+            pass
+        # Cancel any in-flight background asyncio tasks within a short budget.
+        try:
+            from llm_code.runtime.background_task_registry import (
+                global_async_registry,
+            )
+
+            await global_async_registry().cancel_all(timeout=2.0)
         except Exception:
             pass
         self.exit()

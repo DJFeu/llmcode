@@ -124,6 +124,14 @@ class StreamingToolExecutor:
                 name=f"streaming-read-{name}-{tool_use_id[:8]}",
             )
             self._read_tasks[tool_use_id] = task
+            try:
+                from llm_code.runtime.background_task_registry import (
+                    global_async_registry,
+                )
+
+                global_async_registry().register(task, f"read:{name}")
+            except Exception:  # pragma: no cover - registry must never break exec
+                logger.debug("AsyncTaskRegistry register failed", exc_info=True)
         else:
             # Queue for sequential execution after stream completes
             call = ParsedToolCall(id=tool_use_id, name=name, args=args, source="native")
