@@ -206,9 +206,19 @@ async def _classify_with_llm(
         )
         response = await provider.send_message(request)
         answer = response.content[0].text.strip().lower() if response.content else ""
+        if not answer or answer == "none":
+            return None
+        # Strip common LLM response decorations: punctuation, quotes, code fences.
+        answer = answer.strip(" .,:;!?\"'`*[](){}\n\t")
         skill_names = {s.name.lower(): s.name for s in skills}
+        # 1) exact match
         if answer in skill_names:
             return skill_names[answer]
+        # 2) any skill name appearing as a substring of the answer
+        # (handles "the answer is brainstorming" or "brainstorming." style replies)
+        for lname, original in skill_names.items():
+            if lname in answer:
+                return original
         return None
     except Exception:
         logger.debug("Tier C classification failed", exc_info=True)
