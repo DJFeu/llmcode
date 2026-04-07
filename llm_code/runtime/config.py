@@ -120,19 +120,8 @@ class SwarmConfig:
 
 
 @dataclass(frozen=True)
-class MemoryDecayConfig:
-    enabled: bool = True
-    floor: float = 0.1  # minimum multiplier — prevents complete burial
-    user_lambda: float = 0.005
-    feedback_lambda: float = 0.005
-    project_lambda: float = 0.02
-    reference_lambda: float = 0.0
-
-
-@dataclass(frozen=True)
 class MemoryConfig:
     strict_derivable_check: bool = False
-    decay: MemoryDecayConfig = field(default_factory=MemoryDecayConfig)
 
 
 @dataclass(frozen=True)
@@ -461,18 +450,8 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
     )
 
     memory_raw = data.get("memory", {})
-    decay_raw = memory_raw.get("decay", {}) if isinstance(memory_raw, dict) else {}
-    decay_cfg = MemoryDecayConfig(
-        enabled=bool(decay_raw.get("enabled", True)),
-        floor=float(decay_raw.get("floor", 0.1)),
-        user_lambda=float(decay_raw.get("user_lambda", 0.005)),
-        feedback_lambda=float(decay_raw.get("feedback_lambda", 0.005)),
-        project_lambda=float(decay_raw.get("project_lambda", 0.02)),
-        reference_lambda=float(decay_raw.get("reference_lambda", 0.0)),
-    )
     memory = MemoryConfig(
         strict_derivable_check=bool(memory_raw.get("strict_derivable_check", False)),
-        decay=decay_cfg,
     )
 
     vcr_raw = data.get("vcr", {})

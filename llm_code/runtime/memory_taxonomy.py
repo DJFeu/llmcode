@@ -70,34 +70,20 @@ class TypedMemoryEntry:
 
     @staticmethod
     def from_file(path: Path) -> TypedMemoryEntry:
-        """Parse a topic file with YAML frontmatter.
-
-        Backward compat: if ``created_at`` is missing from frontmatter
-        (legacy entries), backfill it from the file's mtime as a
-        one-time fallback. The next call to :meth:`TypedMemoryStore.write`
-        will persist the backfill since ``write`` preserves any non-empty
-        ``created_at``.
-        """
+        """Parse a topic file with YAML frontmatter."""
         raw = path.read_text(encoding="utf-8")
         m = _FRONTMATTER_RE.match(raw)
         if not m:
             raise ValueError(f"Invalid memory file format: {path}")
         meta = yaml.safe_load(m.group(1)) or {}
         content = m.group(2).strip()
-        created_raw = meta.get("created_at", "")
-        if not created_raw:
-            try:
-                mtime = path.stat().st_mtime
-                created_raw = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
-            except OSError:
-                created_raw = ""
         return TypedMemoryEntry(
             slug=path.stem,
             name=str(meta.get("name", path.stem)),
             description=str(meta.get("description", "")),
             memory_type=MemoryType(meta.get("type", "project")),
             content=content,
-            created_at=str(created_raw),
+            created_at=str(meta.get("created_at", "")),
             updated_at=str(meta.get("updated_at", "")),
         )
 
@@ -257,26 +243,14 @@ class TypedMemoryStore:
         return [e for e in self.list_all() if e.memory_type == memory_type]
 
     def search(self, query: str) -> list[TypedMemoryEntry]:
-        """Search entries by keyword match, ranked by decayed recency.
-
-        Each match starts with a base score of 1.0, then is multiplied by
-        a type-specific exponential decay (see :mod:`memory_decay`). This
-        keeps recent matches above older identical matches and lets fast-
-        moving PROJECT entries fall behind slow-decaying USER/FEEDBACK
-        entries of similar age.
-        """
-        from llm_code.runtime.memory_decay import apply_decay
-
+        """Search entries by keyword match in name, description, and content."""
         query_lower = query.lower()
-        scored: list[tuple[float, TypedMemoryEntry]] = []
+        results = []
         for entry in self.list_all():
             searchable = f"{entry.name} {entry.description} {entry.content}".lower()
-            if query_lower not in searchable:
-                continue
-            score = apply_decay(1.0, entry.memory_type, entry.created_at)
-            scored.append((score, entry))
-        scored.sort(key=lambda pair: pair[0], reverse=True)
-        return [entry for _, entry in scored]
+            if query_lower in searchable:
+                results.append(entry)
+        return results
 
     # ------------------------------------------------------------------
     # Index management
