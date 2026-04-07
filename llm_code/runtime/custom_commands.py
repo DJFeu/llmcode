@@ -82,25 +82,36 @@ def _parse_command_file(path: Path) -> CustomCommand | None:
     )
 
 
-def discover_custom_commands(cwd: Path) -> dict[str, CustomCommand]:
-    """Find all custom commands from project + user-global directories.
+_BUILTIN_COMMANDS_DIR = Path(__file__).parent / "builtin_commands"
 
-    Project commands take precedence over user-global commands with the
-    same name.
+
+def discover_custom_commands(cwd: Path) -> dict[str, CustomCommand]:
+    """Find all custom commands from built-in + user-global + project directories.
+
+    Precedence (lowest to highest): builtin → user-global → project.
+    Project commands take precedence over user-global, which take precedence
+    over the built-in commands shipped with llm-code.
     """
     user_dir = Path.home() / ".llmcode" / "commands"
     project_dir = cwd / ".llmcode" / "commands"
 
     commands: dict[str, CustomCommand] = {}
 
-    # User-global first (lower priority)
+    # Built-in commands (lowest priority — shipped with llm-code)
+    if _BUILTIN_COMMANDS_DIR.is_dir():
+        for path in sorted(_BUILTIN_COMMANDS_DIR.glob("*.md")):
+            cmd = _parse_command_file(path)
+            if cmd is not None:
+                commands[cmd.name] = cmd
+
+    # User-global (overrides built-in)
     if user_dir.is_dir():
         for path in sorted(user_dir.glob("*.md")):
             cmd = _parse_command_file(path)
             if cmd is not None:
                 commands[cmd.name] = cmd
 
-    # Project-level overrides user-global
+    # Project-level (overrides everything)
     if project_dir.is_dir():
         for path in sorted(project_dir.glob("*.md")):
             cmd = _parse_command_file(path)

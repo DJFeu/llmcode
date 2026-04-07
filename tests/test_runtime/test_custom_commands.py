@@ -107,9 +107,15 @@ class TestDiscoverCustomCommands:
         assert "raw" in commands
         assert "raw.md" in commands["raw"].description
 
-    def test_returns_empty_when_no_directories(self, tmp_path):
+    def test_returns_only_builtins_when_no_user_directories(self, tmp_path, monkeypatch):
+        # With clean fake home and no project dir, only built-in commands appear.
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
         commands = discover_custom_commands(tmp_path)
-        assert commands == {}
+        # User commands should be absent; built-in commands are always present.
+        assert "review" not in commands
+        # Built-in commands ship with llm-code:
+        for builtin in {"init-deep", "ralph-loop", "refactor", "start-work"}:
+            assert builtin in commands
 
     def test_handles_corrupt_yaml(self, tmp_path):
         cmds_dir = tmp_path / ".llmcode" / "commands"
