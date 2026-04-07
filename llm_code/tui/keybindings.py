@@ -37,6 +37,26 @@ ACTION_REGISTRY: dict[str, KeyAction] = {
     "delete_forward": KeyAction("delete_forward", "Delete char at cursor", "delete"),
 }
 
+# Chord-only actions (no single-key default; bound via DEFAULT_CHORDS)
+CHORD_ACTIONS: dict[str, str] = {
+    "edit_input_in_external_editor": "Edit input in $EDITOR",
+    "save_session": "Save session",
+    "copy_last_assistant_response": "Copy last response",
+}
+
+
+DEFAULT_CHORDS: dict[tuple[str, ...], str] = {
+    ("ctrl+x", "ctrl+e"): "edit_input_in_external_editor",
+    ("ctrl+x", "ctrl+s"): "save_session",
+    ("ctrl+x", "ctrl+c"): "copy_last_assistant_response",
+}
+
+
+def parse_chord(spec: str) -> tuple[str, ...]:
+    """Parse a chord spec like 'ctrl+x ctrl+e' into a tuple of normalized keys."""
+    parts = spec.strip().split()
+    return tuple(p.lower() for p in parts)
+
 
 @dataclass(frozen=True)
 class ChordBinding:
@@ -70,7 +90,7 @@ class KeybindingManager:
     def __init__(self) -> None:
         self._bindings: dict[str, str] = {}
         self._reverse: dict[str, str] = {}
-        self.chord_state = ChordState()
+        self.chord_state = ChordState(chords=dict(DEFAULT_CHORDS))
         self.reset_all()
 
     def get_action(self, key: str) -> str | None:
@@ -139,11 +159,16 @@ def load_keybindings(path: Path) -> KeybindingManager:
 
     chords_raw = data.get("chords", {})
     if isinstance(chords_raw, dict):
-        chords: dict[tuple[str, ...], str] = {}
+        merged: dict[tuple[str, ...], str] = dict(mgr.chord_state.chords)
         for key_str, action in chords_raw.items():
-            keys = tuple(key_str.split())
+            keys = parse_chord(key_str)
             if len(keys) == 2:
-                chords[keys] = action
-        mgr.chord_state = ChordState(chords=chords)
+                merged[keys] = action
+        mgr.chord_state = ChordState(chords=merged)
 
     return mgr
+
+
+def load_user_keybindings() -> KeybindingManager:
+    """Load from `~/.llmcode/keybindings.json`, falling back to defaults."""
+    return load_keybindings(Path.home() / ".llmcode" / "keybindings.json")
