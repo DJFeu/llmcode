@@ -99,6 +99,22 @@ logger = get_logger(__name__)
 _MAX_INLINE_RESULT = 2000
 
 
+def _merge_hook_extra_output(result: ToolResult, outcome) -> ToolResult:
+    """Append HookOutcome.extra_output to a ToolResult.output (immutable update).
+
+    Keeps the original ToolResult instance when nothing to append, so callers
+    can compare by identity in tests and avoid an unneeded allocation.
+    """
+    extra = getattr(outcome, "extra_output", "") or ""
+    if not extra:
+        return result
+    return ToolResult(
+        output=result.output + extra,
+        is_error=result.is_error,
+        metadata=result.metadata,
+    )
+
+
 @dataclasses.dataclass(frozen=True)
 class TurnSummary:
     iterations: int
@@ -1454,11 +1470,26 @@ class ConversationRuntime:
             is_error=tool_result.is_error,
         )
 
-        # 7. Post-tool hook
+        # 7. Post-tool hook (shell hooks via post_tool_use, in-process via fire_python)
         if hasattr(hook_runner, "post_tool_use"):
             post_result = hook_runner.post_tool_use(call.name, args, tool_result)
             if hasattr(post_result, "__await__"):
-                await post_result
+                post_result = await post_result
+            tool_result = _merge_hook_extra_output(tool_result, post_result)
+        if hasattr(hook_runner, "fire_python"):
+            inproc = hook_runner.fire_python(
+                "post_tool_use",
+                {
+                    "tool_name": call.name,
+                    "tool_input": args,
+                    "tool_output": tool_result.output,
+                    "file_path": args.get("file_path") or args.get("path", ""),
+                    "session_id": getattr(self._context, "session_id", ""),
+                    "tokens_used": getattr(self, "_last_input_tokens", 0),
+                    "tokens_max": getattr(self, "_max_input_tokens", 0),
+                },
+            )
+            tool_result = _merge_hook_extra_output(tool_result, inproc)
 
         # 7b. Run harness sensors (auto-commit, LSP diagnose, code rules)
         try:

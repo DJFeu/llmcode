@@ -42,3 +42,25 @@ def test_fire_python_denied_subscriber_short_circuits_extra_output() -> None:
 
     assert outcome.denied is True
     assert outcome.extra_output == ""
+
+
+from llm_code.tools.base import ToolResult
+
+
+def _apply_extra_output(result, outcome):
+    from llm_code.runtime.conversation import _merge_hook_extra_output
+    return _merge_hook_extra_output(result, outcome)
+
+
+def test_merge_hook_extra_output_appends_to_output() -> None:
+    base = ToolResult(output="cat README.md\nhello", is_error=False)
+    outcome = HookOutcome(extra_output="\n[rule] foo")
+    merged = _apply_extra_output(base, outcome)
+    assert merged.output.endswith("[rule] foo")
+    assert merged.is_error is False
+
+
+def test_merge_hook_extra_output_noop_when_empty() -> None:
+    base = ToolResult(output="x", is_error=False)
+    merged = _apply_extra_output(base, HookOutcome())
+    assert merged is base or merged.output == "x"
