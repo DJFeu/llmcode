@@ -58,6 +58,22 @@ _SYMBOL_KIND: dict[int, str] = {
 
 
 @dataclass(frozen=True)
+class CallHierarchyItem:
+    """A symbol participating in a call hierarchy.
+
+    Carries enough information to round-trip back through callHierarchy/* requests.
+    """
+    name: str
+    kind: str
+    file: str
+    line: int
+    column: int
+
+
+_SYMBOL_KIND_INV: dict[str, int] = {label: code for code, label in _SYMBOL_KIND.items()}
+
+
+@dataclass(frozen=True)
 class LspServerConfig:
     command: str
     args: tuple[str, ...] = ()
@@ -324,6 +340,78 @@ class LspClient:
             {"query": query},
         )
         return self._parse_symbols(result, default_uri="")
+
+    async def prepare_call_hierarchy(
+        self, file_uri: str, line: int, col: int
+    ) -> list[CallHierarchyItem]:
+        result = await self._request(
+            "textDocument/prepareCallHierarchy",
+            {
+                "textDocument": {"uri": file_uri},
+                "position": {"line": line, "character": col},
+            },
+        )
+        return self._parse_call_hierarchy_items(result)
+
+    async def incoming_calls(self, item: CallHierarchyItem) -> list[CallHierarchyItem]:
+        result = await self._request(
+            "callHierarchy/incomingCalls",
+            {"item": self._call_hierarchy_item_to_lsp(item)},
+        )
+        if not result:
+            return []
+        return [
+            self._parse_single_call_hierarchy_item(entry["from"])
+            for entry in result
+            if "from" in entry
+        ]
+
+    async def outgoing_calls(self, item: CallHierarchyItem) -> list[CallHierarchyItem]:
+        result = await self._request(
+            "callHierarchy/outgoingCalls",
+            {"item": self._call_hierarchy_item_to_lsp(item)},
+        )
+        if not result:
+            return []
+        return [
+            self._parse_single_call_hierarchy_item(entry["to"])
+            for entry in result
+            if "to" in entry
+        ]
+
+    @staticmethod
+    def _call_hierarchy_item_to_lsp(item: CallHierarchyItem) -> dict[str, Any]:
+        kind_int = _SYMBOL_KIND_INV.get(item.kind, 12)
+        return {
+            "name": item.name,
+            "kind": kind_int,
+            "uri": item.file,
+            "range": {
+                "start": {"line": item.line, "character": item.column},
+                "end": {"line": item.line, "character": item.column},
+            },
+            "selectionRange": {
+                "start": {"line": item.line, "character": item.column},
+                "end": {"line": item.line, "character": item.column},
+            },
+        }
+
+    def _parse_call_hierarchy_items(self, result: Any) -> list[CallHierarchyItem]:
+        if not result:
+            return []
+        return [self._parse_single_call_hierarchy_item(item) for item in result]
+
+    @staticmethod
+    def _parse_single_call_hierarchy_item(node: dict) -> CallHierarchyItem:
+        sel = node.get("selectionRange") or node.get("range") or {}
+        start = sel.get("start", {})
+        return CallHierarchyItem(
+            name=node.get("name", ""),
+            kind=_SYMBOL_KIND.get(node.get("kind", 0), "unknown"),
+            file=node.get("uri", ""),
+            line=start.get("line", 0),
+            column=start.get("character", 0),
+        )
 
     async def get_diagnostics(self, file_uri: str) -> list[Diagnostic]:
         result = await self._request(
