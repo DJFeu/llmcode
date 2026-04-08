@@ -1,32 +1,13 @@
-"""LSP tools: goto-definition, find-references, diagnostics."""
+"""LSP tools: goto-definition, find-references, diagnostics, hover, symbols."""
 from __future__ import annotations
 
 from pathlib import Path
 
 from pydantic import BaseModel
 
+from llm_code.lsp.languages import language_for_file as _language_for_file
 from llm_code.lsp.manager import LspServerManager
 from llm_code.tools.base import PermissionLevel, Tool, ToolResult
-
-# ---------------------------------------------------------------------------
-# File-extension -> language mapping
-# ---------------------------------------------------------------------------
-
-_EXT_LANGUAGE: dict[str, str] = {
-    ".py": "python",
-    ".pyi": "python",
-    ".ts": "typescript",
-    ".tsx": "typescript",
-    ".js": "typescript",
-    ".jsx": "typescript",
-    ".go": "go",
-    ".rs": "rust",
-}
-
-
-def _language_for_file(file_path: str) -> str:
-    suffix = Path(file_path).suffix.lower()
-    return _EXT_LANGUAGE.get(suffix, "")
 
 
 # ---------------------------------------------------------------------------
