@@ -15,6 +15,30 @@ from llm_code.tools.base import PermissionLevel, Tool, ToolResult
 _WORKSPACE_SYMBOL_MAX_RESULTS = 200
 
 
+def _validate_lsp_path(
+    file_path: str,
+    *,
+    line: int | None = None,
+    column: int | None = None,
+) -> str | None:
+    """Validate inputs common to all LSP tools.
+
+    Returns an error message string if validation fails, or None if OK.
+    """
+    if not file_path:
+        return "file must be a non-empty absolute path"
+    p = Path(file_path)
+    if not p.is_absolute():
+        return f"file must be absolute: {file_path!r}"
+    if not p.exists():
+        return f"file does not exist: {file_path!r}"
+    if line is not None and line < 0:
+        return f"line must be non-negative, got {line}"
+    if column is not None and column < 0:
+        return f"column must be non-negative, got {column}"
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Pydantic input models
 # ---------------------------------------------------------------------------
@@ -97,9 +121,12 @@ class LspGotoDefinitionTool(Tool):
         return asyncio.run(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
-        file_path = args["file"]
-        line = int(args["line"])
-        column = int(args["column"])
+        file_path = args.get("file", "")
+        line = int(args.get("line", 0))
+        column = int(args.get("column", 0))
+        err = _validate_lsp_path(file_path, line=line, column=column)
+        if err is not None:
+            return ToolResult(output=err, is_error=True)
 
         language = _language_for_file(file_path)
         client = self._manager.get_client(language)
@@ -177,9 +204,12 @@ class LspFindReferencesTool(Tool):
         return asyncio.run(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
-        file_path = args["file"]
-        line = int(args["line"])
-        column = int(args["column"])
+        file_path = args.get("file", "")
+        line = int(args.get("line", 0))
+        column = int(args.get("column", 0))
+        err = _validate_lsp_path(file_path, line=line, column=column)
+        if err is not None:
+            return ToolResult(output=err, is_error=True)
 
         language = _language_for_file(file_path)
         client = self._manager.get_client(language)
@@ -252,7 +282,10 @@ class LspDiagnosticsTool(Tool):
         return asyncio.run(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
-        file_path = args["file"]
+        file_path = args.get("file", "")
+        err = _validate_lsp_path(file_path)
+        if err is not None:
+            return ToolResult(output=err, is_error=True)
 
         language = _language_for_file(file_path)
         client = self._manager.get_client(language)
@@ -330,9 +363,12 @@ class LspHoverTool(Tool):
         return asyncio.run(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
-        file_path = args["file"]
-        line = int(args["line"])
-        column = int(args["column"])
+        file_path = args.get("file", "")
+        line = int(args.get("line", 0))
+        column = int(args.get("column", 0))
+        err = _validate_lsp_path(file_path, line=line, column=column)
+        if err is not None:
+            return ToolResult(output=err, is_error=True)
 
         language = _language_for_file(file_path)
         client = self._manager.get_client(language)
@@ -403,7 +439,10 @@ class LspDocumentSymbolTool(Tool):
         return asyncio.run(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
-        file_path = args["file"]
+        file_path = args.get("file", "")
+        err = _validate_lsp_path(file_path)
+        if err is not None:
+            return ToolResult(output=err, is_error=True)
         language = _language_for_file(file_path)
         client = self._manager.get_client(language)
         if client is None:
@@ -476,9 +515,12 @@ class LspImplementationTool(Tool):
         return asyncio.run(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
-        file_path = args["file"]
-        line = int(args["line"])
-        column = int(args["column"])
+        file_path = args.get("file", "")
+        line = int(args.get("line", 0))
+        column = int(args.get("column", 0))
+        err = _validate_lsp_path(file_path, line=line, column=column)
+        if err is not None:
+            return ToolResult(output=err, is_error=True)
         language = _language_for_file(file_path)
         client = self._manager.get_client(language)
         if client is None:
@@ -670,10 +712,13 @@ class LspCallHierarchyTool(Tool):
         return asyncio.run(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
-        file_path = args["file"]
-        line = int(args["line"])
-        column = int(args["column"])
+        file_path = args.get("file", "")
+        line = int(args.get("line", 0))
+        column = int(args.get("column", 0))
         direction = str(args.get("direction", "both")).lower()
+        err = _validate_lsp_path(file_path, line=line, column=column)
+        if err is not None:
+            return ToolResult(output=err, is_error=True)
 
         if direction not in _VALID_DIRECTIONS:
             return ToolResult(
