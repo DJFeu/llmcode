@@ -74,6 +74,7 @@ _TOOL_RULES: tuple[tuple[str, str], ...] = (
 # Per-section truncation knobs.
 DEFAULT_MAX_TOOLS = 24
 DEFAULT_MAX_SKILLS = 12
+DEFAULT_MAX_BYTES = 8192
 _TOOL_DESC_CHARS = 80
 _SKILL_DESC_CHARS = 100
 _TRIGGER_CHARS = 80
@@ -170,27 +171,59 @@ def build_delegation_section(
     *,
     max_tools: int = DEFAULT_MAX_TOOLS,
     max_skills: int = DEFAULT_MAX_SKILLS,
+    max_bytes: int = DEFAULT_MAX_BYTES,
 ) -> str:
-    """Return a markdown ``## Active Capabilities`` section, or empty string."""
+    """Return a markdown ``## Active Capabilities`` section, or empty string.
+
+    If the rendered section exceeds ``max_bytes`` (UTF-8), drop the lowest-value
+    blocks in order: Skills by Category -> Key Triggers -> trim the tool table.
+    Header is never dropped.
+    """
     if not tools and not skills:
         return ""
 
-    parts: list[str] = ["## Active Capabilities"]
-    parts.append(
+    header = "## Active Capabilities"
+    intro = (
         "_The following tools and skills are available this turn. Prefer the most "
         "specific capability for each task; do not invent new ones._"
     )
 
+    blocks: list[tuple[str, list[str]]] = []
     tool_lines = _render_tool_table(tools, max_tools)
     if tool_lines:
-        parts.append("\n".join(tool_lines))
-
+        blocks.append(("tools", tool_lines))
     trigger_lines = _render_key_triggers(skills, max_skills)
     if trigger_lines:
-        parts.append("\n".join(trigger_lines))
-
+        blocks.append(("triggers", trigger_lines))
     category_lines = _render_skill_categories(skills, max_skills)
     if category_lines:
-        parts.append("\n".join(category_lines))
+        blocks.append(("categories", category_lines))
 
-    return "\n\n".join(parts)
+    def _assemble(block_subset: list[tuple[str, list[str]]]) -> str:
+        parts: list[str] = [header, intro]
+        parts.extend("\n".join(lines) for _id, lines in block_subset)
+        return "\n\n".join(parts)
+
+    rendered = _assemble(blocks)
+    if len(rendered.encode("utf-8")) <= max_bytes:
+        return rendered
+
+    for drop_id in ("categories", "triggers"):
+        blocks = [b for b in blocks if b[0] != drop_id]
+        rendered = _assemble(blocks)
+        if len(rendered.encode("utf-8")) <= max_bytes:
+            return rendered
+
+    if blocks and blocks[0][0] == "tools":
+        tool_id, lines = blocks[0]
+        while len(lines) > 2 and len(rendered.encode("utf-8")) > max_bytes:
+            head = lines[:1]
+            body = lines[1:]
+            body = body[: max(1, len(body) // 2)]
+            lines = head + body + ["- _(truncated to fit budget)_"]
+            blocks[0] = (tool_id, lines)
+            rendered = _assemble(blocks)
+
+    if len(rendered.encode("utf-8")) > max_bytes:
+        rendered = _assemble([])
+    return rendered

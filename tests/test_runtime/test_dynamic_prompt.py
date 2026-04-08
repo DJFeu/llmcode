@@ -212,3 +212,22 @@ def test_build_delegation_section_is_order_sensitive() -> None:
     assert a != b
     assert "read_file" in a and "read_file" in b
     assert "write_file" in a and "write_file" in b
+
+
+def test_build_delegation_section_respects_byte_budget() -> None:
+    big_desc = "x" * 200
+    tools = tuple(_tool(f"tool_{i}", big_desc) for i in range(50))
+    skills = tuple(_skill(f"s{i}", tags=("cat",), description=big_desc) for i in range(50))
+    out = build_delegation_section(tools, skills, max_bytes=2048)
+    assert len(out.encode("utf-8")) <= 2048
+    assert "## Active Capabilities" in out
+
+
+def test_build_delegation_section_no_truncation_when_under_budget() -> None:
+    out = build_delegation_section(
+        (_tool("read_file"),),
+        (_skill("debug", tags=("d",)),),
+        max_bytes=10_000,
+    )
+    assert "Tools by Capability" in out
+    assert "Key Triggers" in out
