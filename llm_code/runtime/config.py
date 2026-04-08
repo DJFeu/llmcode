@@ -353,7 +353,6 @@ class RuntimeConfig:
     builtin_hooks: BuiltinHooksConfig = field(default_factory=BuiltinHooksConfig)
     keywords: KeywordsConfig = field(default_factory=KeywordsConfig)
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
-    use_streaming_tool_executor: bool = False
 
 
 class ConfigSchema(BaseModel):
