@@ -123,7 +123,87 @@ def _empty_response_message(
     return _EMPTY_RESPONSE_THINKING_ZH if zh else _EMPTY_RESPONSE_THINKING_EN
 
 
-class LLMCodeTUI(App):
+def _register_core_tools(registry: "ToolRegistry", config: "RuntimeConfig") -> None:
+    """Register the collaborator-free core tool set into ``registry``.
+
+    Shared between the TUI boot path and headless callers (like
+    ``llm_code.cli.oneshot.run_quick_mode``) so both exercise the same
+    file / shell / search / git tool set. Tools that depend on
+    instance-scoped collaborators (MemoryStore, SkillSet, SwarmManager,
+    IDEBridge, LspManager, etc.) are intentionally NOT registered here
+    — the TUI boot path registers those separately after this helper
+    runs.
+    """
+    from llm_code.tools.bash import BashTool
+    from llm_code.tools.edit_file import EditFileTool
+    from llm_code.tools.git_tools import (
+        GitBranchTool,
+        GitCommitTool,
+        GitDiffTool,
+        GitLogTool,
+        GitPushTool,
+        GitStashTool,
+        GitStatusTool,
+    )
+    from llm_code.tools.glob_search import GlobSearchTool
+    from llm_code.tools.grep_search import GrepSearchTool
+    from llm_code.tools.notebook_edit import NotebookEditTool
+    from llm_code.tools.notebook_read import NotebookReadTool
+    from llm_code.tools.read_file import ReadFileTool
+    from llm_code.tools.web_fetch import WebFetchTool
+    from llm_code.tools.web_search import WebSearchTool
+    from llm_code.tools.write_file import WriteFileTool
+
+    base_url = config.provider_base_url or ""
+    is_local = any(
+        h in base_url
+        for h in ("localhost", "127.0.0.1", "0.0.0.0", "192.168.", "10.", "172.")
+    )
+    bash_timeout = 0 if is_local else 30  # 0 = no timeout for local models
+
+    for tool in (
+        ReadFileTool(),
+        WriteFileTool(),
+        EditFileTool(),
+        BashTool(default_timeout=bash_timeout, compress_output=config.output_compression),
+        GlobSearchTool(),
+        GrepSearchTool(),
+        NotebookReadTool(),
+        NotebookEditTool(),
+        WebFetchTool(),
+        WebSearchTool(),
+    ):
+        try:
+            registry.register(tool)
+        except ValueError:
+            pass
+
+    for cls in (
+        GitStatusTool,
+        GitDiffTool,
+        GitLogTool,
+        GitCommitTool,
+        GitPushTool,
+        GitStashTool,
+        GitBranchTool,
+    ):
+        try:
+            registry.register(cls())
+        except ValueError:
+            pass
+
+
+class LLMCodeTUI(App):  # noqa: E302
+    @classmethod
+    def _register_core_tools_into(
+        cls, registry: "ToolRegistry", config: "RuntimeConfig"
+    ) -> None:
+        """Classmethod facade over the module-level ``_register_core_tools``
+        helper. Kept on the class so headless callers can do
+        ``LLMCodeTUI._register_core_tools_into(reg, cfg)`` without
+        instantiating a TUI."""
+        _register_core_tools(registry, config)
+
     """Fullscreen TUI matching Claude Code's visual experience."""
 
     TITLE = "llm-code"
@@ -502,40 +582,12 @@ class LLMCodeTUI(App):
             native_tools=self._config.native_tools,
         )
 
-        # Register core tools — local models get longer bash timeout
-        _base_url = self._config.provider_base_url or ""
-        _is_local = any(h in _base_url for h in ("localhost", "127.0.0.1", "0.0.0.0", "192.168.", "10.", "172."))
-        _bash_timeout = 0 if _is_local else 30  # 0 = no timeout for local models
-
+        # Register core tools — collaborator-free set shared with the
+        # headless ``run_quick_mode`` path so both exercise the same
+        # tools. Instance-scoped tools (memory, skills, swarm, IDE, LSP,
+        # etc.) are registered further down.
         self._tool_reg = ToolRegistry()
-        from llm_code.tools.web_fetch import WebFetchTool
-        from llm_code.tools.web_search import WebSearchTool
-
-        for tool in (
-            ReadFileTool(),
-            WriteFileTool(),
-            EditFileTool(),
-            BashTool(default_timeout=_bash_timeout, compress_output=self._config.output_compression),
-            GlobSearchTool(),
-            GrepSearchTool(),
-            NotebookReadTool(),
-            NotebookEditTool(),
-            WebFetchTool(),
-            WebSearchTool(),
-        ):
-            try:
-                self._tool_reg.register(tool)
-            except ValueError:
-                pass
-
-        for cls in (
-            GitStatusTool, GitDiffTool, GitLogTool, GitCommitTool,
-            GitPushTool, GitStashTool, GitBranchTool,
-        ):
-            try:
-                self._tool_reg.register(cls())
-            except ValueError:
-                pass
+        LLMCodeTUI._register_core_tools_into(self._tool_reg, self._config)
 
         # Register AgentTool with a lazy factory closure that captures `self`
         # so the parent runtime — built later in startup — is reachable.
