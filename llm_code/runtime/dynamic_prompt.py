@@ -236,4 +236,8 @@ def build_delegation_section(
 
     if len(rendered.encode("utf-8")) > max_bytes:
         rendered = _assemble([])
+        if len(rendered.encode("utf-8")) > max_bytes:
+            # Even the bare header+intro envelope doesn't fit. Honor the
+            # declared budget strictly by returning nothing.
+            return ""
     return rendered
