@@ -3,6 +3,36 @@
 ## Unreleased
 
 ### Added
+- Three themed builtin hooks ported from oh-my-opencode:
+  - `context_window_monitor` — warns once per session at 75% context usage
+  - `thinking_mode` — detects "ultrathink" / 深入思考 keywords and flags the turn
+  - `rules_injector` — auto-injects CLAUDE.md / AGENTS.md / .cursorrules content
+    when a project file is read
+- `HookOutcome.extra_output: str` — allows in-process hooks to append content to
+  the visible tool result (used by `rules_injector` and `context_window_monitor`).
+- `context_window_monitor` builtin hook now actually fires — `ConversationRuntime`
+  populates `_last_input_tokens` / `_max_input_tokens` after every LLM stream.
+- `thinking_mode` builtin hook is now consumed — `_thinking_boost_active` doubles
+  the next turn's `thinking_budget` (capped at provider max).
+- Dynamic delegation prompt section: when the conversation runner has live
+  tools and routed skills, the system prompt now includes an `## Active
+  Capabilities` section with three subsections — Tools by Capability (grouped
+  read/search/write/exec/lsp/web/agent), Key Triggers (skill triggers + names),
+  and Skills by Category (grouped by skill's first tag). Pure module
+  `llm_code/runtime/dynamic_prompt.py`. Byte-budget guard caps the section at
+  8 KB by default to protect cache stability.
+- Agent tier routing (build / plan / explore / verify / general):
+  - BUILD_ROLE (default, unrestricted) and GENERAL_ROLE (focused subagent
+    without todowrite) added to BUILT_IN_ROLES
+  - is_tool_allowed_for_role() helper
+  - ToolRegistry.filtered(allowed) returns a child registry with only the
+    named tools (parent untouched)
+  - llm_code/runtime/subagent_factory.make_subagent_runtime() builds a
+    role-filtered child ConversationRuntime with fresh Session and shared
+    parent infrastructure
+  - AgentTool is now actually wired — tui/app.py registers it with a
+    lazy closure factory instead of runtime_factory=None
+  - AgentTool.input_schema.role enum extended to all five roles
 - LSP coverage expansion ported from opencode:
   - `llm_code/lsp/languages.py` — single source of truth for extension→language
     mapping (~80 entries) and walk-up project root detection
@@ -22,7 +52,34 @@
     accepts `direction: incoming | outgoing | both` and runs prepare →
     incoming/outgoing in one tool call)
 
+### Changed
+- Agent role sentinel refactor: `AgentRole.allowed_tools` is now
+  `frozenset[str] | None`. `None` means unrestricted (full inheritance);
+  empty `frozenset()` is the explicit deny-all sentinel; non-empty set is a
+  strict whitelist. `BUILD_ROLE.allowed_tools` is now `None`.
+  `ToolRegistry.filtered(None)` clones the parent; `filtered(frozenset())`
+  returns an empty registry. This eliminates the "empty set means
+  unrestricted" foot-gun.
+
 ### Fixed
+- `rules_injector` no longer reads `CLAUDE.md` / `AGENTS.md` from ancestor
+  directories outside the resolved project root (symlink edge case).
+- `dynamic_prompt.build_delegation_section` no longer hangs under pathologically small `max_bytes` (added iteration cap + length-stable bailout)
+- `dynamic_prompt.build_delegation_section` now honors `max_bytes` strictly — if even the bare header+intro envelope exceeds the budget, returns `""` instead of a soft-violating string
+- `classify_tool` recognizes bare `Task` tool name as `agent` category (was falling through to `other`)
+- AgentTool is no longer registered with a None runtime factory; calls now
+  succeed instead of crashing on first dispatch.
+- AgentTool recursion-depth guard now actually trips for build-role
+  subagents. Previously, build-role children inherited the parent's
+  AgentTool instance by reference, so `_current_depth` stayed at 0
+  forever and `max_depth` was never enforced. `make_subagent_runtime`
+  now rebinds the child's `agent` tool to a fresh AgentTool with
+  `_current_depth = parent_depth + 1`.
+- Defense-in-depth: `ConversationRuntime._execute_tool_with_streaming`
+  now consults `is_tool_allowed_for_role` against the runtime's
+  `_subagent_role` before dispatch, so a future regression that leaks
+  a forbidden tool into a child registry still cannot bypass the role
+  whitelist.
 - `CallHierarchyItem` now round-trips the original LSP node (`data`, `tags`,
   `range`, `selectionRange`, exact `kind` int) so servers like rust-analyzer
   and jdtls — which require their opaque `data` token to be echoed back —
