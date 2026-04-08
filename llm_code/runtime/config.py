@@ -418,6 +418,23 @@ def _load_json_file(path: Path) -> dict:
         return {}
 
 
+def _parse_telemetry_config(raw: dict) -> TelemetryConfig:
+    """Parse a telemetry config dict, falling back to LANGFUSE_* env vars."""
+    import os
+
+    return TelemetryConfig(
+        enabled=raw.get("enabled", False),
+        endpoint=raw.get("endpoint", "http://localhost:4318"),
+        service_name=raw.get("service_name", "llm-code"),
+        langfuse_public_key=raw.get("langfuse_public_key")
+            or os.environ.get("LANGFUSE_PUBLIC_KEY", ""),
+        langfuse_secret_key=raw.get("langfuse_secret_key")
+            or os.environ.get("LANGFUSE_SECRET_KEY", ""),
+        langfuse_host=raw.get("langfuse_host")
+            or os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com"),
+    )
+
+
 def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
     """Convert a merged config dict to a RuntimeConfig instance."""
     provider = data.get("provider", {})
@@ -526,12 +543,7 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         custom_profiles=tuple(hida_raw.get("custom_profiles", [])),
     )
 
-    telemetry_raw = data.get("telemetry", {})
-    telemetry = TelemetryConfig(
-        enabled=telemetry_raw.get("enabled", False),
-        endpoint=telemetry_raw.get("endpoint", "http://localhost:4318"),
-        service_name=telemetry_raw.get("service_name", "llm-code"),
-    )
+    telemetry = _parse_telemetry_config(data.get("telemetry", {}))
 
     enterprise_raw = data.get("enterprise", {})
     auth_raw = enterprise_raw.get("auth", {})

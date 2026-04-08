@@ -18,6 +18,11 @@ class TelemetryConfig:
     enabled: bool = False
     endpoint: str = "http://localhost:4318"  # OTLP HTTP default
     service_name: str = "llm-code"
+    # Langfuse export (optional). When public_key + secret_key are set,
+    # spans are also forwarded to a Langfuse instance via its OTel processor.
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = "https://cloud.langfuse.com"
 
 
 # ---------------------------------------------------------------------------
