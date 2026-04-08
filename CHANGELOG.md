@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed (Hermes variant 4 + StreamParser sentinel)
+- **`tools/parsing.py:_HERMES_FUNCTION_TRUNCATED_RE`** now handles Qwen3 variant 4, where the model emits `<tool_call>NAME{"args": {...}}</tool_call>` with no `>` separator between function name and JSON payload. Captured live from Qwen3.5-122B on 2026-04-08 as `tests/test_tools/fixtures/hermes_captures/2026-04-08-pr22-truncated-no-separator.txt`. 4 new unit tests + fixture replay coverage.
+- **`streaming/stream_parser.py`** now emits a sentinel `TOOL_CALL` event (`tool_call=None`) when it consumes a `<tool_call>...</tool_call>` block whose body the downstream parser cannot understand. Previously the block was silently swallowed, which caused the TUI to fall back to the "thinking ate output" empty-response diagnostic instead of the "model tried to call a tool" message. New regression test pins this behavior.
+
 ### Refactored (single source of truth)
 - **`tests/fixtures/runtime.py`** — shared `make_conv_runtime()` factory with canned-response provider and callback-based test tool. Runtime-level tests no longer hand-build a `ConversationRuntime` with ad-hoc `_Provider` classes. Unblocks the PR #17 Task 3 smoke tombstone (now a real test that proves Hermes-truncated tool calls get dispatched through the full runner).
 - **`llm_code/cli/oneshot.py:run_quick_mode`** — `-q` quick mode now routes through the real `ConversationRuntime` via `run_one_turn`. Previously it called the provider directly, bypassing system prompt / tool registry / parser / dispatcher — which is why PRs #11/#13/#14 all "verified" fixes via `-q` that missed the real TUI-path bugs.

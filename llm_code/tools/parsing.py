@@ -35,11 +35,15 @@ _HERMES_FUNCTION_RE = re.compile(
 # in tool-calling mode) inject "<tool_call>\n<function=" as the assistant
 # prompt PREFIX. The model continues with "NAME>...params...</function>",
 # so the streamed body of <tool_call> starts with the bare function name
-# followed by ">" instead of with "<function=NAME>". Match identifier
-# characters only at the start (so a literal "<function>" with no name
-# still fails this regex and the body falls through to "no parse").
+# followed by ">" (or directly by "{" for JSON-args variants) instead of
+# with "<function=NAME>". Match identifier characters only at the start
+# (so a literal "<function>" with no name still fails this regex and
+# the body falls through to "no parse"). The separator can be:
+#   - ``>``     — classic truncated form (PR #15, PR #16)
+#   - ``{``     — variant 4 emits ``web_search{"args": ...}`` with no
+#     ``>`` between name and JSON (captured 2026-04-08 from Qwen3.5)
 _HERMES_FUNCTION_TRUNCATED_RE = re.compile(
-    r"^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*>(.*?)(?:</function>|\Z)",
+    r"^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:>|(?=\{))(.*?)(?:</function>|\Z)",
     re.DOTALL,
 )
 _HERMES_PARAMETER_RE = re.compile(

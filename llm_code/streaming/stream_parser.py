@@ -100,9 +100,20 @@ class StreamParser:
             self._buffer = buf[end + len("</tool_call>") :]
             self._in_tool_call = False
             parsed = parse_tool_calls(block, None)
-            for p in parsed:
+            if parsed:
+                for p in parsed:
+                    events.append(
+                        StreamEvent(kind=StreamEventKind.TOOL_CALL, tool_call=p)
+                    )
+            else:
+                # We consumed a <tool_call>...</tool_call> block but the
+                # parser returned zero calls (unknown format variant).
+                # Emit a sentinel TOOL_CALL event with tool_call=None so
+                # the TUI can still set its saw_tool_call diagnostic flag
+                # and show the "model tried to call a tool" message
+                # instead of the misleading "thinking ate output" one.
                 events.append(
-                    StreamEvent(kind=StreamEventKind.TOOL_CALL, tool_call=p)
+                    StreamEvent(kind=StreamEventKind.TOOL_CALL, tool_call=None)
                 )
             return True
 

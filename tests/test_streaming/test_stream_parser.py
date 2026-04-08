@@ -174,3 +174,28 @@ class TestStreamParserInterleaving:
         assert len(tc) == 2
         assert tc[0].tool_call.name == "bash"
         assert tc[1].tool_call.name == "read_file"
+
+    def test_unparseable_tool_call_block_still_emits_sentinel_event(self) -> None:
+        """If the parser sees <tool_call>...</tool_call> but cannot parse
+        the body (unknown format variant), it must still emit a TOOL_CALL
+        event with ``tool_call=None``. Otherwise the TUI falls back to
+        the 'thinking ate output' diagnostic, misleading users who are
+        actually hitting a parser gap."""
+        p = StreamParser()
+        events = p.feed("<tool_call>garbage nonsense with no structure</tool_call>")
+        tool_call_events = [e for e in events if e.kind == StreamEventKind.TOOL_CALL]
+        assert len(tool_call_events) == 1
+        assert tool_call_events[0].tool_call is None
+
+    def test_variant4_no_separator_emits_real_tool_call_event(self) -> None:
+        """The captured 2026-04-08 Variant 4 must produce a real parsed
+        TOOL_CALL event (not a sentinel), once the parser handles it."""
+        p = StreamParser()
+        events = p.feed(
+            '<tool_call>web_search{"args": {"max_results": 5, "query": "x"}}</tool_call>'
+        )
+        tc = [e for e in events if e.kind == StreamEventKind.TOOL_CALL]
+        assert len(tc) == 1
+        assert tc[0].tool_call is not None
+        assert tc[0].tool_call.name == "web_search"
+        assert tc[0].tool_call.args == {"max_results": 5, "query": "x"}

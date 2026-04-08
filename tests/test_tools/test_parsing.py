@@ -425,3 +425,42 @@ class TestHermesTruncatedJsonArgsFormat:
         assert len(result) == 1
         assert result[0].name == "git_status"
         assert result[0].args == {}
+
+
+class TestHermesTruncatedNoSeparatorFormat:
+    """Variant 4: Qwen3.5 sometimes omits the ``>`` separator entirely and
+    emits ``<tool_call>NAME{"args": {...}}</tool_call>`` — function name
+    directly followed by the JSON object, no delimiter.
+
+    Captured live from Qwen3.5-122B on 2026-04-08."""
+
+    def test_truncated_no_separator_json_args(self) -> None:
+        text = (
+            '<tool_call>web_search{"args": {"max_results": 5, "query": "今日熱門新聞 2026"}}</tool_call>'
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "web_search"
+        assert result[0].args == {"max_results": 5, "query": "今日熱門新聞 2026"}
+
+    def test_truncated_no_separator_with_whitespace(self) -> None:
+        """Whitespace between name and '{' should still parse."""
+        text = '<tool_call>bash {"command": "ls"}</tool_call>'
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "bash"
+        assert result[0].args == {"command": "ls"}
+
+    def test_truncated_no_separator_with_newline(self) -> None:
+        text = '<tool_call>read_file\n{"file_path": "/tmp/x"}\n</tool_call>'
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].args == {"file_path": "/tmp/x"}
+
+    def test_truncated_no_separator_with_arguments_wrapper(self) -> None:
+        text = '<tool_call>web_fetch{"arguments": {"url": "https://example.com"}}</tool_call>'
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "web_fetch"
+        assert result[0].args == {"url": "https://example.com"}
