@@ -50,6 +50,11 @@ def _collect_rule_files(file_path: Path, root: Path) -> list[Path]:
         root = root.resolve()
     except OSError:
         return found
+    try:
+        if not cur.is_relative_to(root):
+            return found
+    except (OSError, ValueError):
+        return found
     while True:
         for name in RULE_FILE_NAMES:
             candidate = cur / name

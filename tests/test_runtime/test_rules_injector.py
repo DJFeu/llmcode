@@ -106,3 +106,22 @@ def test_register_subscribes_to_post_tool_use_and_session_end() -> None:
     rules_injector.register(runner)
     assert "post_tool_use" in runner._subscribers
     assert "session_end" in runner._subscribers
+
+
+def test_collect_rule_files_skips_path_outside_project_root(tmp_path) -> None:
+    """If the resolved file parent is not under root, the walk must abort
+    immediately rather than reading rule files from unrelated ancestors."""
+    from llm_code.runtime.builtin_hooks.rules_injector import _collect_rule_files
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "CLAUDE.md").write_text("# project rule")
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "CLAUDE.md").write_text("# outside rule")
+    outside_file = outside / "leak.py"
+    outside_file.write_text("x = 1")
+
+    rules = _collect_rule_files(outside_file, root=project)
+    assert all("outside" not in str(p) for p in rules)
