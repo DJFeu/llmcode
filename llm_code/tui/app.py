@@ -1392,15 +1392,13 @@ class LLMCodeTUI(App):  # noqa: E302
         assistant_added = False
         thinking_buffer = ""
         thinking_start = time.monotonic()
-        # Client-side tag parsing for models (like Qwen) that emit
-        # <think> and <tool_call> as raw StreamTextDelta
-        _in_think_tag = False
-        _think_close_tag = "</think>"
-        _in_tool_call_tag = False
+        # Canonical stream parser: single state machine shared with the
+        # runtime dispatch path (llm_code.streaming.stream_parser). Emits
+        # TEXT / THINKING / TOOL_CALL events that we route into the TUI
+        # widgets below. Replaced ~110 lines of inline tag parsing.
+        from llm_code.streaming.stream_parser import StreamEventKind, StreamParser
+        _stream_parser = StreamParser()
         _saw_tool_call_this_turn = False  # For empty-response diagnosis
-        _raw_text_buffer = ""
-        _is_first_text_delta = True  # Track first delta for think-start detection
-        _full_text_accumulator = ""  # Accumulate ALL text for post-hoc think stripping
 
         async def remove_spinner() -> None:
             """Remove spinner if it is currently mounted."""
@@ -1433,113 +1431,48 @@ class LLMCodeTUI(App):  # noqa: E302
                     chat.add_entry(spinner)
 
                 if isinstance(event, StreamTextDelta):
-                    _raw_text_buffer += event.text
-
-                    # ── First delta detection ──
-                    # Qwen (and similar) always start with <think> when thinking.
-                    # On the first text delta, check if response starts with a think tag.
-                    if _is_first_text_delta:
-                        stripped_start = _raw_text_buffer.lstrip()
-                        # Still accumulating a potential partial tag prefix
-                        if len(stripped_start) < len("<thinking>") and stripped_start.startswith("<"):
-                            continue  # wait for more data
-                        _is_first_text_delta = False
-                        for open_tag, close_tag in [("<think>", "</think>"), ("<thinking>", "</thinking>")]:
-                            if stripped_start.startswith(open_tag):
-                                # Strip the open tag and enter thinking mode
-                                idx = _raw_text_buffer.index(open_tag) + len(open_tag)
-                                _raw_text_buffer = _raw_text_buffer[idx:]
-                                _in_think_tag = True
-                                _think_close_tag = close_tag
+                    # Delegate all <think> / <tool_call> tag recognition
+                    # to the shared StreamParser. It produces TEXT,
+                    # THINKING, and TOOL_CALL events that we route into
+                    # TUI widgets below.
+                    for parsed_ev in _stream_parser.feed(event.text):
+                        if parsed_ev.kind == StreamEventKind.THINKING:
+                            if not thinking_buffer:
+                                # First thinking content this turn — start
+                                # the elapsed timer and set spinner phase.
+                                thinking_start = time.monotonic()
                                 spinner.phase = "thinking"
-                                break
-
-                    # ── Thinking mode: route everything to thinking_buffer ──
-                    if _in_think_tag:
-                        if _think_close_tag in _raw_text_buffer:
-                            think_content, _, _raw_text_buffer = _raw_text_buffer.partition(_think_close_tag)
-                            thinking_buffer += think_content
-                            _in_think_tag = False
+                            thinking_buffer += parsed_ev.text
+                        elif parsed_ev.kind == StreamEventKind.TEXT:
+                            # Flush any pending thinking into a ThinkingBlock
+                            # before rendering visible text.
                             if thinking_buffer.strip():
                                 elapsed_t = time.monotonic() - thinking_start
                                 tokens_t = len(thinking_buffer) // 4
-                                chat.add_entry(ThinkingBlock(thinking_buffer, elapsed_t, tokens_t))
+                                chat.add_entry(
+                                    ThinkingBlock(thinking_buffer, elapsed_t, tokens_t)
+                                )
                                 thinking_buffer = ""
-                            # After closing think, check for another think block
-                            _is_first_text_delta = True
-                        else:
-                            thinking_buffer += _raw_text_buffer
-                            _raw_text_buffer = ""
-                        continue
-
-                    # ── Mid-stream think tags (e.g. after tool results) ──
-                    for open_tag, close_tag in [("<think>", "</think>"), ("<thinking>", "</thinking>")]:
-                        if open_tag in _raw_text_buffer:
-                            before, _, _raw_text_buffer = _raw_text_buffer.partition(open_tag)
-                            if before.strip():
+                            if parsed_ev.text:
                                 if not assistant_added:
                                     await remove_spinner()
                                     chat.add_entry(assistant)
                                     assistant_added = True
-                                assistant.append_text(before)
-                            _in_think_tag = True
-                            _think_close_tag = close_tag
-                            spinner.phase = "thinking"
-                            # Re-process remaining buffer in thinking mode
-                            if _think_close_tag in _raw_text_buffer:
-                                tc, _, _raw_text_buffer = _raw_text_buffer.partition(_think_close_tag)
-                                thinking_buffer += tc
-                                _in_think_tag = False
-                                if thinking_buffer.strip():
-                                    elapsed_t = time.monotonic() - thinking_start
-                                    tokens_t = len(thinking_buffer) // 4
-                                    chat.add_entry(ThinkingBlock(thinking_buffer, elapsed_t, tokens_t))
-                                    thinking_buffer = ""
-                            else:
-                                thinking_buffer += _raw_text_buffer
-                                _raw_text_buffer = ""
-                            continue
-
-                    # ── Handle <tool_call> tags ──
-                    while "<tool_call>" in _raw_text_buffer and not _in_tool_call_tag:
-                        before, _, _raw_text_buffer = _raw_text_buffer.partition("<tool_call>")
-                        if before.strip():
-                            if not assistant_added:
-                                await remove_spinner()
-                                chat.add_entry(assistant)
-                                assistant_added = True
-                            assistant.append_text(before)
-                        _in_tool_call_tag = True
-                        _saw_tool_call_this_turn = True
-
-                    if _in_tool_call_tag:
-                        if "</tool_call>" in _raw_text_buffer:
-                            _, _, _raw_text_buffer = _raw_text_buffer.partition("</tool_call>")
-                            _in_tool_call_tag = False
-                        else:
-                            _raw_text_buffer = ""
-                        continue
-
-                    # ── Safety: strip any remaining think tags ──
-                    for _tag in ("<think>", "</think>", "<thinking>", "</thinking>"):
-                        _raw_text_buffer = _raw_text_buffer.replace(_tag, "")
-
-                    # ── Normal text — output to assistant ──
-                    if _raw_text_buffer:
-                        # Hold back potential partial tags
-                        last_lt = _raw_text_buffer.rfind("<")
-                        if last_lt >= 0 and ">" not in _raw_text_buffer[last_lt:]:
-                            flush = _raw_text_buffer[:last_lt]
-                            _raw_text_buffer = _raw_text_buffer[last_lt:]
-                        else:
-                            flush = _raw_text_buffer
-                            _raw_text_buffer = ""
-                        if flush:
-                            if not assistant_added:
-                                await remove_spinner()
-                                chat.add_entry(assistant)
-                                assistant_added = True
-                            assistant.append_text(flush)
+                                assistant.append_text(parsed_ev.text)
+                        elif parsed_ev.kind == StreamEventKind.TOOL_CALL:
+                            # Flush any pending thinking before the tool
+                            # call (so it's rendered in the right order).
+                            if thinking_buffer.strip():
+                                elapsed_t = time.monotonic() - thinking_start
+                                tokens_t = len(thinking_buffer) // 4
+                                chat.add_entry(
+                                    ThinkingBlock(thinking_buffer, elapsed_t, tokens_t)
+                                )
+                                thinking_buffer = ""
+                            # The runtime parser will re-detect and
+                            # dispatch the call; TUI just records the
+                            # fact for the empty-response diagnostic.
+                            _saw_tool_call_this_turn = True
                     chat.resume_auto_scroll()
 
                 elif isinstance(event, StreamThinkingDelta):
@@ -1663,18 +1596,22 @@ class LLMCodeTUI(App):  # noqa: E302
             input_bar.disabled = False
             status.is_streaming = False
 
-        # Flush any remaining buffers after stream ends
+        # Flush any remaining buffered content from the shared parser
+        for parsed_ev in _stream_parser.flush():
+            if parsed_ev.kind == StreamEventKind.THINKING:
+                thinking_buffer += parsed_ev.text
+            elif parsed_ev.kind == StreamEventKind.TEXT and parsed_ev.text:
+                if not assistant_added:
+                    chat.add_entry(assistant)
+                    assistant_added = True
+                assistant.append_text(parsed_ev.text)
+            elif parsed_ev.kind == StreamEventKind.TOOL_CALL:
+                _saw_tool_call_this_turn = True
+
         if thinking_buffer.strip():
             elapsed_t = time.monotonic() - thinking_start
             tokens_t = len(thinking_buffer) // 4
             chat.add_entry(ThinkingBlock(thinking_buffer, elapsed_t, tokens_t))
-
-        if _raw_text_buffer.strip():
-            if not assistant_added:
-                chat.add_entry(assistant)
-                assistant_added = True
-            assistant.append_text(_raw_text_buffer)
-            _raw_text_buffer = ""
 
         # If no text was ever displayed but we DO have thinking content,
         # surface the thinking as the answer. Reasoning models (Qwen3,
