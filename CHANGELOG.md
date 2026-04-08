@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Refactored
+- TelemetryConfig is now declared in exactly one place
+  (llm_code/runtime/telemetry.py) and re-exported from
+  llm_code/runtime/config.py for backward compatibility. Eliminates a
+  duplicate dataclass that previously required manual field synchronization
+  between the two copies and a duck-typed bridging block in tui/app.py.
+- tui/app.py now passes RuntimeConfig.telemetry straight into Telemetry()
+  instead of reconstructing it field by field. Adding a new TelemetryConfig
+  field no longer requires three coordinated edits.
+
 ## v0.1.0 (2026-04-03) — Production Cleanup
 
 ### Changed
