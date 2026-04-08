@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Added
+- Agent decision tracing:
+  - Telemetry.span(name, **attrs) — canonical context-manager primitive for
+    nested spans (replaces the previous flat-root design)
+  - Telemetry.trace_llm_completion(...) — opens an llm.completion span with
+    prompt + completion previews (truncated to 4 KB), provider, finish reason
+  - Optional Langfuse export: when LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY
+    are set (env or config), spans are also forwarded to Langfuse alongside
+    the OTLP exporter via langfuse.otel.LangfuseSpanProcessor
+  - Each conversation turn is now wrapped in an agent.turn parent span; the
+    LLM call and every tool call become children of that span, forming a
+    tree visible in Jaeger / Langfuse / any OTel-compatible UI
+  - New optional dependency group: pip install 'llm-code[tracing]'
+
+### Changed
+- TelemetryConfig now has langfuse_public_key, langfuse_secret_key,
+  langfuse_host fields. The config parser falls back to environment variables
+  with the same names (uppercase) when the dict keys are absent.
+
 ### Refactored
 - TelemetryConfig is now declared in exactly one place
   (llm_code/runtime/telemetry.py) and re-exported from
