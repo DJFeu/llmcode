@@ -14,6 +14,13 @@
   populates `_last_input_tokens` / `_max_input_tokens` after every LLM stream.
 - `thinking_mode` builtin hook is now consumed — `_thinking_boost_active` doubles
   the next turn's `thinking_budget` (capped at provider max).
+- Dynamic delegation prompt section: when the conversation runner has live
+  tools and routed skills, the system prompt now includes an `## Active
+  Capabilities` section with three subsections — Tools by Capability (grouped
+  read/search/write/exec/lsp/web/agent), Key Triggers (skill triggers + names),
+  and Skills by Category (grouped by skill's first tag). Pure module
+  `llm_code/runtime/dynamic_prompt.py`. Byte-budget guard caps the section at
+  8 KB by default to protect cache stability.
 
 ### Fixed
 - `rules_injector` no longer reads `CLAUDE.md` / `AGENTS.md` from ancestor

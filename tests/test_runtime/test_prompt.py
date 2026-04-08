@@ -200,3 +200,86 @@ class TestSystemPromptBuilderCacheAndSkills:
         result = SystemPromptBuilder().build(ctx)
         boundary_idx = result.index(self._CACHE_MARKER)
         assert result.index("Use snake_case.") > boundary_idx
+
+
+def test_build_includes_active_capabilities_when_tools_present() -> None:
+    builder = SystemPromptBuilder()
+    ctx = ProjectContext(
+        cwd=Path("/tmp"),
+        is_git_repo=False,
+        git_status="",
+        instructions="",
+    )
+    tools = (
+        ToolDefinition(
+            name="read_file",
+            description="Read a file from disk",
+            input_schema={"type": "object"},
+        ),
+        ToolDefinition(
+            name="bash",
+            description="Run a shell command",
+            input_schema={"type": "object"},
+        ),
+    )
+    out = builder.build(context=ctx, tools=tools, native_tools=True)
+    assert "## Active Capabilities" in out
+    assert "read_file" in out
+    assert "bash" in out
+
+
+def test_build_includes_active_capabilities_when_skills_present() -> None:
+    builder = SystemPromptBuilder()
+    ctx = ProjectContext(
+        cwd=Path("/tmp"),
+        is_git_repo=False,
+        git_status="",
+        instructions="",
+    )
+    s = Skill(
+        name="brainstorming",
+        description="explore design before coding",
+        content="(body)",
+        tags=("planning",),
+    )
+    out = builder.build(context=ctx, routed_skills=(s,))
+    assert "## Active Capabilities" in out
+    assert "Key Triggers" in out
+    assert "brainstorming" in out
+
+
+def test_build_omits_active_capabilities_when_nothing_to_show() -> None:
+    builder = SystemPromptBuilder()
+    ctx = ProjectContext(
+        cwd=Path("/tmp"),
+        is_git_repo=False,
+        git_status="",
+        instructions="",
+    )
+    out = builder.build(context=ctx)
+    assert "## Active Capabilities" not in out
+
+
+def test_active_capabilities_section_renders_before_active_skills() -> None:
+    builder = SystemPromptBuilder()
+    ctx = ProjectContext(
+        cwd=Path("/tmp"),
+        is_git_repo=False,
+        git_status="",
+        instructions="",
+    )
+    tools = (
+        ToolDefinition(
+            name="read_file",
+            description="Read a file",
+            input_schema={"type": "object"},
+        ),
+    )
+    s = Skill(
+        name="brainstorming",
+        description="explore design",
+        content="(skill body)",
+        tags=("planning",),
+    )
+    out = builder.build(context=ctx, tools=tools, routed_skills=(s,))
+    assert out.index("## Active Capabilities") < out.index("## Active Skills")
