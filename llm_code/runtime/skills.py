@@ -39,6 +39,10 @@ class Skill:
     # Dynamic slash commands declared in frontmatter.
     # Each entry is a dict with keys: name, description, argument_hint (optional).
     commands: tuple[dict, ...] = ()
+    # Names of MCP servers (from RuntimeConfig.mcp.on_demand) this skill
+    # requires. Spawned at ConversationRuntime init under a skill-scoped
+    # owner id; auto-torn-down at session end via stop_all.
+    mcp_servers: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         # If trigger not set (empty string), default it to name.
@@ -129,6 +133,13 @@ class SkillLoader:
                 })
             commands = tuple(parsed_cmds)
 
+        mcp_servers_raw = meta.get("mcp_servers", [])
+        mcp_servers: tuple[str, ...] = ()
+        if isinstance(mcp_servers_raw, list):
+            mcp_servers = tuple(
+                str(item) for item in mcp_servers_raw if isinstance(item, (str, int))
+            )
+
         hooks_raw = meta.get("hooks", {})
         hooks: tuple[tuple[str, str], ...] = ()
         if isinstance(hooks_raw, dict):
@@ -152,6 +163,7 @@ class SkillLoader:
             min_version=min_version,
             hooks=hooks,
             commands=commands,
+            mcp_servers=mcp_servers,
         )
 
     @staticmethod

@@ -16,7 +16,16 @@ EXPECTED_PERSONAS = {
     "metis",
     "momus",
     "multimodal-looker",
+    "web-researcher",
 }
+
+
+class TestWebResearcher:
+    def test_web_researcher_loaded(self):
+        assert "web-researcher" in BUILTIN_PERSONAS
+
+    def test_web_researcher_mcp_servers(self):
+        assert BUILTIN_PERSONAS["web-researcher"].mcp_servers == ("tavily", "browser")
 
 
 class TestBuiltinPersonas:

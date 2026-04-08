@@ -185,6 +185,22 @@ class ConversationRuntime:
                 model=getattr(config, "model", ""),
             )
         self._mcp_manager = mcp_manager
+        # Pending skill-scoped MCP spawns — built from skill.mcp_servers.
+        # Actual spawn is deferred to the first run_turn so we have an
+        # event loop + approval sink in place. Failures are logged and
+        # never block runtime startup.
+        self._pending_skill_mcp_spawns: list[tuple[str, str]] = []
+        self._skill_mcp_spawned: bool = False
+        try:
+            if skills is not None:
+                _all_for_mcp = tuple(getattr(skills, "auto_skills", ()) or ()) + tuple(
+                    getattr(skills, "command_skills", ()) or ()
+                )
+                for _sk in _all_for_mcp:
+                    for _srv in getattr(_sk, "mcp_servers", ()) or ():
+                        self._pending_skill_mcp_spawns.append((_sk.name, _srv))
+        except Exception as _exc:  # pragma: no cover - defensive
+            logger.warning("skill MCP spawn queue build failed: %s", _exc)
         # Callback for MCP approval requests from non-root agents.
         # When None, request_mcp_approval auto-denies (CLI-safe default).
         self._mcp_approval_callback: Any = None
@@ -472,9 +488,76 @@ class ConversationRuntime:
         if self._permission_future is not None and not self._permission_future.done():
             self._permission_future.set_result(response)
 
+    async def _spawn_pending_skill_mcp_servers(self) -> None:
+        """Spawn on-demand MCP servers declared by loaded skills.
+
+        Runs at most once per session (idempotent). Each server is started
+        under ``skill:<skill_name>`` so auto-cleanup happens at session end
+        via ``McpServerManager.stop_all``. Failures are logged and swallowed
+        so skill MCP issues never break the runtime.
+        """
+        if self._skill_mcp_spawned:
+            return
+        self._skill_mcp_spawned = True
+        if not self._pending_skill_mcp_spawns:
+            return
+        mcp_manager = self._mcp_manager
+        if mcp_manager is None or not hasattr(mcp_manager, "start_server"):
+            return
+        mcp_cfg = getattr(self._config, "mcp", None)
+        on_demand = getattr(mcp_cfg, "on_demand", {}) or {}
+        from llm_code.mcp.types import McpServerConfig
+
+        for skill_name, server_name in self._pending_skill_mcp_spawns:
+            raw = on_demand.get(server_name)
+            if raw is None:
+                logger.warning(
+                    "skill %s declares MCP server '%s' not in mcp.on_demand — skipping",
+                    skill_name,
+                    server_name,
+                )
+                continue
+            try:
+                if isinstance(raw, McpServerConfig):
+                    cfg = raw
+                elif isinstance(raw, dict):
+                    cfg = McpServerConfig(
+                        command=raw.get("command"),
+                        args=tuple(raw.get("args", ()) or ()),
+                        env=raw.get("env"),
+                        transport_type=raw.get("transport_type", "stdio"),
+                        url=raw.get("url"),
+                        headers=raw.get("headers"),
+                    )
+                else:
+                    logger.warning(
+                        "skill %s MCP server '%s' has invalid config shape",
+                        skill_name,
+                        server_name,
+                    )
+                    continue
+                await mcp_manager.start_server(
+                    server_name,
+                    cfg,
+                    owner_agent_id=f"skill:{skill_name}",
+                    approval_callback=self.request_mcp_approval,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "skill %s MCP server '%s' spawn failed: %s",
+                    skill_name,
+                    server_name,
+                    exc,
+                )
+
     async def run_turn(self, user_input: str, images: list | None = None, active_skill_content: str | None = None) -> AsyncIterator[StreamEvent]:
         """Run one user turn (may involve multiple LLM calls for tool use)."""
         logger.debug("Starting turn: %s", user_input[:80])
+        # First-turn lazy spawn of skill-declared on-demand MCP servers.
+        try:
+            await self._spawn_pending_skill_mcp_servers()
+        except Exception as _exc:  # pragma: no cover - defensive
+            logger.warning("skill MCP spawn failed: %s", _exc)
         _turn_start = time.monotonic()
         self._fire_hook("prompt_submit", {"text": user_input[:200]})
         # Keyword-driven action detection (Feature 6, opt-in via keywords.enabled).

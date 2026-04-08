@@ -312,6 +312,40 @@ Sources: Official (`anthropics/claude-plugins-official`), Community, npm, GitHub
 3. `.llmcode/config.local.json` — Local (gitignored)
 4. CLI flags / env vars
 
+### Lazy / scoped MCP servers
+
+`mcpServers` now supports a split schema so heavy MCP servers start only
+when a persona or skill that needs them is invoked (gated by an in-TUI
+approval prompt). Legacy flat configs still work — every entry is treated
+as `always_on`.
+
+```json
+{
+  "mcpServers": {
+    "always_on": {
+      "filesystem": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] }
+    },
+    "on_demand": {
+      "tavily": {
+        "command": "npx",
+        "args": ["-y", "tavily-mcp"],
+        "env": { "TAVILY_API_KEY": "$TAVILY_API_KEY" }
+      },
+      "browser": {
+        "command": "npx",
+        "args": ["-y", "@browsermcp/mcp"]
+      }
+    }
+  }
+}
+```
+
+A persona declares which `on_demand` servers it needs via its
+`mcp_servers` tuple (see `llm_code/swarm/personas/web_researcher.py`);
+a skill can declare the same via an `mcp_servers:` list in its SKILL.md
+frontmatter. Persona-scoped servers are torn down when the persona
+finishes; skill-scoped servers live for the session.
+
 ### Optional features
 
 ```bash

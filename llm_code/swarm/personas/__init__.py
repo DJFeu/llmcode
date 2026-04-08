@@ -29,6 +29,9 @@ class AgentPersona:
     temperature: float = 0.2
     allowed_tools: tuple[str, ...] = field(default_factory=tuple)
     denied_tools: tuple[str, ...] = field(default_factory=tuple)
+    # Names of MCP servers (from RuntimeConfig.mcp.on_demand) this persona
+    # requires. Spawned lazily before the persona runs, torn down after.
+    mcp_servers: tuple[str, ...] = field(default_factory=tuple)
 
 
 from llm_code.swarm.personas.sisyphus import SISYPHUS  # noqa: E402
@@ -40,6 +43,7 @@ from llm_code.swarm.personas.explore import EXPLORE  # noqa: E402
 from llm_code.swarm.personas.metis import METIS  # noqa: E402
 from llm_code.swarm.personas.momus import MOMUS  # noqa: E402
 from llm_code.swarm.personas.multimodal_looker import MULTIMODAL_LOOKER  # noqa: E402
+from llm_code.swarm.personas.web_researcher import WEB_RESEARCHER  # noqa: E402
 
 BUILTIN_PERSONAS: dict[str, AgentPersona] = {
     p.name: p
@@ -53,6 +57,7 @@ BUILTIN_PERSONAS: dict[str, AgentPersona] = {
         METIS,
         MOMUS,
         MULTIMODAL_LOOKER,
+        WEB_RESEARCHER,
     )
 }
 

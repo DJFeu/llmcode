@@ -13,6 +13,48 @@ from llm_code.harness.config import HarnessConfig, HarnessControl
 
 
 @dataclass(frozen=True)
+class MCPConfig:
+    """Scoped MCP server configs.
+
+    - ``always_on``: servers started at session init (legacy behavior).
+    - ``on_demand``: servers spawned lazily by personas/skills via the
+      user-approval flow. NOT started at session init.
+
+    Backward compat: if a user's ``~/.llmcode/mcp.json`` (or the
+    ``mcpServers`` block in the main config) is a flat dict with no
+    ``always_on``/``on_demand`` keys, every entry is treated as
+    ``always_on`` to match pre-lazy-MCP behavior.
+    """
+
+    always_on: dict = field(default_factory=dict)
+    on_demand: dict = field(default_factory=dict)
+
+
+def _parse_mcp_config(raw: dict) -> MCPConfig:
+    """Parse either the new split schema or a legacy flat dict.
+
+    New schema::
+
+        {"always_on": {...}, "on_demand": {...}}
+
+    Legacy schema::
+
+        {"filesystem": {...}, "tavily": {...}}   # all treated as always_on
+    """
+    if not isinstance(raw, dict) or not raw:
+        return MCPConfig()
+    if "always_on" in raw or "on_demand" in raw:
+        always = raw.get("always_on") or {}
+        on_demand = raw.get("on_demand") or {}
+        if not isinstance(always, dict):
+            always = {}
+        if not isinstance(on_demand, dict):
+            on_demand = {}
+        return MCPConfig(always_on=dict(always), on_demand=dict(on_demand))
+    return MCPConfig(always_on=dict(raw), on_demand={})
+
+
+@dataclass(frozen=True)
 class HookConfig:
     event: str          # "pre_tool_use" | "post_tool_use" | "on_stop" | glob pattern
     command: str
@@ -276,6 +318,7 @@ class RuntimeConfig:
     vision: VisionConfig = field(default_factory=VisionConfig)
     model_routing: ModelRoutingConfig = field(default_factory=ModelRoutingConfig)
     mcp_servers: dict = field(default_factory=dict)
+    mcp: MCPConfig = field(default_factory=MCPConfig)
     registries: dict = field(default_factory=dict)
     skills_dirs: tuple[str, ...] = ()
     lsp_servers: dict = field(default_factory=dict)
@@ -568,7 +611,13 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         native_tools=data.get("native_tools", True),
         vision=vision,
         model_routing=model_routing,
-        mcp_servers=data.get("mcpServers", {}),
+        mcp_servers=(
+            # Back-compat flat view: always_on entries only (what the TUI
+            # currently starts at init). on_demand servers are hidden from
+            # the flat view so the TUI auto-start loop skips them.
+            _parse_mcp_config(data.get("mcpServers", {})).always_on
+        ),
+        mcp=_parse_mcp_config(data.get("mcpServers", {})),
         registries=data.get("registries", {}),
         skills_dirs=tuple(data.get("skills_dirs", [])),
         lsp_servers=data.get("lspServers", {}),
