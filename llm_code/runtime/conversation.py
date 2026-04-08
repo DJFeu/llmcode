@@ -47,6 +47,29 @@ if TYPE_CHECKING:
     from llm_code.tools.registry import ToolRegistry
 
 
+def _build_prompt_preview(messages, max_chars: int = 2000) -> str:
+    """Build a short preview of the most recent user/assistant turns."""
+    if not messages:
+        return ""
+    tail = messages[-3:]
+    parts: list[str] = []
+    per_msg_cap = max(200, max_chars // max(1, len(tail)))
+    for msg in tail:
+        role = getattr(msg, "role", "?")
+        content = getattr(msg, "content", "")
+        if isinstance(content, (list, tuple)):
+            text_chunks = []
+            for block in content:
+                txt = getattr(block, "text", None)
+                if txt:
+                    text_chunks.append(txt)
+            content = " ".join(text_chunks)
+        text = str(content)[:per_msg_cap]
+        parts.append(f"[{role}] {text}")
+    out = "\n".join(parts)
+    return out[:max_chars]
+
+
 def build_thinking_extra_body(
     thinking_config,
     *,
@@ -551,6 +574,17 @@ class ConversationRuntime:
                 )
 
     async def run_turn(self, user_input: str, images: list | None = None, active_skill_content: str | None = None) -> AsyncIterator[StreamEvent]:
+        """Run one user turn wrapped in an agent.turn span for telemetry nesting."""
+        session_id = getattr(self.session, "session_id", "") or getattr(self.session, "id", "")
+        with self._telemetry.span(
+            "agent.turn",
+            session_id=session_id,
+            model=getattr(self, "_active_model", "") or getattr(self._config, "model", ""),
+        ):
+            async for event in self._run_turn_body(user_input, images, active_skill_content):
+                yield event
+
+    async def _run_turn_body(self, user_input: str, images: list | None = None, active_skill_content: str | None = None) -> AsyncIterator[StreamEvent]:
         """Run one user turn (may involve multiple LLM calls for tool use)."""
         logger.debug("Starting turn: %s", user_input[:80])
         # First-turn lazy spawn of skill-declared on-demand MCP servers.
@@ -773,8 +807,16 @@ class ConversationRuntime:
 
             # Error recovery: tool choice fallback + reactive compact
             self._fire_hook("http_request", {"model": self._active_model, "url": getattr(self._config, "provider_base_url", "")})
+            _prompt_preview = _build_prompt_preview(self.session.messages)
+            _llm_span_cm = self._telemetry.trace_llm_completion(
+                session_id=getattr(self.session, "session_id", "") or getattr(self.session, "id", ""),
+                model=self._active_model,
+                prompt_preview=_prompt_preview,
+                provider=getattr(self._config, "provider", "") or "",
+            )
             try:
-                stream = await self._provider.stream_message(request)
+                with _llm_span_cm:
+                    stream = await self._provider.stream_message(request)
             except Exception as exc:
                 _exc_str = str(exc)
                 self._fire_hook("http_error", {"error": _exc_str[:200], "model": self._active_model})
@@ -1182,13 +1224,9 @@ class ConversationRuntime:
             accumulated_usage.input_tokens,
             accumulated_usage.output_tokens,
         )
-        self._telemetry.trace_turn(
-            session_id=getattr(self.session, "session_id", ""),
-            model=self._active_model,
-            input_tokens=accumulated_usage.input_tokens,
-            output_tokens=accumulated_usage.output_tokens,
-            duration_ms=_turn_duration_ms,
-        )
+        # Telemetry: per-turn data now lives on the wrapping agent.turn span
+        # (enriched via trace_llm_completion children). Legacy trace_turn is
+        # kept on Telemetry for backwards compatibility but not called here.
 
         # Auto-checkpoint: persist session state after each turn completes
         if self._recovery_checkpoint is not None:
