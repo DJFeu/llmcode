@@ -1,6 +1,8 @@
 """LspCallHierarchyTool tests."""
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from pydantic import ValidationError
 
@@ -150,6 +152,51 @@ def test_call_hierarchy_no_client(tmp_path) -> None:
         {"file": str(weird), "line": 0, "column": 0, "direction": "both"}
     )
     assert result.is_error is True
+
+
+class _GatedClient:
+    """Fake client whose incoming/outgoing calls block until released."""
+
+    def __init__(self) -> None:
+        self.incoming_started = asyncio.Event()
+        self.outgoing_started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def prepare_call_hierarchy(self, uri, line, col):
+        return [_item("foo")]
+
+    async def incoming_calls(self, item):
+        self.incoming_started.set()
+        await self.release.wait()
+        return [_item("caller")]
+
+    async def outgoing_calls(self, item):
+        self.outgoing_started.set()
+        await self.release.wait()
+        return [_item("callee")]
+
+
+def test_call_hierarchy_both_runs_in_parallel(py_file) -> None:
+    """direction=both must dispatch incoming and outgoing concurrently."""
+    client = _GatedClient()
+    tool = LspCallHierarchyTool(_FakeManager(client))
+
+    async def run() -> str:
+        task = asyncio.create_task(
+            tool.execute_async(
+                {"file": str(py_file), "line": 0, "column": 4, "direction": "both"}
+            )
+        )
+        await asyncio.wait_for(client.incoming_started.wait(), timeout=1.0)
+        await asyncio.wait_for(client.outgoing_started.wait(), timeout=1.0)
+        client.release.set()
+        result = await task
+        return result.output
+
+    out = asyncio.run(run())
+    # Output ordering must be deterministic: incoming first, then outgoing.
+    assert out.index("Incoming") < out.index("Outgoing")
+    assert "caller" in out and "callee" in out
 
 
 def test_call_hierarchy_input_model_rejects_bad_direction() -> None:

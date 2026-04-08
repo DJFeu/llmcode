@@ -666,16 +666,28 @@ class LspCallHierarchyTool(Tool):
         target = items[0]
         sections: list[str] = [f"Symbol: {target.kind} {target.name} @ {target.file}:{target.line}:{target.column}"]
 
-        if direction in ("incoming", "both"):
-            callers = await client.incoming_calls(target)
+        import asyncio as _asyncio
+
+        want_in = direction in ("incoming", "both")
+        want_out = direction in ("outgoing", "both")
+
+        async def _noop() -> list:
+            return []
+
+        # Run both directions concurrently when both are requested.
+        callers, callees = await _asyncio.gather(
+            client.incoming_calls(target) if want_in else _noop(),
+            client.outgoing_calls(target) if want_out else _noop(),
+        )
+
+        if want_in:
             if callers:
                 sections.append("Incoming (callers):")
                 sections.extend(f"  {c.kind} {c.name}\t{c.file}:{c.line}:{c.column}" for c in callers)
             else:
                 sections.append("Incoming (callers): (none)")
 
-        if direction in ("outgoing", "both"):
-            callees = await client.outgoing_calls(target)
+        if want_out:
             if callees:
                 sections.append("Outgoing (callees):")
                 sections.extend(f"  {c.kind} {c.name}\t{c.file}:{c.line}:{c.column}" for c in callees)
