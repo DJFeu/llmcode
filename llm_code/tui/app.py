@@ -26,6 +26,65 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _is_cjk_dominant(text: str) -> bool:
+    """Return True if the text contains any CJK characters.
+
+    Used to pick message language in the empty-response handler. We use a
+    "any CJK present" rule rather than a percentage threshold because
+    multilingual users routinely mix English technical terms into
+    otherwise-Chinese prompts (e.g. "解釋 quicksort 演算法",
+    "為什麼 Python 的 list 是 O(1) append"). If the user typed even one
+    Chinese character, they will understand a Chinese diagnostic message.
+    Pure English users never emit CJK characters, so they stay English.
+    """
+    if not text:
+        return False
+    for ch in text:
+        code = ord(ch)
+        # CJK Unified Ideographs, CJK Extension A, Hiragana, Katakana,
+        # Hangul Syllables, CJK Symbols and Punctuation, fullwidth forms
+        if (
+            0x3000 <= code <= 0x303F
+            or 0x3040 <= code <= 0x309F
+            or 0x30A0 <= code <= 0x30FF
+            or 0x3400 <= code <= 0x4DBF
+            or 0x4E00 <= code <= 0x9FFF
+            or 0xAC00 <= code <= 0xD7AF
+            or 0xFF00 <= code <= 0xFFEF
+        ):
+            return True
+    return False
+
+
+_EMPTY_RESPONSE_TOOL_CALL_EN = (
+    "(The model tried to invoke a tool to answer this but produced no visible reply. "
+    "If this is a general-knowledge or chitchat query, try rephrasing to ask for a "
+    "direct answer — e.g. add \"answer directly\" or \"don't use tools\".)"
+)
+_EMPTY_RESPONSE_TOOL_CALL_ZH = (
+    "(模型嘗試呼叫工具回答這個問題,但沒有產生可見回覆。"
+    "如果這是一般知識/閒聊查詢,請試著更明確地表達你想要直接的回答,"
+    "例如加上「請直接回答」或「不要用工具」。)"
+)
+_EMPTY_RESPONSE_THINKING_EN = (
+    "(The model produced no visible reply — thinking may have exhausted the "
+    "output token budget. Try rephrasing or increasing the context window.)"
+)
+_EMPTY_RESPONSE_THINKING_ZH = (
+    "(模型沒有產生任何回應 — 可能 thinking 用光輸出 token。"
+    "試試重新表達或加長 context window。)"
+)
+
+
+def _empty_response_message(*, saw_tool_call: bool, user_input: str) -> str:
+    """Pick the right empty-response diagnostic message, matching the
+    user's input language (CJK vs non-CJK)."""
+    zh = _is_cjk_dominant(user_input)
+    if saw_tool_call:
+        return _EMPTY_RESPONSE_TOOL_CALL_ZH if zh else _EMPTY_RESPONSE_TOOL_CALL_EN
+    return _EMPTY_RESPONSE_THINKING_ZH if zh else _EMPTY_RESPONSE_THINKING_EN
+
+
 class LLMCodeTUI(App):
     """Fullscreen TUI matching Claude Code's visual experience."""
 
@@ -1541,17 +1600,13 @@ class LLMCodeTUI(App):
             # (now that thinking parsing is robust) is that the model emitted
             # only a <tool_call> XML block — which gets stripped from the
             # visible stream — for a query that doesn't actually need a tool.
-            if _saw_tool_call_this_turn:
-                chat.add_entry(AssistantText(
-                    "(模型嘗試呼叫工具回答這個問題,但沒有產生可見回覆。"
-                    "如果這是一般知識/閒聊查詢,請試著更明確地表達你想要直接的回答,"
-                    "例如加上「請直接回答」或「不要用工具」。)"
-                ))
-            else:
-                chat.add_entry(AssistantText(
-                    "(模型沒有產生任何回應 — 可能 thinking 用光輸出 token。"
-                    "試試重新表達或加長 context window。)"
-                ))
+            # Pick message language to match the user's input language.
+            chat.add_entry(AssistantText(
+                _empty_response_message(
+                    saw_tool_call=_saw_tool_call_this_turn,
+                    user_input=user_input,
+                )
+            ))
 
         elapsed = time.monotonic() - start
         cost = self._cost_tracker.format_cost() if self._cost_tracker else ""
