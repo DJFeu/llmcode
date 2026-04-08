@@ -9,7 +9,11 @@ class AgentRole:
     name: str
     description: str
     system_prompt_prefix: str
-    allowed_tools: frozenset[str]
+    # Sentinel convention:
+    #   None           -> unrestricted (full inheritance from parent registry)
+    #   frozenset()    -> deny-all (no tools allowed)
+    #   frozenset({…}) -> strict whitelist
+    allowed_tools: frozenset[str] | None
     model_key: str  # key in config.model_routing
 
 
@@ -84,7 +88,7 @@ BUILD_ROLE = AgentRole(
         "to a working solution; spawn subagents only when a task is clearly "
         "independent and can be parallelized."
     ),
-    allowed_tools=frozenset(),
+    allowed_tools=None,
     model_key="primary",
 )
 
@@ -131,11 +135,14 @@ BUILT_IN_ROLES: dict[str, AgentRole] = {
 def is_tool_allowed_for_role(role: AgentRole | None, tool_name: str) -> bool:
     """Return True if tool_name is callable under role.
 
-    A None role or an empty allowed_tools set is treated as "no restriction"
-    (the build agent default). Any non-empty set is enforced as a strict whitelist.
+    Sentinel rules:
+      * role is None              -> unrestricted (True)
+      * role.allowed_tools is None -> unrestricted (True)
+      * role.allowed_tools == frozenset() -> deny-all (False)
+      * otherwise -> strict whitelist membership
     """
     if role is None:
         return True
-    if not role.allowed_tools:
+    if role.allowed_tools is None:
         return True
     return tool_name in role.allowed_tools

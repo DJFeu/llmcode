@@ -58,12 +58,18 @@ def test_filtered_get_returns_none_for_disallowed_tools(populated_registry: Tool
     assert child.get("bash") is None
 
 
-def test_filtered_with_empty_set_returns_unrestricted_copy(populated_registry: ToolRegistry) -> None:
-    """Empty set is the sentinel for 'no whitelist' (matches build role semantics)."""
-    child = populated_registry.filtered(set())
+def test_filtered_with_none_returns_unrestricted_copy(populated_registry: ToolRegistry) -> None:
+    """None is the sentinel for 'no whitelist' (matches build role semantics)."""
+    child = populated_registry.filtered(None)
     assert {t.name for t in child.all_tools()} == {
         "read_file", "write_file", "bash", "lsp_hover",
     }
+
+
+def test_filtered_with_empty_set_is_deny_all(populated_registry: ToolRegistry) -> None:
+    """Empty frozenset is the deny-all sentinel — child contains no tools."""
+    child = populated_registry.filtered(frozenset())
+    assert child.all_tools() == ()
 
 
 def test_filtered_does_not_mutate_parent(populated_registry: ToolRegistry) -> None:

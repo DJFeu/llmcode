@@ -51,15 +51,19 @@ class TestAgentRoleDataclass:
             assert role.name
             assert role.description
             assert role.system_prompt_prefix
-            # BUILD_ROLE uses empty frozenset as the "unrestricted" sentinel;
-            # all other roles enforce a non-empty whitelist.
-            if role.name != "build":
+            # BUILD_ROLE uses None as the "unrestricted" sentinel; all other
+            # roles enforce a non-empty whitelist.
+            if role.name == "build":
+                assert role.allowed_tools is None
+            else:
                 assert role.allowed_tools
             assert role.model_key
 
-    def test_allowed_tools_is_frozenset(self):
+    def test_allowed_tools_is_frozenset_or_none(self):
         for role in BUILT_IN_ROLES.values():
-            assert isinstance(role.allowed_tools, frozenset)
+            assert role.allowed_tools is None or isinstance(
+                role.allowed_tools, frozenset
+            )
 
 
 class TestExploreRole:

@@ -19,9 +19,45 @@ def test_built_in_roles_contains_all_five() -> None:
     assert set(BUILT_IN_ROLES.keys()) == expected
 
 
-def test_build_role_has_empty_whitelist_meaning_unrestricted() -> None:
-    assert BUILD_ROLE.allowed_tools == frozenset()
+def test_build_role_has_none_whitelist_meaning_unrestricted() -> None:
+    assert BUILD_ROLE.allowed_tools is None
     assert BUILD_ROLE.name == "build"
+
+
+def test_deny_all_sentinel_is_empty_frozenset() -> None:
+    """An explicitly empty frozenset is the deny-all sentinel."""
+    from llm_code.tools.agent_roles import AgentRole
+    from llm_code.tools.registry import ToolRegistry
+    from llm_code.tools.base import PermissionLevel, Tool, ToolResult
+
+    deny_all = AgentRole(
+        name="deny",
+        description="deny",
+        system_prompt_prefix="deny",
+        allowed_tools=frozenset(),
+        model_key="sub_agent",
+    )
+    assert is_tool_allowed_for_role(deny_all, "read_file") is False
+    assert is_tool_allowed_for_role(deny_all, "anything") is False
+
+    class _Stub(Tool):
+        @property
+        def name(self) -> str: return "read_file"
+        @property
+        def description(self) -> str: return ""
+        @property
+        def input_schema(self) -> dict: return {"type": "object"}
+        @property
+        def required_permission(self) -> PermissionLevel:
+            return PermissionLevel.READ_ONLY
+        def execute(self, args: dict) -> ToolResult:
+            return ToolResult(output="")
+
+    parent = ToolRegistry()
+    parent.register(_Stub())
+    child = parent.filtered(deny_all.allowed_tools)
+    assert child.get("read_file") is None
+    assert len(child.all_tools()) == 0
 
 
 def test_general_role_denies_todowrite() -> None:
