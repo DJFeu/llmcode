@@ -146,3 +146,116 @@ class TestXmlTagParsing:
         result = parse_tool_calls(text, None)
         assert len(result) == 2
         assert result[0].id != result[1].id
+
+
+# ---------------------------------------------------------------------------
+# Hermes / Qwen3 function-calling format
+#
+# vLLM-served Qwen3 (and many other tool-fine-tuned local models) emit
+# tool calls inside <tool_call> using the Hermes function-calling syntax,
+# NOT the JSON-payload format the original parser supported.
+# ---------------------------------------------------------------------------
+
+class TestHermesFormatParsing:
+    def test_single_hermes_call_with_one_param(self):
+        text = (
+            "<tool_call>\n"
+            "<function=bash>\n"
+            "<parameter=command>\n"
+            "ls -la\n"
+            "</parameter>\n"
+            "</function>\n"
+            "</tool_call>"
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "bash"
+        assert result[0].args == {"command": "ls -la"}
+        assert result[0].source == "xml_tag"
+
+    def test_hermes_call_with_multiple_params(self):
+        text = (
+            "<tool_call>\n"
+            "<function=web_search>\n"
+            "<parameter=query>\n"
+            "今日熱門新聞\n"
+            "</parameter>\n"
+            "<parameter=max_results>\n"
+            "5\n"
+            "</parameter>\n"
+            "</function>\n"
+            "</tool_call>"
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "web_search"
+        # Numeric strings stay as strings; the tool's pydantic input model
+        # will coerce them. Same as native JSON would do.
+        assert result[0].args["query"] == "今日熱門新聞"
+        assert result[0].args["max_results"] in ("5", 5)
+
+    def test_hermes_call_with_no_params(self):
+        text = (
+            "<tool_call>\n"
+            "<function=git_status>\n"
+            "</function>\n"
+            "</tool_call>"
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "git_status"
+        assert result[0].args == {}
+
+    def test_hermes_param_value_preserves_internal_whitespace(self):
+        text = (
+            "<tool_call>\n"
+            "<function=write_file>\n"
+            "<parameter=path>\n"
+            "/tmp/x.py\n"
+            "</parameter>\n"
+            "<parameter=content>\n"
+            "def foo():\n    return 42\n"
+            "</parameter>\n"
+            "</function>\n"
+            "</tool_call>"
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].args["path"] == "/tmp/x.py"
+        assert "def foo():" in result[0].args["content"]
+        assert "return 42" in result[0].args["content"]
+
+    def test_hermes_and_json_mixed_in_same_response(self):
+        """Defensive: a single response should not interleave both formats,
+        but if it does, both should parse."""
+        text = (
+            '<tool_call>{"tool": "bash", "args": {"command": "echo a"}}</tool_call>'
+            "\n"
+            "<tool_call>\n<function=bash>\n<parameter=command>\necho b\n</parameter>\n</function>\n</tool_call>"
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 2
+        commands = sorted(r.args["command"] for r in result)
+        assert commands == ["echo a", "echo b"]
+
+    def test_hermes_unknown_function_name_attribute_skipped(self):
+        """Malformed Hermes block (no function= attr) should be skipped, not crash."""
+        text = (
+            "<tool_call>\n"
+            "<function>\n"
+            "<parameter=query>foo</parameter>\n"
+            "</function>\n"
+            "</tool_call>"
+        )
+        result = parse_tool_calls(text, None)
+        assert result == []
+
+    def test_hermes_multiple_calls_in_one_response(self):
+        text = (
+            "<tool_call>\n<function=glob_search>\n<parameter=pattern>\n*.py\n</parameter>\n</function>\n</tool_call>\n"
+            "<tool_call>\n<function=read_file>\n<parameter=file_path>\n/tmp/x.py\n</parameter>\n</function>\n</tool_call>"
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 2
+        assert result[0].name == "glob_search"
+        assert result[1].name == "read_file"
