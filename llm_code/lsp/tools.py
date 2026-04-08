@@ -563,8 +563,7 @@ class LspWorkspaceSymbolTool(Tool):
                 output="No LSP server is currently running. Start a project with a known marker file.",
                 is_error=True,
             )
-        import asyncio as _asyncio
-        all_results = await _asyncio.gather(
+        all_results = await asyncio.gather(
             *(c.workspace_symbol(query) for c in clients),
             return_exceptions=True,
         )
@@ -687,7 +686,6 @@ class LspCallHierarchyTool(Tool):
         target = items[0]
         sections: list[str] = [f"Symbol: {target.kind} {target.name} @ {target.file}:{target.line}:{target.column}"]
 
-        import asyncio as _asyncio
 
         want_in = direction in ("incoming", "both")
         want_out = direction in ("outgoing", "both")
@@ -696,7 +694,7 @@ class LspCallHierarchyTool(Tool):
             return []
 
         # Run both directions concurrently when both are requested.
-        callers, callees = await _asyncio.gather(
+        callers, callees = await asyncio.gather(
             client.incoming_calls(target) if want_in else _noop(),
             client.outgoing_calls(target) if want_out else _noop(),
         )
