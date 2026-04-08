@@ -16,7 +16,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-3985%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-4159%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/cold%20start-370ms-brightgreen" alt="Cold start">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
   <img src="https://img.shields.io/pypi/v/llmcode-cli" alt="PyPI">
@@ -139,13 +139,14 @@ llmcode is **deeply influenced by Claude Code's architecture** and borrows prove
 | Local model first | ✅ | ⚠️ | ❌ |
 | AGENTS.md / CLAUDE.md fallback | ✅ | ✅ | ⚠️ |
 | LLM-driven `/init` | ✅ | ✅ | ✅ |
-| Per-model system prompts | ✅ (8) | ✅ (7) | N/A |
+| Per-model system prompts | ✅ (9) | ✅ (7) | N/A |
 | **Qwen / Llama / DeepSeek tuned prompts** | ✅ | ❌ | ❌ |
 | Custom slash commands | ✅ | ✅ | ✅ |
 | Tab agent cycling | ✅ | ✅ | ❌ |
 | Skill router (auto match) | **3-tier** | manual | ❌ |
 | Memory system | **5-layer** | basic | basic |
 | Multi-agent coordinator | **synthesis-first** | task tool | ❌ |
+| Specialist personas (Sisyphus / Oracle / Atlas / …) | ✅ **9 built-in** | ⚠️ | ❌ |
 | Context overlap detection | ✅ | ❌ | ❌ |
 | Diminishing returns auto-stop | ✅ | ❌ | ❌ |
 | Subagent resume (task_id) | ✅ | ✅ | ❌ |
@@ -236,6 +237,15 @@ See [docs/coordinator.md](docs/coordinator.md) for the full tutorial.
 - **`/init`** — generate `AGENTS.md` from repo analysis
 - **`/copy`** — copy last response to clipboard
 - **`/search`** — cross-session FTS5 search
+- **`/personas`** — list specialist agents (Sisyphus refactor / Oracle deep-analysis / Atlas orchestrator / Librarian / Explore / Metis / Momus / Multimodal-Looker / WebResearcher)
+- **`/orchestrate <task>`** — category-routed persona dispatch with retry-on-failure
+- **`/profile`** — per-model token/cost breakdown for the current session
+- **`/settings`** — tabbed read-only settings panel
+- **`/export <path>`** — chunked markdown export of the conversation
+- **`/compact`** — manually compact conversation history
+- **Ctrl+P** — Quick Open fuzzy file finder
+- **Click-to-open URLs** — markdown links and bare URLs in chat are clickable (cell-aware, CJK-safe)
+- **180 spinner verbs** — Pondering, Caramelizing, Brewing… randomized per turn
 - **Background task indicator** — status bar shows running/pending tasks
 - **Vim mode** — full motions, operators, text objects
 
