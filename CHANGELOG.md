@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Dynamic delegation prompt section: when the conversation runner has live
+  tools and routed skills, the system prompt now includes an `## Active
+  Capabilities` section with three subsections — Tools by Capability (grouped
+  read/search/write/exec/lsp/web/agent), Key Triggers (skill triggers + names),
+  and Skills by Category (grouped by skill's first tag). Pure module
+  `llm_code/runtime/dynamic_prompt.py`. Byte-budget guard caps the section at
+  8 KB by default to protect cache stability.
+
 ## v0.1.0 (2026-04-03) — Production Cleanup
 
 ### Changed
