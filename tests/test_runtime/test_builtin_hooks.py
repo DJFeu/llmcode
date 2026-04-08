@@ -107,3 +107,17 @@ def test_fire_python_swallows_subscriber_exceptions() -> None:
     runner.subscribe("prompt_submit", boom)
     outcome = runner.fire_python("prompt_submit", {})
     assert any("builtin hook error" in m for m in outcome.messages)
+
+
+def test_new_themed_hooks_are_in_builtin_registry() -> None:
+    assert "context_window_monitor" in builtin_hooks.BUILTIN_HOOKS
+    assert "thinking_mode" in builtin_hooks.BUILTIN_HOOKS
+    assert "rules_injector" in builtin_hooks.BUILTIN_HOOKS
+
+
+def test_register_all_includes_new_themed_hooks() -> None:
+    runner = HookRunner()
+    builtin_hooks.register_all(runner)
+    subs = runner._subscribers.get("post_tool_use", [])
+    assert len(subs) >= 4
+    assert "prompt_submit" in runner._subscribers

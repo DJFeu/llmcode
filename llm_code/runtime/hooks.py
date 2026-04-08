@@ -104,6 +104,7 @@ def _build_env(event: str, context: dict) -> dict[str, str]:
 class HookOutcome:
     denied: bool = False
     messages: list[str] = field(default_factory=list)
+    extra_output: str = ""
 
 
 class HookRunner:
@@ -141,6 +142,8 @@ class HookRunner:
                 if result.denied:
                     return result
                 outcome.messages.extend(result.messages)
+                if result.extra_output:
+                    outcome.extra_output += result.extra_output
         return outcome
 
     # ------------------------------------------------------------------
