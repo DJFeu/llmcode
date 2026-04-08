@@ -12,6 +12,15 @@
   - `detect_lsp_servers_for_file()` walks upward from any file to its project
     root before resolving servers
   - Expanded `SERVER_REGISTRY` covers 25+ language servers (up from 4)
+- LSP call hierarchy + implementation:
+  - `LspClient.go_to_implementation()` — concrete implementations of an
+    interface, abstract method, or trait
+  - `LspClient.prepare_call_hierarchy()` / `incoming_calls()` /
+    `outgoing_calls()` — full callHierarchy/* surface
+  - `CallHierarchyItem` dataclass with round-trippable LSP serialization
+  - Two new tools: `lsp_implementation`, `lsp_call_hierarchy` (the latter
+    accepts `direction: incoming | outgoing | both` and runs prepare →
+    incoming/outgoing in one tool call)
 
 ## v0.1.0 (2026-04-03) — Production Cleanup
 
