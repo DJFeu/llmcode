@@ -17,7 +17,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/tests-4159%20passing-brightgreen" alt="Tests">
-  <img src="https://img.shields.io/badge/cold%20start-370ms-brightgreen" alt="Cold start">
+  <img src="https://img.shields.io/badge/cold%20start-~400ms-brightgreen" alt="Cold start">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
   <img src="https://img.shields.io/pypi/v/llmcode-cli" alt="PyPI">
 </p>
@@ -137,7 +137,7 @@ llmcode is **deeply influenced by Claude Code's architecture** and borrows prove
 | Open source | ✅ MIT | ✅ MIT | ❌ |
 | Language | Python | TypeScript | TypeScript |
 | Local model first | ✅ | ⚠️ | ❌ |
-| AGENTS.md / CLAUDE.md fallback | ✅ | ✅ | ⚠️ |
+| AGENTS.md (industry std) + CLAUDE.md fallback | ✅ | ✅ | CLAUDE.md only |
 | LLM-driven `/init` | ✅ | ✅ | ✅ |
 | Per-model system prompts | ✅ (9) | ✅ (7) | N/A |
 | **Qwen / Llama / DeepSeek tuned prompts** | ✅ | ❌ | ❌ |
@@ -151,7 +151,7 @@ llmcode is **deeply influenced by Claude Code's architecture** and borrows prove
 | Diminishing returns auto-stop | ✅ | ❌ | ❌ |
 | Subagent resume (task_id) | ✅ | ✅ | ❌ |
 | Plugin compatible with Claude Code ecosystem | ✅ | ✅ | ✅ |
-| Cold start | **370ms** | unknown | 600ms+ |
+| Cold start | **~400ms** | unknown | 600ms+ |
 | MCP servers | ✅ | ✅ | ✅ |
 | YOLO mode | ✅ | ✅ | ✅ |
 
