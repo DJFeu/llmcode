@@ -415,6 +415,80 @@ class LspDocumentSymbolTool(Tool):
         return ToolResult(output="\n".join(lines))
 
 
+class LspImplementationTool(Tool):
+    """Find the concrete implementation(s) of a method, interface, or abstract symbol."""
+
+    def __init__(self, manager: LspServerManager) -> None:
+        self._manager = manager
+
+    @property
+    def name(self) -> str:
+        return "lsp_implementation"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Jump from an interface, abstract method, or trait declaration to its "
+            "concrete implementations via the language server. Useful for "
+            "answering 'who implements this?'."
+        )
+
+    @property
+    def input_schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "file": {"type": "string", "description": "Absolute path to the file"},
+                "line": {"type": "integer", "description": "0-based line number"},
+                "column": {"type": "integer", "description": "0-based column number"},
+            },
+            "required": ["file", "line", "column"],
+        }
+
+    @property
+    def required_permission(self) -> PermissionLevel:
+        return PermissionLevel.READ_ONLY
+
+    @property
+    def input_model(self) -> type[_PositionInput]:
+        return _PositionInput
+
+    def is_read_only(self, args: dict) -> bool:
+        return True
+
+    def is_concurrency_safe(self, args: dict) -> bool:
+        return True
+
+    def execute(self, args: dict) -> ToolResult:
+        import asyncio
+        import concurrent.futures
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(asyncio.run, self.execute_async(args)).result()
+        return asyncio.run(self.execute_async(args))
+
+    async def execute_async(self, args: dict) -> ToolResult:
+        file_path = args["file"]
+        line = int(args["line"])
+        column = int(args["column"])
+        language = _language_for_file(file_path)
+        client = self._manager.get_client(language)
+        if client is None:
+            return ToolResult(
+                output=f"No LSP client available for language '{language}' (file: {file_path})",
+                is_error=True,
+            )
+        file_uri = Path(file_path).as_uri()
+        locations = await client.go_to_implementation(file_uri, line, column)
+        if not locations:
+            return ToolResult(output="No implementation found.")
+        return ToolResult(output="\n".join(f"{loc.file}:{loc.line}:{loc.column}" for loc in locations))
+
+
 class _QueryInput(BaseModel):
     query: str
 
