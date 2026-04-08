@@ -81,22 +81,25 @@ Three bad options:
 
 There is no clean answer. Each option breaks an existing invariant.
 
-### 3. SpeculativeExecutor collision
+### 3. SpeculativeExecutor integration
 
-`llm_code/runtime/speculative.py` already implements "run read-only tools
-in the background during permission prompts so the result is ready when the
-user clicks approve". It is its own concurrency mechanism, with its own
-overlay cache, hooked into a different point in the turn loop.
+`llm_code/runtime/speculative.py` is a 75-line wrapper that pre-executes a
+**single** tool against an OverlayFS (copy-on-write) while the user is being
+prompted for permission, so the real-FS write is ready the instant the user
+clicks approve. It is per-tool, sequential, and write-focused. It is **not**
+a concurrent-read scheduler — it solves a different problem (latency hiding
+during permission prompts) and is orthogonal to streaming dispatch.
 
-Streaming tool executor would either:
+The two systems are not in fundamental conflict, but they would need a small
+integration contract: when the streaming dispatcher decides to fire a tool,
+it has to check whether SpeculativeExecutor already pre-executed that exact
+call against an overlay, and if so reuse the cached `ToolResult` (and the
+associated `confirm()` / `deny()` lifecycle) instead of double-dispatching.
+That is a per-call lookup, not a refactor of SpeculativeExecutor's design.
 
-- Double-dispatch (both systems try to spawn the same read_file)
-- Or replace SpeculativeExecutor entirely, which deletes the "approve = zero
-  latency" UX it provides for the existing serial flow
-
-The right way to do streaming would be to **first refactor SpeculativeExecutor
-into a shared concurrent-read scheduler**, then build the streaming dispatcher
-on top. That's a much larger project than the original feature scope.
+Severity downgrade note: this is a real coupling concern, but it is an
+integration detail (one extra cache check on the dispatch path), not the
+"large refactor" framing an earlier draft of this document used.
 
 ### 4. Hook race conditions
 
@@ -204,8 +207,9 @@ discover it and assume it works. The concept lives on in this document.
 
 This decision should be reconsidered if:
 
-1. **SpeculativeExecutor is refactored** into a shared concurrent-read
-   scheduler. Streaming becomes a layer on top, not a replacement.
+1. **A real concurrent-read scheduler is built** (separate from
+   SpeculativeExecutor, which only handles single-tool overlay
+   pre-execution). Streaming would layer on top of such a scheduler.
 2. **Anthropic API user share grows substantially** and 4% turn-time
    savings becomes commercially meaningful.
 3. **Tool patterns shift toward parallel-friendly** workloads (e.g. heavy
@@ -220,13 +224,15 @@ go away even when the benefit grows.
 ## Alternative paths considered
 
 - **Read-only parallelism only** (no exclusive lock support): simpler, but
-  the speculative executor already does this for the only path that matters
-  (during permission prompts). Adding a second mechanism is duplication.
+  the bulk of observed latency is in single-tool turns where parallelism
+  cannot help. SpeculativeExecutor already hides latency for the
+  permission-prompt path (a different optimization, single tool only).
 
-- **Background prefetch on speculation** (extend SpeculativeExecutor to
-  prefetch the next tool_use the model is likely to emit): high speculative
-  cost, hard to bound, and the model may not actually emit what was guessed.
-  Rejected.
+- **Background prefetch on speculation** (guess the next tool_use the model
+  is likely to emit and pre-run it): unrelated to SpeculativeExecutor's
+  current job (which only runs the *already-emitted* tool against an
+  overlay). High speculative cost, hard to bound, model may not emit what
+  was guessed. Rejected.
 
 - **Streaming UI display only, serial execution underneath**: gives the
   *perception* of speed without any of the benefit. Considered dishonest.
@@ -237,5 +243,5 @@ go away even when the benefit grows.
 - Original survey: ranked Streaming Tool Executor as Wave B/C Feature 6
 - Reference impl: `/src/services/tools/StreamingToolExecutor.ts` (Claude Code restored-src)
 - Module that was archived: `llm_code/runtime/streaming_tool_executor.py`
-- Related: `llm_code/runtime/speculative.py` (the existing concurrent-read mechanism)
+- Related: `llm_code/runtime/speculative.py` (single-tool OverlayFS pre-execution during permission prompts — orthogonal to streaming, not a concurrent-read scheduler)
 - Related: commit `86cbd97` (tool_use_id correlation, which streaming would need to preserve)
