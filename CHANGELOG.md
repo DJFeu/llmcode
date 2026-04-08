@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Agent tier routing (build / plan / explore / verify / general):
+  - BUILD_ROLE (default, unrestricted) and GENERAL_ROLE (focused subagent
+    without todowrite) added to BUILT_IN_ROLES
+  - is_tool_allowed_for_role() helper — empty whitelist = no restriction
+  - ToolRegistry.filtered(allowed) returns a child registry with only the
+    named tools (parent untouched)
+  - llm_code/runtime/subagent_factory.make_subagent_runtime() builds a
+    role-filtered child ConversationRuntime with fresh Session and shared
+    parent infrastructure
+  - AgentTool is now actually wired — tui/app.py registers it with a
+    lazy closure factory instead of runtime_factory=None
+  - AgentTool.input_schema.role enum extended to all five roles
+
+### Fixed
+- AgentTool is no longer registered with a None runtime factory; calls now
+  succeed instead of crashing on first dispatch.
+
 ## v0.1.0 (2026-04-03) — Production Cleanup
 
 ### Changed

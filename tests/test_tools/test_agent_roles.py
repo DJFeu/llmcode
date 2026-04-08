@@ -51,7 +51,10 @@ class TestAgentRoleDataclass:
             assert role.name
             assert role.description
             assert role.system_prompt_prefix
-            assert role.allowed_tools
+            # BUILD_ROLE uses empty frozenset as the "unrestricted" sentinel;
+            # all other roles enforce a non-empty whitelist.
+            if role.name != "build":
+                assert role.allowed_tools
             assert role.model_key
 
     def test_allowed_tools_is_frozenset(self):
@@ -157,7 +160,7 @@ class TestAgentToolInputSchema:
         tool = AgentTool(runtime_factory=lambda m, **kw: None)
         schema = tool.input_schema
         role_schema = schema["properties"]["role"]
-        assert set(role_schema.get("enum", [])) == {"explore", "plan", "verify"}
+        assert set(role_schema.get("enum", [])) == {"build", "plan", "explore", "verify", "general"}
 
     def test_role_not_required(self):
         tool = AgentTool(runtime_factory=lambda m, **kw: None)
