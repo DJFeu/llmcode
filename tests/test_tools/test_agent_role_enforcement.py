@@ -161,7 +161,6 @@ def test_build_role_grandchild_depth_chain() -> None:
 
 def test_build_role_great_grandchild_refused_by_depth_guard() -> None:
     from llm_code.tools.agent import AgentTool
-    from llm_code.tools.base import ToolResult
 
     parent = _parent_with_real_agent_tool(max_depth=3)
     child = _make(parent, BUILD_ROLE)

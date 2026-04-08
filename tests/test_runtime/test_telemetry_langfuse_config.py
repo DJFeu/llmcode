@@ -1,7 +1,6 @@
 """Tests for Langfuse-related TelemetryConfig fields and parsing."""
 from __future__ import annotations
 
-import pytest
 
 from llm_code.runtime.config import TelemetryConfig as ConfigTelemetryConfig
 from llm_code.runtime.telemetry import TelemetryConfig as RuntimeTelemetryConfig

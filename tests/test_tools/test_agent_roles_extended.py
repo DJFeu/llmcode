@@ -9,7 +9,6 @@ from llm_code.tools.agent_roles import (
     EXPLORE_ROLE,
     GENERAL_ROLE,
     PLAN_ROLE,
-    VERIFICATION_ROLE,
     is_tool_allowed_for_role,
 )
 

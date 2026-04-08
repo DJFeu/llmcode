@@ -46,7 +46,7 @@ async def test_go_to_implementation_parses_multiple_locations() -> None:
     ]
     client = LspClient(FakeTransport(response))
     locs = await client.go_to_implementation("file:///iface.py", 0, 0)
-    assert {l.file for l in locs} == {"file:///a.py", "file:///b.py"}
+    assert {loc.file for loc in locs} == {"file:///a.py", "file:///b.py"}
 
 
 @pytest.mark.asyncio

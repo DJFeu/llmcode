@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from llm_code.runtime.hooks import HookOutcome, HookRunner
+from llm_code.tools.base import ToolResult  # noqa: F401  used by _apply_extra_output below
 
 
 def test_extra_output_default_is_empty_string() -> None:
@@ -42,9 +43,6 @@ def test_fire_python_denied_subscriber_short_circuits_extra_output() -> None:
 
     assert outcome.denied is True
     assert outcome.extra_output == ""
-
-
-from llm_code.tools.base import ToolResult
 
 
 def _apply_extra_output(result, outcome):
