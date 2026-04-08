@@ -711,16 +711,15 @@ class LLMCodeTUI(App):
         except Exception:
             pass
 
-        # Initialize telemetry
+        # Initialize telemetry — pass the config straight through; both
+        # `from llm_code.runtime.config import TelemetryConfig` and
+        # `from llm_code.runtime.telemetry import TelemetryConfig` resolve
+        # to the same class (see telemetry config consolidation, Plan 5.5).
         telemetry = None
         if getattr(self._config, "telemetry", None) and self._config.telemetry.enabled:
             try:
-                from llm_code.runtime.telemetry import Telemetry, TelemetryConfig
-                telemetry = Telemetry(TelemetryConfig(
-                    enabled=True,
-                    endpoint=self._config.telemetry.endpoint,
-                    service_name=self._config.telemetry.service_name,
-                ))
+                from llm_code.runtime.telemetry import Telemetry
+                telemetry = Telemetry(self._config.telemetry)
             except Exception:
                 pass
 
