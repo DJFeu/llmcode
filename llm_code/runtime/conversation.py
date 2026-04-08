@@ -47,11 +47,35 @@ if TYPE_CHECKING:
     from llm_code.tools.registry import ToolRegistry
 
 
+_THINKING_BOOST_MULTIPLIER = 2
+
+
+def _apply_thinking_boost(
+    runtime: Any,
+    *,
+    base_budget: int,
+    max_budget: int | None = None,
+) -> int:
+    """If runtime._thinking_boost_active is set, multiply base_budget by
+    _THINKING_BOOST_MULTIPLIER (clamped to max_budget) and clear the flag.
+
+    Top-level runtimes without the attribute fall through unchanged.
+    """
+    if not getattr(runtime, "_thinking_boost_active", False):
+        return base_budget
+    boosted = base_budget * _THINKING_BOOST_MULTIPLIER
+    if max_budget is not None:
+        boosted = min(boosted, max_budget)
+    runtime._thinking_boost_active = False
+    return boosted
+
+
 def build_thinking_extra_body(
     thinking_config,
     *,
     is_local: bool = False,
     provider_supports_reasoning: bool = False,
+    runtime: Any = None,
 ) -> dict | None:
     """Build extra_body dict for thinking mode configuration.
 
@@ -67,6 +91,11 @@ def build_thinking_extra_body(
         budget = thinking_config.budget_tokens
         if is_local:
             budget = max(budget, 131072)
+        budget = _apply_thinking_boost(
+            runtime,
+            base_budget=budget,
+            max_budget=131072 if is_local else None,
+        )
         return {
             "chat_template_kwargs": {
                 "enable_thinking": True,
@@ -80,6 +109,11 @@ def build_thinking_extra_body(
     if is_local:
         if provider_supports_reasoning:
             budget = max(thinking_config.budget_tokens, 131072)
+            budget = _apply_thinking_boost(
+                runtime,
+                base_budget=budget,
+                max_budget=131072,
+            )
             return {
                 "chat_template_kwargs": {
                     "enable_thinking": True,
@@ -810,6 +844,7 @@ class ConversationRuntime:
                     self._config.thinking,
                     is_local=_is_local,
                     provider_supports_reasoning=self._provider.supports_reasoning(),
+                    runtime=self,
                 ) if not use_native else None,
             )
 
