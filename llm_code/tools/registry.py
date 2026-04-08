@@ -57,6 +57,33 @@ class ToolRegistry:
         """Return all registered tools as a tuple."""
         return tuple(self._tools.values())
 
+    def filtered(
+        self, allowed: set[str] | frozenset[str] | None
+    ) -> "ToolRegistry":
+        """Return a new ToolRegistry filtered by *allowed*.
+
+        Sentinel convention:
+          * ``None``           -> unrestricted; new registry contains every
+            tool the parent has (full clone of references).
+          * ``frozenset()``    -> deny-all; new registry is empty.
+          * non-empty set      -> strict whitelist; only listed names that
+            exist in the parent are included.
+
+        The returned registry is always a fresh ``ToolRegistry`` instance;
+        mutating it does not affect the parent. Tool instances themselves
+        are shared by reference.
+        """
+        child = ToolRegistry()
+        if allowed is None:
+            for tool in self._tools.values():
+                child._tools[tool.name] = tool
+            return child
+        for name in allowed:
+            tool = self._tools.get(name)
+            if tool is not None:
+                child._tools[name] = tool
+        return child
+
     def definitions(
         self,
         allowed: set[str] | None = None,

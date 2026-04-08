@@ -71,11 +71,35 @@ def _build_prompt_preview(messages, max_chars: int = 2000) -> str:
     return out[:max_chars]
 
 
+_THINKING_BOOST_MULTIPLIER = 2
+
+
+def _apply_thinking_boost(
+    runtime: Any,
+    *,
+    base_budget: int,
+    max_budget: int | None = None,
+) -> int:
+    """If runtime._thinking_boost_active is set, multiply base_budget by
+    _THINKING_BOOST_MULTIPLIER (clamped to max_budget) and clear the flag.
+
+    Top-level runtimes without the attribute fall through unchanged.
+    """
+    if not getattr(runtime, "_thinking_boost_active", False):
+        return base_budget
+    boosted = base_budget * _THINKING_BOOST_MULTIPLIER
+    if max_budget is not None:
+        boosted = min(boosted, max_budget)
+    runtime._thinking_boost_active = False
+    return boosted
+
+
 def build_thinking_extra_body(
     thinking_config,
     *,
     is_local: bool = False,
     provider_supports_reasoning: bool = False,
+    runtime: Any = None,
 ) -> dict | None:
     """Build extra_body dict for thinking mode configuration.
 
@@ -91,6 +115,11 @@ def build_thinking_extra_body(
         budget = thinking_config.budget_tokens
         if is_local:
             budget = max(budget, 131072)
+        budget = _apply_thinking_boost(
+            runtime,
+            base_budget=budget,
+            max_budget=131072 if is_local else None,
+        )
         return {
             "chat_template_kwargs": {
                 "enable_thinking": True,
@@ -104,6 +133,11 @@ def build_thinking_extra_body(
     if is_local:
         if provider_supports_reasoning:
             budget = max(thinking_config.budget_tokens, 131072)
+            budget = _apply_thinking_boost(
+                runtime,
+                base_budget=budget,
+                max_budget=131072,
+            )
             return {
                 "chat_template_kwargs": {
                     "enable_thinking": True,
@@ -122,6 +156,38 @@ logger = get_logger(__name__)
 # Maximum number of characters to inline in tool results
 _MAX_INLINE_RESULT = 2000
 
+# Fallback used when neither provider nor config exposes a context limit and
+# the runtime has not yet detected one from an API response.
+_DEFAULT_MAX_INPUT_TOKENS = 200_000
+
+
+def _record_token_usage(
+    runtime: "ConversationRuntime", *, used_tokens: int, max_tokens: int
+) -> None:
+    """Store cumulative input tokens + model context limit on the runtime so
+    the context_window_monitor builtin hook can read them via getattr.
+
+    Called after every LLM stream completes.
+    """
+    runtime._last_input_tokens = int(used_tokens)
+    runtime._max_input_tokens = int(max_tokens)
+
+
+def _merge_hook_extra_output(result: ToolResult, outcome) -> ToolResult:
+    """Append HookOutcome.extra_output to a ToolResult.output (immutable update).
+
+    Keeps the original ToolResult instance when nothing to append, so callers
+    can compare by identity in tests and avoid an unneeded allocation.
+    """
+    extra = getattr(outcome, "extra_output", "") or ""
+    if not extra:
+        return result
+    return ToolResult(
+        output=result.output + extra,
+        is_error=result.is_error,
+        metadata=result.metadata,
+    )
+
 
 @dataclasses.dataclass(frozen=True)
 class TurnSummary:
@@ -135,6 +201,11 @@ class TurnSummary:
 
 class ConversationRuntime:
     """Agentic loop that drives LLM turns, tool execution, and session updates."""
+
+    # Class-level defaults so builtin hooks can read these via getattr even
+    # before the runtime has processed its first stream.
+    _last_input_tokens: int = 0
+    _max_input_tokens: int = 0
 
     def __init__(
         self,
@@ -162,9 +233,12 @@ class ConversationRuntime:
         typed_memory_store: Any = None,
     ) -> None:
         self._provider = provider
+        self._last_input_tokens: int = 0
+        self._max_input_tokens: int = 0
         self._tool_registry = tool_registry
         self._permissions = permission_policy
         self._hooks = hook_runner
+        self._thinking_boost_active = False
         # Register opt-in builtin Python hooks (config.builtin_hooks.enabled).
         try:
             _builtin_cfg = getattr(config, "builtin_hooks", None)
@@ -595,6 +669,14 @@ class ConversationRuntime:
             logger.warning("skill MCP spawn failed: %s", _exc)
         _turn_start = time.monotonic()
         self._fire_hook("prompt_submit", {"text": user_input[:200]})
+        if self._hooks is not None and hasattr(self._hooks, "fire_python"):
+            _ps_ctx = {
+                "prompt": user_input,
+                "session_id": getattr(self._context, "session_id", ""),
+            }
+            self._hooks.fire_python("prompt_submit", _ps_ctx)
+            if _ps_ctx.get("thinking_requested"):
+                self._thinking_boost_active = True
         # Keyword-driven action detection (Feature 6, opt-in via keywords.enabled).
         try:
             _kw_cfg = getattr(self._config, "keywords", None)
@@ -797,6 +879,7 @@ class ConversationRuntime:
                     self._config.thinking,
                     is_local=_is_local,
                     provider_supports_reasoning=self._provider.supports_reasoning(),
+                    runtime=self,
                 ) if not use_native else None,
             )
 
@@ -1030,6 +1113,14 @@ class ConversationRuntime:
                 accumulated_usage = TokenUsage(
                     input_tokens=accumulated_usage.input_tokens + stop_event.usage.input_tokens,
                     output_tokens=accumulated_usage.output_tokens + stop_event.usage.output_tokens,
+                )
+                _record_token_usage(
+                    self,
+                    used_tokens=accumulated_usage.input_tokens,
+                    max_tokens=getattr(self._provider, "max_input_tokens", 0)
+                    or getattr(self._config, "max_input_tokens", 0)
+                    or getattr(self, "_detected_context_window", 0)
+                    or _DEFAULT_MAX_INPUT_TOKENS,
                 )
 
                 # Per-model query profiler (Task 3)
@@ -1330,6 +1421,30 @@ class ConversationRuntime:
             )
             return
 
+        # 1b. Defense-in-depth role check: even if a disallowed tool somehow
+        # leaked into this runtime's registry (e.g. via a future regression),
+        # the subagent role whitelist still blocks dispatch.
+        _subagent_role = getattr(self, "_subagent_role", None)
+        if _subagent_role is not None:
+            from llm_code.tools.agent_roles import is_tool_allowed_for_role
+
+            if not is_tool_allowed_for_role(_subagent_role, call.name):
+                logger.warning(
+                    "Tool %s blocked by role %s",
+                    call.name,
+                    _subagent_role.name,
+                )
+                self._fire_hook("tool_denied", {"tool_name": call.name})
+                yield ToolResultBlock(
+                    tool_use_id=call.id,
+                    content=(
+                        f"Tool '{call.name}' is not permitted for role "
+                        f"'{_subagent_role.name}'"
+                    ),
+                    is_error=True,
+                )
+                return
+
         # 2. Validate input
         try:
             validated_args = tool.validate_input(call.args)
@@ -1570,11 +1685,26 @@ class ConversationRuntime:
             is_error=tool_result.is_error,
         )
 
-        # 7. Post-tool hook
+        # 7. Post-tool hook (shell hooks via post_tool_use, in-process via fire_python)
         if hasattr(hook_runner, "post_tool_use"):
             post_result = hook_runner.post_tool_use(call.name, args, tool_result)
             if hasattr(post_result, "__await__"):
-                await post_result
+                post_result = await post_result
+            tool_result = _merge_hook_extra_output(tool_result, post_result)
+        if hasattr(hook_runner, "fire_python"):
+            inproc = hook_runner.fire_python(
+                "post_tool_use",
+                {
+                    "tool_name": call.name,
+                    "tool_input": args,
+                    "tool_output": tool_result.output,
+                    "file_path": args.get("file_path") or args.get("path", ""),
+                    "session_id": getattr(self._context, "session_id", ""),
+                    "tokens_used": getattr(self, "_last_input_tokens", 0),
+                    "tokens_max": getattr(self, "_max_input_tokens", 0),
+                },
+            )
+            tool_result = _merge_hook_extra_output(tool_result, inproc)
 
         # 7b. Run harness sensors (auto-commit, LSP diagnose, code rules)
         try:

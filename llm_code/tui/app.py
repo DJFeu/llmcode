@@ -440,12 +440,25 @@ class LLMCodeTUI(App):
             except ValueError:
                 pass
 
-        # Try to register AgentTool
+        # Register AgentTool with a lazy factory closure that captures `self`
+        # so the parent runtime — built later in startup — is reachable.
         try:
+            from llm_code.runtime.subagent_factory import make_subagent_runtime
             from llm_code.tools.agent import AgentTool
+
+            def _subagent_factory(model=None, role=None):
+                parent_runtime = getattr(self, "_runtime", None)
+                if parent_runtime is None:
+                    raise RuntimeError(
+                        "AgentTool invoked before parent runtime initialized"
+                    )
+                return make_subagent_runtime(parent_runtime, role, model)
+
             if self._tool_reg.get("agent") is None:
                 self._tool_reg.register(AgentTool(
-                    runtime_factory=None, max_depth=3, current_depth=0,
+                    runtime_factory=_subagent_factory,
+                    max_depth=3,
+                    current_depth=0,
                 ))
         except (ImportError, ValueError):
             pass
@@ -689,12 +702,26 @@ class LLMCodeTUI(App):
         if self._config.lsp_servers or self._config.lsp_auto_detect:
             try:
                 from llm_code.lsp.manager import LspServerManager
-                from llm_code.lsp.tools import LspGotoDefinitionTool, LspFindReferencesTool, LspDiagnosticsTool
+                from llm_code.lsp.tools import (
+                    LspCallHierarchyTool,
+                    LspDiagnosticsTool,
+                    LspDocumentSymbolTool,
+                    LspFindReferencesTool,
+                    LspGotoDefinitionTool,
+                    LspHoverTool,
+                    LspImplementationTool,
+                    LspWorkspaceSymbolTool,
+                )
                 self._lsp_manager = LspServerManager()
                 for tool in (
                     LspGotoDefinitionTool(self._lsp_manager),
                     LspFindReferencesTool(self._lsp_manager),
                     LspDiagnosticsTool(self._lsp_manager),
+                    LspHoverTool(self._lsp_manager),
+                    LspDocumentSymbolTool(self._lsp_manager),
+                    LspWorkspaceSymbolTool(self._lsp_manager),
+                    LspImplementationTool(self._lsp_manager),
+                    LspCallHierarchyTool(self._lsp_manager),
                 ):
                     try:
                         self._tool_reg.register(tool)
