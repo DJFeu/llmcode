@@ -702,12 +702,26 @@ class LLMCodeTUI(App):
         if self._config.lsp_servers or self._config.lsp_auto_detect:
             try:
                 from llm_code.lsp.manager import LspServerManager
-                from llm_code.lsp.tools import LspGotoDefinitionTool, LspFindReferencesTool, LspDiagnosticsTool
+                from llm_code.lsp.tools import (
+                    LspCallHierarchyTool,
+                    LspDiagnosticsTool,
+                    LspDocumentSymbolTool,
+                    LspFindReferencesTool,
+                    LspGotoDefinitionTool,
+                    LspHoverTool,
+                    LspImplementationTool,
+                    LspWorkspaceSymbolTool,
+                )
                 self._lsp_manager = LspServerManager()
                 for tool in (
                     LspGotoDefinitionTool(self._lsp_manager),
                     LspFindReferencesTool(self._lsp_manager),
                     LspDiagnosticsTool(self._lsp_manager),
+                    LspHoverTool(self._lsp_manager),
+                    LspDocumentSymbolTool(self._lsp_manager),
+                    LspWorkspaceSymbolTool(self._lsp_manager),
+                    LspImplementationTool(self._lsp_manager),
+                    LspCallHierarchyTool(self._lsp_manager),
                 ):
                     try:
                         self._tool_reg.register(tool)

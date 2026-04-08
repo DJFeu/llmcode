@@ -6,7 +6,7 @@ import itertools
 import json
 import os
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -30,6 +30,54 @@ class Diagnostic:
     severity: str  # "error" | "warning" | "info" | "hint"
     message: str
     source: str
+
+
+@dataclass(frozen=True)
+class Hover:
+    contents: str
+
+
+@dataclass(frozen=True)
+class SymbolInfo:
+    name: str
+    kind: str
+    file: str
+    line: int
+    column: int
+
+
+# LSP SymbolKind enum -> human label
+_SYMBOL_KIND: dict[int, str] = {
+    1: "file", 2: "module", 3: "namespace", 4: "package", 5: "class",
+    6: "method", 7: "property", 8: "field", 9: "constructor", 10: "enum",
+    11: "interface", 12: "function", 13: "variable", 14: "constant",
+    15: "string", 16: "number", 17: "boolean", 18: "array", 19: "object",
+    20: "key", 21: "null", 22: "enum_member", 23: "struct", 24: "event",
+    25: "operator", 26: "type_parameter",
+}
+
+
+@dataclass(frozen=True)
+class CallHierarchyItem:
+    """A symbol participating in a call hierarchy.
+
+    Carries enough information to round-trip back through callHierarchy/* requests.
+
+    The ``raw`` field stores the original LSP response dict so opaque
+    server-private fields like ``data`` (used by rust-analyzer, jdtls, etc.)
+    plus full ``range``/``selectionRange``/``tags`` are echoed back verbatim
+    on subsequent ``callHierarchy/incomingCalls`` and ``outgoingCalls``
+    requests. Without this, many servers silently return empty arrays.
+    """
+    name: str
+    kind: str
+    file: str
+    line: int
+    column: int
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+_SYMBOL_KIND_INV: dict[str, int] = {label: code for code, label in _SYMBOL_KIND.items()}
 
 
 @dataclass(frozen=True)
@@ -202,6 +250,184 @@ class LspClient:
             },
         )
         return self._parse_locations(result)
+
+    async def go_to_implementation(
+        self, file_uri: str, line: int, col: int
+    ) -> list[Location]:
+        result = await self._request(
+            "textDocument/implementation",
+            {
+                "textDocument": {"uri": file_uri},
+                "position": {"line": line, "character": col},
+            },
+        )
+        return self._parse_locations(result)
+
+    async def hover(self, file_uri: str, line: int, col: int) -> Hover:
+        result = await self._request(
+            "textDocument/hover",
+            {
+                "textDocument": {"uri": file_uri},
+                "position": {"line": line, "character": col},
+            },
+        )
+        return Hover(contents=self._parse_hover_contents(result))
+
+    @staticmethod
+    def _parse_hover_contents(result: Any) -> str:
+        """Normalize the three LSP hover content shapes into a single string."""
+        if result is None:
+            return ""
+        contents = result.get("contents") if isinstance(result, dict) else None
+        if contents is None:
+            return ""
+        if isinstance(contents, str):
+            return contents
+        if isinstance(contents, dict):
+            return contents.get("value", "") or ""
+        if isinstance(contents, list):
+            parts: list[str] = []
+            for item in contents:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    parts.append(item.get("value", "") or "")
+            return "\n\n".join(p for p in parts if p)
+        return ""
+
+    async def document_symbol(self, file_uri: str) -> list[SymbolInfo]:
+        result = await self._request(
+            "textDocument/documentSymbol",
+            {"textDocument": {"uri": file_uri}},
+        )
+        return self._parse_symbols(result, default_uri=file_uri)
+
+    def _parse_symbols(self, result: Any, default_uri: str) -> list[SymbolInfo]:
+        """Parse both DocumentSymbol[] and SymbolInformation[] shapes."""
+        if not result:
+            return []
+        out: list[SymbolInfo] = []
+        for item in result:
+            if "location" in item:
+                loc = item["location"]
+                start = loc.get("range", {}).get("start", {})
+                out.append(
+                    SymbolInfo(
+                        name=item.get("name", ""),
+                        kind=_SYMBOL_KIND.get(item.get("kind", 0), "unknown"),
+                        file=loc.get("uri", default_uri),
+                        line=start.get("line", 0),
+                        column=start.get("character", 0),
+                    )
+                )
+            else:
+                self._collect_document_symbol(item, default_uri, out)
+        return out
+
+    def _collect_document_symbol(
+        self, node: dict, default_uri: str, accum: list[SymbolInfo]
+    ) -> None:
+        sel = node.get("selectionRange") or node.get("range") or {}
+        start = sel.get("start", {})
+        accum.append(
+            SymbolInfo(
+                name=node.get("name", ""),
+                kind=_SYMBOL_KIND.get(node.get("kind", 0), "unknown"),
+                file=default_uri,
+                line=start.get("line", 0),
+                column=start.get("character", 0),
+            )
+        )
+        for child in node.get("children", []) or []:
+            self._collect_document_symbol(child, default_uri, accum)
+
+    async def workspace_symbol(self, query: str) -> list[SymbolInfo]:
+        result = await self._request(
+            "workspace/symbol",
+            {"query": query},
+        )
+        return self._parse_symbols(result, default_uri="")
+
+    async def prepare_call_hierarchy(
+        self, file_uri: str, line: int, col: int
+    ) -> list[CallHierarchyItem]:
+        result = await self._request(
+            "textDocument/prepareCallHierarchy",
+            {
+                "textDocument": {"uri": file_uri},
+                "position": {"line": line, "character": col},
+            },
+        )
+        return self._parse_call_hierarchy_items(result)
+
+    async def incoming_calls(self, item: CallHierarchyItem) -> list[CallHierarchyItem]:
+        result = await self._request(
+            "callHierarchy/incomingCalls",
+            {"item": self._call_hierarchy_item_to_lsp(item)},
+        )
+        if not result:
+            return []
+        return [
+            self._parse_single_call_hierarchy_item(entry["from"])
+            for entry in result
+            if "from" in entry
+        ]
+
+    async def outgoing_calls(self, item: CallHierarchyItem) -> list[CallHierarchyItem]:
+        result = await self._request(
+            "callHierarchy/outgoingCalls",
+            {"item": self._call_hierarchy_item_to_lsp(item)},
+        )
+        if not result:
+            return []
+        return [
+            self._parse_single_call_hierarchy_item(entry["to"])
+            for entry in result
+            if "to" in entry
+        ]
+
+    @staticmethod
+    def _call_hierarchy_item_to_lsp(item: CallHierarchyItem) -> dict[str, Any]:
+        # Prefer the original raw LSP dict so opaque server-private state
+        # (`data`, `tags`, full ranges, exact `kind` int) round-trips verbatim.
+        if item.raw:
+            return dict(item.raw)
+        kind_int = _SYMBOL_KIND_INV.get(item.kind)
+        if kind_int is None:
+            raise ValueError(
+                f"Unknown call-hierarchy symbol kind label: {item.kind!r}"
+            )
+        return {
+            "name": item.name,
+            "kind": kind_int,
+            "uri": item.file,
+            "range": {
+                "start": {"line": item.line, "character": item.column},
+                "end": {"line": item.line, "character": item.column},
+            },
+            "selectionRange": {
+                "start": {"line": item.line, "character": item.column},
+                "end": {"line": item.line, "character": item.column},
+            },
+        }
+
+    def _parse_call_hierarchy_items(self, result: Any) -> list[CallHierarchyItem]:
+        if not result:
+            return []
+        return [self._parse_single_call_hierarchy_item(item) for item in result]
+
+    @staticmethod
+    def _parse_single_call_hierarchy_item(node: dict) -> CallHierarchyItem:
+        sel = node.get("selectionRange") or node.get("range") or {}
+        start = sel.get("start", {})
+        return CallHierarchyItem(
+            name=node.get("name", ""),
+            kind=_SYMBOL_KIND.get(node.get("kind", 0), "unknown"),
+            file=node.get("uri", ""),
+            line=start.get("line", 0),
+            column=start.get("character", 0),
+            raw=dict(node),
+        )
 
     async def get_diagnostics(self, file_uri: str) -> list[Diagnostic]:
         result = await self._request(

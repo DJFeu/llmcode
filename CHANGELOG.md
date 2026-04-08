@@ -33,6 +33,24 @@
   - AgentTool is now actually wired — tui/app.py registers it with a
     lazy closure factory instead of runtime_factory=None
   - AgentTool.input_schema.role enum extended to all five roles
+- LSP coverage expansion ported from opencode:
+  - `llm_code/lsp/languages.py` — single source of truth for extension→language
+    mapping (~80 entries) and walk-up project root detection
+  - `LspClient.hover()`, `document_symbol()`, `workspace_symbol()` methods with
+    `Hover` and `SymbolInfo` dataclasses
+  - Three new tools: `lsp_hover`, `lsp_document_symbol`, `lsp_workspace_symbol`
+  - `detect_lsp_servers_for_file()` walks upward from any file to its project
+    root before resolving servers
+  - Expanded `SERVER_REGISTRY` covers 25+ language servers (up from 4)
+- LSP call hierarchy + implementation:
+  - `LspClient.go_to_implementation()` — concrete implementations of an
+    interface, abstract method, or trait
+  - `LspClient.prepare_call_hierarchy()` / `incoming_calls()` /
+    `outgoing_calls()` — full callHierarchy/* surface
+  - `CallHierarchyItem` dataclass with round-trippable LSP serialization
+  - Two new tools: `lsp_implementation`, `lsp_call_hierarchy` (the latter
+    accepts `direction: incoming | outgoing | both` and runs prepare →
+    incoming/outgoing in one tool call)
 
 ### Changed
 - Agent role sentinel refactor: `AgentRole.allowed_tools` is now
@@ -62,6 +80,16 @@
   `_subagent_role` before dispatch, so a future regression that leaks
   a forbidden tool into a child registry still cannot bypass the role
   whitelist.
+- `CallHierarchyItem` now round-trips the original LSP node (`data`, `tags`,
+  `range`, `selectionRange`, exact `kind` int) so servers like rust-analyzer
+  and jdtls — which require their opaque `data` token to be echoed back —
+  return non-empty incoming/outgoing call results. Unknown kind labels now
+  raise instead of silently coercing to Function (12).
+- `LspCallHierarchyTool` with `direction="both"` now dispatches incoming and
+  outgoing calls concurrently via `asyncio.gather`, halving worst-case latency.
+- `_CallHierarchyInput.direction` is now a `Literal["incoming","outgoing","both"]`
+  so programmatic callers bypassing the JSON schema get Pydantic validation
+  errors on bad values.
 
 ## v0.1.0 (2026-04-03) — Production Cleanup
 
