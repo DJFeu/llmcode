@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added (resilience hardening from 2026-04-08 bug hunt)
+- `tests/test_tools/fixtures/hermes_captures/` — regression museum holding the verbatim model captures from PRs #14/#15/#16. `tests/test_tools/test_parsing_fixture_replay.py` parametrizes over the directory and asserts every capture parses; new captures land here as `.txt` files and are auto-discovered. Future parser refactors cannot silently break any of the three Hermes variants we've seen in production.
+- `llm_code/runtime/_retry_tracker.RecentToolCallTracker` — per-turn idempotent retry detector. When the model emits the same `(tool_name, args)` pair twice in a row, the runtime aborts the turn with a clear error instead of looping. Closes the failure mode from 2026-04-08 where a parser bug caused web_search to be dispatched with empty args, fail validation, and burn 76K tokens / 3.6 minutes in a retry loop before giving up. 9 unit tests cover argument-order independence, nested dicts, recovery, and unhashable-arg defense.
+- `tests/test_runtime/test_conversation_full_path_smoke.py` — tombstone for a future smoke test that exercises the conversation runner's parser path end-to-end with a fake provider. Currently skipped pending a `ConversationRuntime` test fixture; documents the gap so it can't be silently forgotten.
+
 ### Fixed (hotfix — Hermes truncated form with JSON args)
 - `tools/parsing.py:_parse_hermes_block` now also handles a third
   Hermes sub-format: truncated function name followed by a JSON

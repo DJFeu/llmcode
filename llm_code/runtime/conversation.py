@@ -34,6 +34,7 @@ from llm_code.api.types import (
 )
 from llm_code.runtime.compressor import ContextCompressor
 from llm_code.runtime.cost_tracker import BudgetExceededError
+from llm_code.runtime._retry_tracker import RecentToolCallTracker
 from llm_code.runtime.permissions import PermissionOutcome
 from llm_code.runtime.streaming_executor import StreamingToolExecutor
 from llm_code.runtime.telemetry import Telemetry, _truncate_for_attribute, get_noop_telemetry
@@ -758,6 +759,7 @@ class ConversationRuntime:
 
         _prev_output_tokens = 0
         _continuation_count = 0
+        _retry_tracker = RecentToolCallTracker()
 
         for _iteration in range(self._config.max_turn_iterations):
             # Proactive context compaction: compress before hitting model limit
@@ -1333,6 +1335,25 @@ class ConversationRuntime:
 
             # Non-agent calls: use pre-computed result if available, else execute normally
             for call in non_agent_calls:
+                if _retry_tracker.is_idempotent_retry(call.name, call.args):
+                    logger.warning(
+                        "Aborting turn: idempotent retry loop detected for %s",
+                        call.name,
+                    )
+                    tool_result_blocks.append(
+                        ToolResultBlock(
+                            tool_use_id=call.id,
+                            content=(
+                                f"Aborted: tool {call.name!r} would be called "
+                                f"with the same arguments as the previous "
+                                f"failed call. The model is stuck in a retry "
+                                f"loop. Try rephrasing your request."
+                            ),
+                            is_error=True,
+                        )
+                    )
+                    continue
+                _retry_tracker.record(call.name, call.args)
                 if call.id in _precomputed_by_id:
                     # Read-only tool already executed concurrently — emit events and reuse result
                     precomputed = _precomputed_by_id[call.id]
