@@ -3,10 +3,28 @@
 ## Unreleased
 
 ### Added
+- Three themed builtin hooks ported from oh-my-opencode:
+  - `context_window_monitor` — warns once per session at 75% context usage
+  - `thinking_mode` — detects "ultrathink" / 深入思考 keywords and flags the turn
+  - `rules_injector` — auto-injects CLAUDE.md / AGENTS.md / .cursorrules content
+    when a project file is read
+- `HookOutcome.extra_output: str` — allows in-process hooks to append content to
+  the visible tool result (used by `rules_injector` and `context_window_monitor`).
+- `context_window_monitor` builtin hook now actually fires — `ConversationRuntime`
+  populates `_last_input_tokens` / `_max_input_tokens` after every LLM stream.
+- `thinking_mode` builtin hook is now consumed — `_thinking_boost_active` doubles
+  the next turn's `thinking_budget` (capped at provider max).
+- Dynamic delegation prompt section: when the conversation runner has live
+  tools and routed skills, the system prompt now includes an `## Active
+  Capabilities` section with three subsections — Tools by Capability (grouped
+  read/search/write/exec/lsp/web/agent), Key Triggers (skill triggers + names),
+  and Skills by Category (grouped by skill's first tag). Pure module
+  `llm_code/runtime/dynamic_prompt.py`. Byte-budget guard caps the section at
+  8 KB by default to protect cache stability.
 - Agent tier routing (build / plan / explore / verify / general):
   - BUILD_ROLE (default, unrestricted) and GENERAL_ROLE (focused subagent
     without todowrite) added to BUILT_IN_ROLES
-  - is_tool_allowed_for_role() helper — empty whitelist = no restriction
+  - is_tool_allowed_for_role() helper
   - ToolRegistry.filtered(allowed) returns a child registry with only the
     named tools (parent untouched)
   - llm_code/runtime/subagent_factory.make_subagent_runtime() builds a
@@ -26,6 +44,11 @@
   unrestricted" foot-gun.
 
 ### Fixed
+- `rules_injector` no longer reads `CLAUDE.md` / `AGENTS.md` from ancestor
+  directories outside the resolved project root (symlink edge case).
+- `dynamic_prompt.build_delegation_section` no longer hangs under pathologically small `max_bytes` (added iteration cap + length-stable bailout)
+- `dynamic_prompt.build_delegation_section` now honors `max_bytes` strictly — if even the bare header+intro envelope exceeds the budget, returns `""` instead of a soft-violating string
+- `classify_tool` recognizes bare `Task` tool name as `agent` category (was falling through to `other`)
 - AgentTool is no longer registered with a None runtime factory; calls now
   succeed instead of crashing on first dispatch.
 - AgentTool recursion-depth guard now actually trips for build-role

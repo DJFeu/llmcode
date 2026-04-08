@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Literal
 
 from llm_code.api.types import ToolDefinition
 from llm_code.runtime.context import ProjectContext
+from llm_code.runtime.dynamic_prompt import build_delegation_section
 from llm_code.runtime.prompt_guard import sanitize_mcp_instructions
 
 if TYPE_CHECKING:
@@ -194,6 +195,16 @@ class SystemPromptBuilder:
                 schema_str = json.dumps(t.input_schema, separators=(",", ":"))
                 tool_lines.append(f"  - {t.name}: {t.description}  schema={schema_str}")
             sections.append(PromptSection(content="\n".join(tool_lines), scope="global", priority=21))
+
+        # Active capabilities — dynamic delegation table built from live tools/skills.
+        # Renders before the routed_skills wall-of-text so the table primes the model
+        # with the high-level menu before each skill body is shown.
+        delegation = build_delegation_section(
+            tools=tools,
+            skills=routed_skills or (),
+        )
+        if delegation:
+            sections.append(PromptSection(content=delegation, scope="global", priority=25))
 
         # Routed skills — only the skill(s) matched by the skill router
         if routed_skills:
