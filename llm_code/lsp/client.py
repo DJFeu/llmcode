@@ -6,7 +6,7 @@ import itertools
 import json
 import os
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -62,12 +62,19 @@ class CallHierarchyItem:
     """A symbol participating in a call hierarchy.
 
     Carries enough information to round-trip back through callHierarchy/* requests.
+
+    The ``raw`` field stores the original LSP response dict so opaque
+    server-private fields like ``data`` (used by rust-analyzer, jdtls, etc.)
+    plus full ``range``/``selectionRange``/``tags`` are echoed back verbatim
+    on subsequent ``callHierarchy/incomingCalls`` and ``outgoingCalls``
+    requests. Without this, many servers silently return empty arrays.
     """
     name: str
     kind: str
     file: str
     line: int
     column: int
+    raw: dict[str, Any] = field(default_factory=dict)
 
 
 _SYMBOL_KIND_INV: dict[str, int] = {label: code for code, label in _SYMBOL_KIND.items()}
@@ -381,7 +388,15 @@ class LspClient:
 
     @staticmethod
     def _call_hierarchy_item_to_lsp(item: CallHierarchyItem) -> dict[str, Any]:
-        kind_int = _SYMBOL_KIND_INV.get(item.kind, 12)
+        # Prefer the original raw LSP dict so opaque server-private state
+        # (`data`, `tags`, full ranges, exact `kind` int) round-trips verbatim.
+        if item.raw:
+            return dict(item.raw)
+        kind_int = _SYMBOL_KIND_INV.get(item.kind)
+        if kind_int is None:
+            raise ValueError(
+                f"Unknown call-hierarchy symbol kind label: {item.kind!r}"
+            )
         return {
             "name": item.name,
             "kind": kind_int,
@@ -411,6 +426,7 @@ class LspClient:
             file=node.get("uri", ""),
             line=start.get("line", 0),
             column=start.get("character", 0),
+            raw=dict(node),
         )
 
     async def get_diagnostics(self, file_uri: str) -> list[Diagnostic]:

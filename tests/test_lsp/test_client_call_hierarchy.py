@@ -107,6 +107,68 @@ async def test_prepare_call_hierarchy_sends_correct_payload() -> None:
 
 
 @pytest.mark.asyncio
+async def test_call_hierarchy_item_roundtrips_data_and_tags() -> None:
+    """Server-private `data`, `tags`, and full ranges must round-trip verbatim.
+
+    Many production servers (rust-analyzer, jdtls) require the opaque `data`
+    field returned from prepareCallHierarchy to be echoed back in
+    incoming/outgoing calls or they return empty results.
+    """
+    rich_item = {
+        "name": "foo",
+        "kind": 12,
+        "uri": "file:///x.py",
+        "tags": [1],
+        "detail": "fn foo()",
+        "data": {"server_token": "abc123", "extra": [1, 2]},
+        "range": {
+            "start": {"line": 3, "character": 4},
+            "end": {"line": 9, "character": 1},
+        },
+        "selectionRange": {
+            "start": {"line": 3, "character": 7},
+            "end": {"line": 3, "character": 10},
+        },
+    }
+    transport = FakeTransport([[rich_item], []])
+    client = LspClient(transport)
+    items = await client.prepare_call_hierarchy("file:///x.py", 3, 7)
+    assert len(items) == 1
+    await client.incoming_calls(items[0])
+    item_payload = transport.sent[-1]["params"]["item"]
+    assert item_payload["data"] == {"server_token": "abc123", "extra": [1, 2]}
+    assert item_payload["tags"] == [1]
+    assert item_payload["detail"] == "fn foo()"
+    assert item_payload["range"] == {
+        "start": {"line": 3, "character": 4},
+        "end": {"line": 9, "character": 1},
+    }
+    assert item_payload["selectionRange"] == {
+        "start": {"line": 3, "character": 7},
+        "end": {"line": 3, "character": 10},
+    }
+    assert item_payload["kind"] == 12
+
+
+@pytest.mark.asyncio
+async def test_call_hierarchy_item_roundtrips_unknown_kind() -> None:
+    """An unknown SymbolKind int must round-trip exactly, not be defaulted to 12."""
+    weird = {
+        "name": "weird",
+        "kind": 999,
+        "uri": "file:///x.py",
+        "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 1}},
+        "selectionRange": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 1}},
+    }
+    transport = FakeTransport([[weird], []])
+    client = LspClient(transport)
+    items = await client.prepare_call_hierarchy("file:///x.py", 0, 0)
+    await client.outgoing_calls(items[0])
+    sent_kind = transport.sent[-1]["params"]["item"]["kind"]
+    assert sent_kind == 999
+
+
+@pytest.mark.asyncio
 async def test_incoming_calls_sends_full_item() -> None:
     item = CallHierarchyItem(
         name="foo", kind="function", file="file:///x.py", line=1, column=0
