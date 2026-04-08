@@ -34,8 +34,29 @@ def make_subagent_runtime(
     """
     effective_role = role if role is not None else BUILD_ROLE
 
-    # Whitelist filter (empty whitelist = unrestricted copy).
+    # Whitelist filter:
+    #   * allowed_tools is None  -> unrestricted full inheritance
+    #   * allowed_tools == set() -> deny-all
+    #   * non-empty set          -> strict whitelist
     child_registry = parent._tool_registry.filtered(effective_role.allowed_tools)
+
+    # Recursion-depth fix: the inherited "agent" tool instance is shared with
+    # the parent, so its _current_depth is still the parent's. Replace it with
+    # a fresh AgentTool whose depth is parent_depth + 1, preserving max_depth
+    # and the runtime_factory closure.
+    parent_agent_tool = child_registry.get("agent")
+    if parent_agent_tool is not None:
+        from llm_code.tools.agent import AgentTool
+
+        if isinstance(parent_agent_tool, AgentTool):
+            child_agent_tool = AgentTool(
+                runtime_factory=parent_agent_tool._runtime_factory,
+                max_depth=parent_agent_tool._max_depth,
+                current_depth=parent_agent_tool._current_depth + 1,
+            )
+            # In-place replacement on the child registry only — parent
+            # registry is untouched because filtered() returned a new dict.
+            child_registry._tools["agent"] = child_agent_tool
 
     # Fresh session — no parent history.
     project_path = getattr(parent._context, "project_path", None)

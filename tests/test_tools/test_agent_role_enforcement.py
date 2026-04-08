@@ -114,3 +114,106 @@ def test_subagent_filtering_does_not_leak_into_parent() -> None:
     _make(parent, GENERAL_ROLE)
     parent_names_after = {t.name for t in parent._tool_registry.all_tools()}
     assert parent_names_before == parent_names_after
+
+
+# ---------------------------------------------------------------------------
+# Issue 1: BUILD_ROLE recursion-depth bypass
+# ---------------------------------------------------------------------------
+
+
+def _parent_with_real_agent_tool(max_depth: int) -> _FakeParent:
+    from llm_code.tools.agent import AgentTool
+
+    reg = ToolRegistry()
+    reg.register(_StubTool("read_file"))
+    reg.register(
+        AgentTool(
+            runtime_factory=lambda model, role=None: None,
+            max_depth=max_depth,
+            current_depth=0,
+        )
+    )
+    return _FakeParent(reg)
+
+
+def test_build_role_child_increments_agent_tool_depth() -> None:
+    from llm_code.tools.agent import AgentTool
+
+    parent = _parent_with_real_agent_tool(max_depth=3)
+    child = _make(parent, BUILD_ROLE)
+    child_agent = child._tool_registry.get("agent")
+    assert isinstance(child_agent, AgentTool)
+    assert child_agent._current_depth == 1
+    # Parent's AgentTool depth must be untouched.
+    assert parent._tool_registry.get("agent")._current_depth == 0
+
+
+def test_build_role_grandchild_depth_chain() -> None:
+    from llm_code.tools.agent import AgentTool
+
+    parent = _parent_with_real_agent_tool(max_depth=3)
+    child = _make(parent, BUILD_ROLE)
+    grand = _make(_FakeParent(child._tool_registry), BUILD_ROLE)
+    g_agent = grand._tool_registry.get("agent")
+    assert isinstance(g_agent, AgentTool)
+    assert g_agent._current_depth == 2
+
+
+def test_build_role_great_grandchild_refused_by_depth_guard() -> None:
+    from llm_code.tools.agent import AgentTool
+    from llm_code.tools.base import ToolResult
+
+    parent = _parent_with_real_agent_tool(max_depth=3)
+    child = _make(parent, BUILD_ROLE)
+    grand = _make(_FakeParent(child._tool_registry), BUILD_ROLE)
+    great = _make(_FakeParent(grand._tool_registry), BUILD_ROLE)
+    great_agent = great._tool_registry.get("agent")
+    assert isinstance(great_agent, AgentTool)
+    assert great_agent._current_depth == 3
+    # Now invoking it should hit the depth guard.
+    result: ToolResult = great_agent.execute({"task": "noop"})
+    assert result.is_error is True
+    assert "depth" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# Issue 3: dispatch-time defense-in-depth via is_tool_allowed_for_role
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_blocks_disallowed_tool_even_if_registry_leaks() -> None:
+    """Simulate a registry leak: parent registry contains a forbidden tool,
+    but the role check at _execute_tool_with_streaming refuses dispatch."""
+    import asyncio
+
+    from llm_code.api.types import ToolResultBlock
+    from llm_code.runtime.conversation import ConversationRuntime
+    from llm_code.tools.agent_roles import EXPLORE_ROLE
+    from llm_code.tools.parsing import ParsedToolCall
+
+    # Build a registry that LEAKS bash into an explore-role child.
+    reg = ToolRegistry()
+    reg.register(_StubTool("read_file"))
+    reg.register(_StubTool("bash"))  # leaked!
+
+    # Bypass __init__ — we only need the dispatch path + a couple of attrs.
+    runtime = ConversationRuntime.__new__(ConversationRuntime)
+    runtime._tool_registry = reg
+    runtime._subagent_role = EXPLORE_ROLE
+
+    # Stub the hook firing so it doesn't blow up on a missing hook runner.
+    runtime._fire_hook = lambda *a, **k: None
+
+    call = ParsedToolCall(id="t1", name="bash", args={}, source="native")
+
+    async def _drive():
+        results = []
+        async for ev in runtime._execute_tool_with_streaming(call):
+            results.append(ev)
+        return results
+
+    events = asyncio.run(_drive())
+    blocks = [e for e in events if isinstance(e, ToolResultBlock)]
+    assert len(blocks) == 1
+    assert blocks[0].is_error is True
+    assert "explore" in blocks[0].content.lower() or "permitted" in blocks[0].content.lower()
