@@ -127,23 +127,30 @@ def _parse_hermes_block(raw: str) -> ParsedToolCall | None:
     """Parse the Hermes function-calling format used by Qwen3, NousHermes,
     and most vLLM-served tool-fine-tuned local models.
 
-    Two sub-formats are supported:
+    Three sub-formats are supported:
 
-    1. **Full form** — ``<function=NAME>`` opens, parameters repeat,
-       ``</function>`` closes.
+    1. **Full form** — ``<function=NAME>`` opens, ``<parameter=KEY>VALUE</parameter>``
+       blocks repeat, ``</function>`` closes.
     2. **Template-truncated form** — vLLM-served Qwen3 chat template
        injects ``<tool_call>\\n<function=`` as the assistant prompt
        prefix, so the streamed body of ``<tool_call>`` starts directly
-       with the bare function name (e.g. ``web_search>...``). The
-       function name is extracted from the leading identifier instead
-       of from a ``<function=...>`` tag.
+       with the bare function name followed by ``>`` (e.g.
+       ``web_search>...``). Parameters are still ``<parameter=...>``
+       blocks.
+    3. **Truncated + JSON args form** — same template-truncation as #2,
+       but the body after ``NAME>`` is a JSON object instead of
+       ``<parameter=...>`` blocks. The JSON may be at the top level
+       (e.g. ``{"command": "ls"}``) or nested under ``args`` /
+       ``arguments`` (e.g. ``{"args": {"query": "...", "max_results": 3}}``).
+       This is what local Qwen3 sometimes emits when the chat template
+       primes the model with the ``<function=`` prefix but the model's
+       fine-tune produces JSON rather than parameter tags.
 
-    ``<parameter=KEY>VALUE</parameter>`` blocks are parsed identically
-    in both forms. Parameter values are stripped of leading/trailing
-    whitespace; internal whitespace (including newlines) is preserved
-    so multi-line content (e.g. file bodies) round-trips correctly.
+    Parameter values are stripped of leading/trailing whitespace; internal
+    whitespace (including newlines) is preserved so multi-line content
+    (e.g. file bodies) round-trips correctly.
 
-    Returns None if neither form matches.
+    Returns None if no form matches.
     """
     # Try full form first.
     fn_match = _HERMES_FUNCTION_RE.search(raw)
@@ -159,12 +166,55 @@ def _parse_hermes_block(raw: str) -> ParsedToolCall | None:
         body = trunc_match.group(2)
     if not name:
         return None
+    args = _parse_hermes_args(body)
+    return ParsedToolCall(
+        id=str(uuid.uuid4()), name=name, args=args, source="xml_tag"
+    )
+
+
+def _parse_hermes_args(body: str) -> dict:
+    """Extract args from a Hermes function body.
+
+    Strategy (in order):
+    1. ``<parameter=KEY>VALUE</parameter>`` blocks. If any present, use them.
+    2. JSON object payload — if the body (after stripping any trailing
+       ``</function>``) parses as a JSON dict, use it. If the dict has an
+       ``args`` or ``arguments`` key whose value is also a dict, prefer
+       the inner dict (so ``{"args": {"query": "x"}}`` → ``{"query": "x"}``).
+    3. Otherwise return ``{}`` — caller still gets a valid ParsedToolCall
+       with the function name, just no args.
+    """
+    # 1) parameter blocks
     args: dict = {}
     for param_match in _HERMES_PARAMETER_RE.finditer(body):
         key = param_match.group(1).strip()
         value = param_match.group(2).strip()
         if key:
             args[key] = value
-    return ParsedToolCall(
-        id=str(uuid.uuid4()), name=name, args=args, source="xml_tag"
-    )
+    if args:
+        return args
+
+    # 2) JSON payload — strip trailing </function> close if present, then
+    # find the first '{' and try to parse from there to the matching '}'.
+    candidate = body.strip()
+    if candidate.endswith("</function>"):
+        candidate = candidate[: -len("</function>")].strip()
+    if not candidate.startswith("{"):
+        # Try to find the first '{' anywhere in the body — handles
+        # leading whitespace/newlines that strip() didn't catch.
+        brace_idx = candidate.find("{")
+        if brace_idx == -1:
+            return {}
+        candidate = candidate[brace_idx:]
+    try:
+        data = json.loads(candidate)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    # Prefer wrapped 'args' / 'arguments' dict if present
+    for wrapper in ("args", "arguments"):
+        inner = data.get(wrapper)
+        if isinstance(inner, dict):
+            return inner
+    return data

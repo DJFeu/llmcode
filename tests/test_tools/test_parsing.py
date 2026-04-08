@@ -345,3 +345,83 @@ class TestHermesTemplateTruncatedFormat:
         )
         result = parse_tool_calls(text, None)
         assert result == []
+
+
+class TestHermesTruncatedJsonArgsFormat:
+    """Yet another sub-format observed in production: vLLM-served Qwen3
+    sometimes emits the bare function name followed by a JSON object
+    containing the args, with NO <parameter=...> blocks and NO closing
+    </function> tag.
+
+    Captured live from Qwen3.5-122B on 2026-04-08:
+
+        <tool_call>web_search>{"args": {"query": "今日熱門新聞", "max_results": 3}}</tool_call>
+
+    The model is mixing the truncated function-name prefix with a
+    JSON-style argument payload. The parser must detect that the body
+    after NAME> is a JSON object and extract args from either the top-
+    level dict or its 'args'/'arguments' key.
+    """
+
+    def test_truncated_with_json_args_wrapper(self):
+        """Args nested under 'args' key — exact production capture."""
+        text = (
+            '<tool_call>web_search>{"args": {"query": "今日熱門新聞", "max_results": 3}}</tool_call>'
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "web_search"
+        assert result[0].args == {"query": "今日熱門新聞", "max_results": 3}
+
+    def test_truncated_with_json_arguments_wrapper(self):
+        """Some Hermes-finetuned models use 'arguments' instead of 'args'."""
+        text = (
+            '<tool_call>read_file>{"arguments": {"file_path": "/tmp/x"}}</tool_call>'
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].args == {"file_path": "/tmp/x"}
+
+    def test_truncated_with_flat_json_args(self):
+        """Args directly at the top level of the JSON object — no wrapper."""
+        text = (
+            '<tool_call>bash>{"command": "ls -la"}</tool_call>'
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "bash"
+        assert result[0].args == {"command": "ls -la"}
+
+    def test_truncated_with_json_args_multiline(self):
+        text = (
+            '<tool_call>web_search>\n'
+            '{"args": {"query": "test", "max_results": 5}}\n'
+            '</tool_call>'
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "web_search"
+        assert result[0].args == {"query": "test", "max_results": 5}
+
+    def test_truncated_with_json_args_and_function_close(self):
+        """Some emissions include both the JSON args AND a </function> close."""
+        text = (
+            '<tool_call>web_search>{"args": {"query": "x"}}</function></tool_call>'
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "web_search"
+        assert result[0].args == {"query": "x"}
+
+    def test_truncated_invalid_json_after_name_falls_through(self):
+        """If body after NAME> isn't valid JSON AND has no parameter blocks,
+        return empty args (not None — the call still exists)."""
+        text = (
+            '<tool_call>git_status>not-json-not-params</tool_call>'
+        )
+        result = parse_tool_calls(text, None)
+        # We still recognize the call name, args just empty
+        assert len(result) == 1
+        assert result[0].name == "git_status"
+        assert result[0].args == {}
