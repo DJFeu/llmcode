@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Three themed builtin hooks ported from oh-my-opencode:
+  - `context_window_monitor` — warns once per session at 75% context usage
+  - `thinking_mode` — detects "ultrathink" / 深入思考 keywords and flags the turn
+  - `rules_injector` — auto-injects CLAUDE.md / AGENTS.md / .cursorrules content
+    when a project file is read
+- `HookOutcome.extra_output: str` — allows in-process hooks to append content to
+  the visible tool result (used by `rules_injector` and `context_window_monitor`).
+
 ## v0.1.0 (2026-04-03) — Production Cleanup
 
 ### Changed
