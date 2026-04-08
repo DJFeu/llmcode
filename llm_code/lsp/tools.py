@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -569,7 +570,7 @@ class _CallHierarchyInput(BaseModel):
     file: str
     line: int
     column: int
-    direction: str = "both"
+    direction: Literal["incoming", "outgoing", "both"] = "both"
 
 
 _VALID_DIRECTIONS: frozenset[str] = frozenset({"incoming", "outgoing", "both"})

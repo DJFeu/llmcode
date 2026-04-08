@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from llm_code.lsp.client import CallHierarchyItem
 from llm_code.lsp.tools import LspCallHierarchyTool
@@ -149,6 +150,12 @@ def test_call_hierarchy_no_client(tmp_path) -> None:
         {"file": str(weird), "line": 0, "column": 0, "direction": "both"}
     )
     assert result.is_error is True
+
+
+def test_call_hierarchy_input_model_rejects_bad_direction() -> None:
+    from llm_code.lsp.tools import _CallHierarchyInput
+    with pytest.raises(ValidationError):
+        _CallHierarchyInput(file="x.py", line=0, column=0, direction="garbage")
 
 
 def test_call_hierarchy_input_schema() -> None:
