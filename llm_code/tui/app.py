@@ -76,10 +76,48 @@ _EMPTY_RESPONSE_THINKING_ZH = (
 )
 
 
-def _empty_response_message(*, saw_tool_call: bool, user_input: str) -> str:
+def _session_is_cjk(user_input: str, session_messages: Any = None) -> bool:
+    """Decide whether to use CJK messages, based on the current input AND
+    any prior CJK content in the session.
+
+    A user who said "今日熱門新聞三則" earlier and then types "1" or "ok"
+    is still a CJK user — we shouldn't flip back to English just because
+    the latest input has no CJK characters. We check the latest input
+    first; if not CJK, scan recent session messages for ANY CJK char.
+    """
+    if _is_cjk_dominant(user_input):
+        return True
+    if session_messages is None:
+        return False
+    # Walk recent messages (cap at 20 to bound work) and check user
+    # text content for CJK. We deliberately ignore assistant text to
+    # avoid the CLI's own English status messages skewing the verdict.
+    try:
+        recent = list(session_messages)[-20:]
+    except TypeError:
+        return False
+    for msg in recent:
+        if getattr(msg, "role", None) != "user":
+            continue
+        content = getattr(msg, "content", None) or ()
+        for block in content:
+            text = getattr(block, "text", None)
+            if text and _is_cjk_dominant(text):
+                return True
+    return False
+
+
+def _empty_response_message(
+    *,
+    saw_tool_call: bool,
+    user_input: str,
+    session_messages: Any = None,
+) -> str:
     """Pick the right empty-response diagnostic message, matching the
-    user's input language (CJK vs non-CJK)."""
-    zh = _is_cjk_dominant(user_input)
+    user's language (CJK vs non-CJK), looking at the current input AND
+    the recent session history so a Chinese user typing a short follow-up
+    like "1" still sees Chinese."""
+    zh = _session_is_cjk(user_input, session_messages)
     if saw_tool_call:
         return _EMPTY_RESPONSE_TOOL_CALL_ZH if zh else _EMPTY_RESPONSE_TOOL_CALL_EN
     return _EMPTY_RESPONSE_THINKING_ZH if zh else _EMPTY_RESPONSE_THINKING_EN
@@ -1605,6 +1643,7 @@ class LLMCodeTUI(App):
                 _empty_response_message(
                     saw_tool_call=_saw_tool_call_this_turn,
                     user_input=user_input,
+                    session_messages=getattr(self._runtime, "session", None) and self._runtime.session.messages,
                 )
             ))
 
