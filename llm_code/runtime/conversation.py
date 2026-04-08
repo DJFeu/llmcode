@@ -576,11 +576,11 @@ class ConversationRuntime:
     async def run_turn(self, user_input: str, images: list | None = None, active_skill_content: str | None = None) -> AsyncIterator[StreamEvent]:
         """Run one user turn wrapped in an agent.turn span for telemetry nesting."""
         session_id = getattr(self.session, "session_id", "") or getattr(self.session, "id", "")
-        with self._telemetry.span(
-            "agent.turn",
-            session_id=session_id,
-            model=getattr(self, "_active_model", "") or getattr(self._config, "model", ""),
-        ):
+        _turn_attrs = {
+            "session.id": session_id,
+            "model": getattr(self, "_active_model", "") or getattr(self._config, "model", ""),
+        }
+        with self._telemetry.span("agent.turn", **_turn_attrs):
             async for event in self._run_turn_body(user_input, images, active_skill_content):
                 yield event
 

@@ -70,7 +70,7 @@ def recording_telemetry() -> tuple[Telemetry, _RecordingTracer]:
 def test_agent_turn_span_nests_llm_completion_and_tool(recording_telemetry) -> None:
     t, rec = recording_telemetry
 
-    with t.span("agent.turn", session_id="s1") as turn:
+    with t.span("agent.turn", **{"session.id": "s1"}) as turn:
         with t.trace_llm_completion(
             session_id="s1", model="m", prompt_preview="p", input_tokens=1
         ):
@@ -81,7 +81,8 @@ def test_agent_turn_span_nests_llm_completion_and_tool(recording_telemetry) -> N
     assert len(rec.root_spans) == 1
     root = rec.root_spans[0]
     assert root.name == "agent.turn"
-    assert root.attributes.get("session_id") == "s1"
+    # OTel-convention dotted key (Issue 2 fix)
+    assert root.attributes.get("session.id") == "s1"
 
     child_names = [c.name for c in root.children]
     assert "llm.completion" in child_names
@@ -121,6 +122,25 @@ def test_exception_inside_span_is_recorded_and_propagates(recording_telemetry) -
     span = rec.root_spans[0]
     assert span.status_err is True
     assert "boom" in span.attributes.get("exception", "")
+
+
+def test_conversation_agent_turn_uses_dotted_session_key() -> None:
+    """Issue 2: production agent.turn span site must use 'session.id' (OTel
+    convention), not the Python kwarg 'session_id'.
+    """
+    from pathlib import Path
+    src = Path(__file__).resolve().parents[2] / "llm_code" / "runtime" / "conversation.py"
+    text = src.read_text()
+    # Locate the agent.turn span block
+    idx = text.find('"agent.turn"')
+    assert idx != -1, "agent.turn span call not found"
+    # Inspect a window around the call site (before and after).
+    block = text[max(0, idx - 400):idx + 600]
+    assert '"session.id"' in block, (
+        "agent.turn span must pass 'session.id' (dotted, OTel convention)"
+    )
+    # And must not be using the bare Python kwarg form
+    assert "session_id=session_id" not in block
 
 
 def test_build_prompt_preview_handles_text_blocks() -> None:
