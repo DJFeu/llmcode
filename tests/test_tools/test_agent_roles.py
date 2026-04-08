@@ -51,12 +51,19 @@ class TestAgentRoleDataclass:
             assert role.name
             assert role.description
             assert role.system_prompt_prefix
-            assert role.allowed_tools
+            # BUILD_ROLE uses None as the "unrestricted" sentinel; all other
+            # roles enforce a non-empty whitelist.
+            if role.name == "build":
+                assert role.allowed_tools is None
+            else:
+                assert role.allowed_tools
             assert role.model_key
 
-    def test_allowed_tools_is_frozenset(self):
+    def test_allowed_tools_is_frozenset_or_none(self):
         for role in BUILT_IN_ROLES.values():
-            assert isinstance(role.allowed_tools, frozenset)
+            assert role.allowed_tools is None or isinstance(
+                role.allowed_tools, frozenset
+            )
 
 
 class TestExploreRole:
@@ -157,7 +164,7 @@ class TestAgentToolInputSchema:
         tool = AgentTool(runtime_factory=lambda m, **kw: None)
         schema = tool.input_schema
         role_schema = schema["properties"]["role"]
-        assert set(role_schema.get("enum", [])) == {"explore", "plan", "verify"}
+        assert set(role_schema.get("enum", [])) == {"build", "plan", "explore", "verify", "general"}
 
     def test_role_not_required(self):
         tool = AgentTool(runtime_factory=lambda m, **kw: None)

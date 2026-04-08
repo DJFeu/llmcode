@@ -1305,6 +1305,30 @@ class ConversationRuntime:
             )
             return
 
+        # 1b. Defense-in-depth role check: even if a disallowed tool somehow
+        # leaked into this runtime's registry (e.g. via a future regression),
+        # the subagent role whitelist still blocks dispatch.
+        _subagent_role = getattr(self, "_subagent_role", None)
+        if _subagent_role is not None:
+            from llm_code.tools.agent_roles import is_tool_allowed_for_role
+
+            if not is_tool_allowed_for_role(_subagent_role, call.name):
+                logger.warning(
+                    "Tool %s blocked by role %s",
+                    call.name,
+                    _subagent_role.name,
+                )
+                self._fire_hook("tool_denied", {"tool_name": call.name})
+                yield ToolResultBlock(
+                    tool_use_id=call.id,
+                    content=(
+                        f"Tool '{call.name}' is not permitted for role "
+                        f"'{_subagent_role.name}'"
+                    ),
+                    is_error=True,
+                )
+                return
+
         # 2. Validate input
         try:
             validated_args = tool.validate_input(call.args)

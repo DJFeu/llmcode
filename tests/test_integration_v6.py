@@ -102,4 +102,6 @@ def test_all_built_in_roles_exist() -> None:
     assert "explore" in BUILT_IN_ROLES
     assert "plan" in BUILT_IN_ROLES
     assert "verify" in BUILT_IN_ROLES
-    assert len(BUILT_IN_ROLES) == 3
+    assert "build" in BUILT_IN_ROLES
+    assert "general" in BUILT_IN_ROLES
+    assert len(BUILT_IN_ROLES) == 5
