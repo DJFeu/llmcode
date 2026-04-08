@@ -232,16 +232,23 @@ async def _classify_with_llm_debug(
         # skill name as a substring. Reasoning models often discuss the
         # candidate skills by name in their thinking block — that's good
         # enough signal even if no clean answer line was emitted.
+        # Require >=2 occurrences AND margin >=2 over runner-up. A single
+        # mention is too weak because reasoning models mention all candidates
+        # while ruling them out.
+        _MIN_MENTIONS = 2
+        _MIN_MARGIN = 2
         raw_lower = raw.lower()
-        # Score by occurrence count to pick the dominant skill if multiple appear
         scores = {
             name: raw_lower.count(lname)
             for lname, name in skill_names.items()
         }
-        scores = {n: c for n, c in scores.items() if c > 0}
+        scores = {n: c for n, c in scores.items() if c >= _MIN_MENTIONS}
         if scores:
-            best = max(scores.items(), key=lambda kv: kv[1])
-            return best[0], raw
+            ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+            best_name, best_score = ranked[0]
+            runner_up = ranked[1][1] if len(ranked) > 1 else 0
+            if best_score - runner_up >= _MIN_MARGIN:
+                return best_name, raw
 
         return None, raw
     except Exception as e:
