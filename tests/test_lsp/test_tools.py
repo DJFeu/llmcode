@@ -16,16 +16,21 @@ from llm_code.lsp.tools import (
 @pytest.fixture(autouse=True)
 def _stub_path_exists(monkeypatch):
     """Existing tests use synthetic absolute paths like /proj/main.py.
-    The new _validate_lsp_path helper rejects missing files, so stub
-    Path.exists to True for the module under test."""
+    The new _validate_lsp_path helper rejects missing files, so bypass
+    the validator entirely for tests in this file.
+
+    The previous approach (subclassing pathlib.Path and overriding
+    .exists()) breaks on Python 3.11 because Path subclasses require
+    _flavour to be set — direct subclassing is only supported on 3.13+.
+    Patching the validator function is portable across Python versions
+    and matches the fixture's intent: skip file-existence checks for
+    synthetic test paths.
+    """
     from llm_code.lsp import tools as _tools_mod
-    real_path = _tools_mod.Path
 
-    class _AlwaysExists(real_path):  # type: ignore[misc,valid-type]
-        def exists(self) -> bool:  # type: ignore[override]
-            return True
-
-    monkeypatch.setattr(_tools_mod, "Path", _AlwaysExists)
+    monkeypatch.setattr(
+        _tools_mod, "_validate_lsp_path", lambda *args, **kwargs: None
+    )
 
 
 def make_mock_manager(client=None):
