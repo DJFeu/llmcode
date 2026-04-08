@@ -143,6 +143,20 @@ def test_conversation_agent_turn_uses_dotted_session_key() -> None:
     assert "session_id=session_id" not in block
 
 
+def test_conversation_llm_completion_enriched_after_stream() -> None:
+    """Issue 1: the llm.completion span must remain open across the stream
+    consume loop and be enriched with completion-side attributes afterwards.
+    Verified via source inspection of the call site.
+    """
+    from pathlib import Path
+    src = Path(__file__).resolve().parents[2] / "llm_code" / "runtime" / "conversation.py"
+    text = src.read_text()
+    # The post-stream enrichment must reference these attribute keys.
+    assert "llm.completion.preview" in text
+    assert "llm.tokens.output" in text
+    assert "llm.finish_reason" in text
+
+
 def test_build_prompt_preview_handles_text_blocks() -> None:
     from dataclasses import dataclass
     from llm_code.runtime.conversation import _build_prompt_preview
