@@ -117,7 +117,7 @@ class Telemetry:
                 logging.getLogger(__name__).warning(
                     "Telemetry: langfuse keys are set but the 'langfuse' "
                     "package is not installed. Continuing with OTLP only. "
-                    "Install with: pip install 'llm-code[tracing]'"
+                    "Install with: pip install 'llm-code[telemetry]'"
                 )
             except Exception as exc:
                 import logging
@@ -168,32 +168,28 @@ class Telemetry:
             yield None
             return
 
-        try:
-            with cm as otel_span:
+        with cm as otel_span:
+            try:
+                for key, value in attributes.items():
+                    if value is None:
+                        continue
+                    otel_span.set_attribute(key, _coerce_attr_value(value))
+            except Exception:
+                pass
+            try:
+                yield otel_span
+            except Exception as exc:
                 try:
-                    for key, value in attributes.items():
-                        if value is None:
-                            continue
-                        otel_span.set_attribute(key, _coerce_attr_value(value))
+                    otel_span.set_status(self._StatusCode.ERROR)
+                    otel_span.record_exception(exc)
                 except Exception:
                     pass
+                raise
+            else:
                 try:
-                    yield otel_span
-                except Exception as exc:
-                    try:
-                        otel_span.set_status(self._StatusCode.ERROR)
-                        otel_span.record_exception(exc)
-                    except Exception:
-                        pass
-                    raise
-                else:
-                    try:
-                        otel_span.set_status(self._StatusCode.OK)
-                    except Exception:
-                        pass
-        except Exception:
-            # Any failure in the OTel layer must not break the caller
-            pass
+                    otel_span.set_status(self._StatusCode.OK)
+                except Exception:
+                    pass
 
     @contextmanager
     def trace_llm_completion(

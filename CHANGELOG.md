@@ -14,7 +14,8 @@
   - Each conversation turn is now wrapped in an agent.turn parent span; the
     LLM call and every tool call become children of that span, forming a
     tree visible in Jaeger / Langfuse / any OTel-compatible UI
-  - New optional dependency group: pip install 'llm-code[tracing]'
+  - langfuse>=3.0 added to the existing [telemetry] extra:
+    pip install 'llm-code[telemetry]'
 
 ### Changed
 - TelemetryConfig now has langfuse_public_key, langfuse_secret_key,

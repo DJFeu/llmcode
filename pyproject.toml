@@ -49,12 +49,6 @@ telemetry = [
     "opentelemetry-exporter-otlp>=1.20",
     "langfuse>=3.0",
 ]
-tracing = [
-    "opentelemetry-api>=1.20",
-    "opentelemetry-sdk>=1.20",
-    "opentelemetry-exporter-otlp>=1.20",
-    "langfuse>=3.0",
-]
 web = ["readability-lxml>=0.8", "html2text>=2024.2"]
 web-browser = ["readability-lxml>=0.8", "html2text>=2024.2", "playwright>=1.40"]
 docs = ["mkdocs>=1.6", "mkdocs-material>=9.5"]
