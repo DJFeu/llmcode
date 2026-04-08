@@ -216,7 +216,16 @@ def build_delegation_section(
 
     if blocks and blocks[0][0] == "tools":
         tool_id, lines = blocks[0]
-        while len(lines) > 2 and len(rendered.encode("utf-8")) > max_bytes:
+        prev_len = -1
+        for _ in range(64):  # bounded: 2^64 body lines is unreachable
+            if len(rendered.encode("utf-8")) <= max_bytes:
+                break
+            if len(lines) <= 2:
+                break
+            if len(lines) == prev_len:
+                # Cannot shrink further (body already at floor) — give up.
+                break
+            prev_len = len(lines)
             head = lines[:1]
             body = lines[1:]
             body = body[: max(1, len(body) // 2)]

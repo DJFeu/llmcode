@@ -223,6 +223,29 @@ def test_build_delegation_section_respects_byte_budget() -> None:
     assert "## Active Capabilities" in out
 
 
+def test_build_delegation_section_does_not_hang_under_tiny_budget() -> None:
+    """A pathologically small max_bytes (smaller than header+intro) must not
+    cause an infinite loop in the tool-table truncation halving logic."""
+    import signal
+
+    tools = tuple(
+        _tool(f"tool_{i}", description="x" * 50) for i in range(50)
+    )
+    skills: tuple[Skill, ...] = ()
+
+    def _alarm(signum, frame):  # type: ignore[no-untyped-def]
+        raise TimeoutError("truncation loop did not converge")
+
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.alarm(2)
+    try:
+        out = build_delegation_section(tools, skills, max_bytes=10)
+    finally:
+        signal.alarm(0)
+
+    assert isinstance(out, str)
+
+
 def test_build_delegation_section_no_truncation_when_under_budget() -> None:
     out = build_delegation_section(
         (_tool("read_file"),),
