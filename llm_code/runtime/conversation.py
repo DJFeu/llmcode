@@ -157,6 +157,7 @@ class ConversationRuntime:
         self._tool_registry = tool_registry
         self._permissions = permission_policy
         self._hooks = hook_runner
+        self._thinking_boost_active = False
         # Register opt-in builtin Python hooks (config.builtin_hooks.enabled).
         try:
             _builtin_cfg = getattr(config, "builtin_hooks", None)
@@ -576,6 +577,14 @@ class ConversationRuntime:
             logger.warning("skill MCP spawn failed: %s", _exc)
         _turn_start = time.monotonic()
         self._fire_hook("prompt_submit", {"text": user_input[:200]})
+        if self._hooks is not None and hasattr(self._hooks, "fire_python"):
+            _ps_ctx = {
+                "prompt": user_input,
+                "session_id": getattr(self._context, "session_id", ""),
+            }
+            self._hooks.fire_python("prompt_submit", _ps_ctx)
+            if _ps_ctx.get("thinking_requested"):
+                self._thinking_boost_active = True
         # Keyword-driven action detection (Feature 6, opt-in via keywords.enabled).
         try:
             _kw_cfg = getattr(self._config, "keywords", None)
