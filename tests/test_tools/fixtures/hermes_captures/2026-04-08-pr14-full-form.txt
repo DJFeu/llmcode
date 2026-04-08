@@ -1,0 +1,10 @@
+<tool_call>
+<function=web_search>
+<parameter=query>
+今日熱門新聞
+</parameter>
+<parameter=max_results>
+3
+</parameter>
+</function>
+</tool_call>
