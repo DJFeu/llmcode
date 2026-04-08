@@ -680,6 +680,25 @@ class ConversationRuntime:
             async for event in self._run_turn_body(user_input, images, active_skill_content):
                 yield event
 
+    async def run_one_turn(
+        self,
+        user_input: str,
+        images: list | None = None,
+        active_skill_content: str | None = None,
+    ) -> list:
+        """Drive one turn to completion and collect emitted events.
+
+        Convenience helper for tests and non-streaming callers (like
+        ``run_quick_mode``) that want to exercise the full runner path
+        but don't need incremental streaming.
+        """
+        events: list = []
+        async for event in self.run_turn(
+            user_input, images=images, active_skill_content=active_skill_content
+        ):
+            events.append(event)
+        return events
+
     async def _run_turn_body(self, user_input: str, images: list | None = None, active_skill_content: str | None = None) -> AsyncIterator[StreamEvent]:
         """Run one user turn (may involve multiple LLM calls for tool use)."""
         logger.debug("Starting turn: %s", user_input[:80])
