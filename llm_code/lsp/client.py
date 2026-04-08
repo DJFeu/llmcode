@@ -33,6 +33,11 @@ class Diagnostic:
 
 
 @dataclass(frozen=True)
+class Hover:
+    contents: str
+
+
+@dataclass(frozen=True)
 class LspServerConfig:
     command: str
     args: tuple[str, ...] = ()
@@ -202,6 +207,38 @@ class LspClient:
             },
         )
         return self._parse_locations(result)
+
+    async def hover(self, file_uri: str, line: int, col: int) -> Hover:
+        result = await self._request(
+            "textDocument/hover",
+            {
+                "textDocument": {"uri": file_uri},
+                "position": {"line": line, "character": col},
+            },
+        )
+        return Hover(contents=self._parse_hover_contents(result))
+
+    @staticmethod
+    def _parse_hover_contents(result: Any) -> str:
+        """Normalize the three LSP hover content shapes into a single string."""
+        if result is None:
+            return ""
+        contents = result.get("contents") if isinstance(result, dict) else None
+        if contents is None:
+            return ""
+        if isinstance(contents, str):
+            return contents
+        if isinstance(contents, dict):
+            return contents.get("value", "") or ""
+        if isinstance(contents, list):
+            parts: list[str] = []
+            for item in contents:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    parts.append(item.get("value", "") or "")
+            return "\n\n".join(p for p in parts if p)
+        return ""
 
     async def get_diagnostics(self, file_uri: str) -> list[Diagnostic]:
         result = await self._request(
