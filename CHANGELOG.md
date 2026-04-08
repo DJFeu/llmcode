@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Refactored (single source of truth)
+- **`tests/fixtures/runtime.py`** — shared `make_conv_runtime()` factory with canned-response provider and callback-based test tool. Runtime-level tests no longer hand-build a `ConversationRuntime` with ad-hoc `_Provider` classes. Unblocks the PR #17 Task 3 smoke tombstone (now a real test that proves Hermes-truncated tool calls get dispatched through the full runner).
+- **`llm_code/cli/oneshot.py:run_quick_mode`** — `-q` quick mode now routes through the real `ConversationRuntime` via `run_one_turn`. Previously it called the provider directly, bypassing system prompt / tool registry / parser / dispatcher — which is why PRs #11/#13/#14 all "verified" fixes via `-q` that missed the real TUI-path bugs.
+- **`LLMCodeTUI._register_core_tools_into(registry, config)`** — classmethod extracted from the TUI constructor so the oneshot path registers the same collaborator-free tool set (file/shell/search/web/git/notebook). Prevents the two paths from drifting.
+- **`llm_code/streaming/stream_parser.py`** — canonical `StreamParser` state machine for `<think>` / `<tool_call>` parsing. Both TUI rendering and runtime dispatch consume the same events via `StreamParser.feed()`. The TUI inline parser (~110 lines of state machine) is replaced with 45 lines of event routing — net −63 lines and a single source of truth for what the model emitted. 14 unit tests cover text-only, think blocks (full and implicit-end), tool calls (all 3 Hermes variants), cross-chunk tag splits, interleaving, flush.
+- **`tests/test_runtime/test_prompt_tool_references.py`** — lint test that scans `<!-- TOOL_NAMES: START -->` / `<!-- TOOL_NAMES: END -->` marker blocks in system prompt markdown files and asserts every backtick-quoted tool name exists in the `ToolRegistry`. Catches the PR #11 / #13 class of bug (system prompt contradicting actual registered tools) before merge.
+
 ## v1.11.0 (2026-04-08)
 
 **Highlights:**

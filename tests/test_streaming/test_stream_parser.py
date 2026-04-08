@@ -3,7 +3,6 @@ path and the runtime dispatch path consume."""
 from __future__ import annotations
 
 from llm_code.streaming.stream_parser import (
-    StreamEvent,
     StreamEventKind,
     StreamParser,
 )
@@ -154,15 +153,11 @@ class TestStreamParserInterleaving:
         assert tc_events[0].tool_call.name == "bash"
 
     def test_flush_emits_trailing_plain_text(self) -> None:
+        # The reserve window may hold back "partial" during feed —
+        # flush must release it so callers see the full stream.
         p = StreamParser()
-        p.feed("<think>done</think>partial")
-        # The reserve window may have held back "partial" — flush should release it
-        events = p.flush()
-        # Either the feed already emitted "partial" or flush does; either way it must be seen
-        # by concatenating both.
-        p2 = StreamParser()
-        feed_events = p2.feed("<think>done</think>partial")
-        flush_events = p2.flush()
+        feed_events = p.feed("<think>done</think>partial")
+        flush_events = p.flush()
         all_text = "".join(
             e.text for e in (feed_events + flush_events) if e.kind == StreamEventKind.TEXT
         )

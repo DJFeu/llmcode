@@ -21,6 +21,8 @@ from llm_code.tui.theme import APP_CSS
 from llm_code.logging import get_logger
 
 if TYPE_CHECKING:
+    from llm_code.runtime.config import RuntimeConfig
+    from llm_code.tools.registry import ToolRegistry
     from llm_code.tui.marketplace import MarketplaceBrowser  # noqa: F811
 
 logger = get_logger(__name__)
@@ -547,19 +549,7 @@ class LLMCodeTUI(App):  # noqa: E302
         from llm_code.runtime.permissions import PermissionMode, PermissionPolicy
         from llm_code.runtime.prompt import SystemPromptBuilder
         from llm_code.runtime.session import Session
-        from llm_code.tools.bash import BashTool
-        from llm_code.tools.edit_file import EditFileTool
-        from llm_code.tools.git_tools import (
-            GitBranchTool, GitCommitTool, GitDiffTool,
-            GitLogTool, GitPushTool, GitStashTool, GitStatusTool,
-        )
-        from llm_code.tools.glob_search import GlobSearchTool
-        from llm_code.tools.grep_search import GrepSearchTool
-        from llm_code.tools.notebook_edit import NotebookEditTool
-        from llm_code.tools.notebook_read import NotebookReadTool
-        from llm_code.tools.read_file import ReadFileTool
         from llm_code.tools.registry import ToolRegistry
-        from llm_code.tools.write_file import WriteFileTool
 
         api_key = os.environ.get(self._config.provider_api_key_env, "")
         base_url = self._config.provider_base_url or ""
