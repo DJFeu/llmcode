@@ -22,6 +22,18 @@
     accepts `direction: incoming | outgoing | both` and runs prepare →
     incoming/outgoing in one tool call)
 
+### Fixed
+- `CallHierarchyItem` now round-trips the original LSP node (`data`, `tags`,
+  `range`, `selectionRange`, exact `kind` int) so servers like rust-analyzer
+  and jdtls — which require their opaque `data` token to be echoed back —
+  return non-empty incoming/outgoing call results. Unknown kind labels now
+  raise instead of silently coercing to Function (12).
+- `LspCallHierarchyTool` with `direction="both"` now dispatches incoming and
+  outgoing calls concurrently via `asyncio.gather`, halving worst-case latency.
+- `_CallHierarchyInput.direction` is now a `Literal["incoming","outgoing","both"]`
+  so programmatic callers bypassing the JSON schema get Pydantic validation
+  errors on bad values.
+
 ## v0.1.0 (2026-04-03) — Production Cleanup
 
 ### Changed
