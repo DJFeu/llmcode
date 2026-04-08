@@ -57,6 +57,8 @@ def _skill(name: str, tags: tuple[str, ...] = (), description: str = "") -> Skil
         ("WebFetch", "web"),
         ("agent", "agent"),
         ("task_create", "agent"),
+        ("task", "agent"),
+        ("Task", "agent"),
         ("totally_unknown_tool", "other"),
     ],
 )

@@ -48,6 +48,7 @@ _TOOL_RULES: tuple[tuple[str, str], ...] = (
     ("read", "read"),
     # Agent / task management (check before write rules so "task_create" doesn't hit "create")
     ("task_", "agent"),
+    ("task", "agent"),  # bare top-level Task tool
     ("subagent", "agent"),
     ("delegate", "agent"),
     ("agent", "agent"),
