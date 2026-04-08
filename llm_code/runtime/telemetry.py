@@ -168,7 +168,22 @@ class Telemetry:
             yield None
             return
 
-        with cm as otel_span:
+        # Enter the underlying OTel CM. Failures here must NOT propagate to
+        # the caller — degrade to a no-op span instead so the contract
+        # "telemetry must never break the caller" is preserved.
+        try:
+            otel_span = cm.__enter__()
+        except Exception:
+            import logging
+            logging.getLogger(__name__).debug(
+                "telemetry span %r failed on enter; ignoring", name
+            )
+            yield None
+            return
+
+        # From here on, we MUST call cm.__exit__ exactly once.
+        _exited = False
+        try:
             try:
                 for key, value in attributes.items():
                     if value is None:
@@ -176,20 +191,42 @@ class Telemetry:
                     otel_span.set_attribute(key, _coerce_attr_value(value))
             except Exception:
                 pass
+
             try:
                 yield otel_span
             except Exception as exc:
+                # Caller raised — mark span error, then propagate.
                 try:
                     otel_span.set_status(self._StatusCode.ERROR)
                     otel_span.record_exception(exc)
                 except Exception:
                     pass
-                raise
+                # Hand the exception to cm.__exit__; if exit suppresses it
+                # (returns truthy) we honor that, otherwise re-raise.
+                exc_type, exc_val, exc_tb = type(exc), exc, exc.__traceback__
+                try:
+                    suppressed = cm.__exit__(exc_type, exc_val, exc_tb)
+                except Exception:
+                    suppressed = False
+                _exited = True
+                if not suppressed:
+                    raise
+                return
             else:
                 try:
                     otel_span.set_status(self._StatusCode.OK)
                 except Exception:
                     pass
+        finally:
+            # Normal-exit path: close the CM, swallowing any OTel-layer error.
+            if not _exited:
+                try:
+                    cm.__exit__(None, None, None)
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).debug(
+                        "telemetry span %r failed on exit; ignoring", name
+                    )
 
     @contextmanager
     def trace_llm_completion(
