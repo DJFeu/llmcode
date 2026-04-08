@@ -49,3 +49,29 @@ def test_workspace_symbol_tool_empty_result() -> None:
     tool = LspWorkspaceSymbolTool(_FakeManager(_FakeClient([])))
     result = tool.execute({"query": "Foo"})
     assert "no symbols" in result.output.lower()
+
+
+def test_workspace_symbol_rejects_empty_query() -> None:
+    tool = LspWorkspaceSymbolTool(_FakeManager(_FakeClient([])))
+    result = tool.execute({"query": ""})
+    assert result.is_error is True
+    assert "empty" in result.output.lower()
+
+
+def test_workspace_symbol_rejects_whitespace_query() -> None:
+    tool = LspWorkspaceSymbolTool(_FakeManager(_FakeClient([])))
+    result = tool.execute({"query": "   "})
+    assert result.is_error is True
+
+
+def test_workspace_symbol_caps_results() -> None:
+    syms = [
+        SymbolInfo(name=f"sym_{i}", kind="function", file="file:///x.py", line=i, column=0)
+        for i in range(500)
+    ]
+    tool = LspWorkspaceSymbolTool(_FakeManager(_FakeClient(syms)))
+    result = tool.execute({"query": "sym"})
+    assert result.is_error is False
+    assert "sym_199" in result.output
+    assert "sym_200" not in result.output
+    assert "(+300 more)" in result.output

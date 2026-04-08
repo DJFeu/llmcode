@@ -12,6 +12,9 @@ from llm_code.lsp.manager import LspServerManager
 from llm_code.tools.base import PermissionLevel, Tool, ToolResult
 
 
+_WORKSPACE_SYMBOL_MAX_RESULTS = 200
+
+
 # ---------------------------------------------------------------------------
 # Pydantic input models
 # ---------------------------------------------------------------------------
@@ -552,7 +555,12 @@ class LspWorkspaceSymbolTool(Tool):
         return asyncio.run(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
-        query = str(args["query"])
+        query = str(args.get("query", "")).strip()
+        if not query:
+            return ToolResult(
+                output="workspace_symbol requires a non-empty query",
+                is_error=True,
+            )
         client = self._manager.any_client()
         if client is None:
             return ToolResult(
@@ -562,8 +570,15 @@ class LspWorkspaceSymbolTool(Tool):
         symbols = await client.workspace_symbol(query)
         if not symbols:
             return ToolResult(output=f"No symbols matching '{query}'.")
-        lines = [f"{s.kind} {s.name}\t{s.file}:{s.line}:{s.column}" for s in symbols]
-        return ToolResult(output="\n".join(lines))
+        total = len(symbols)
+        if total > _WORKSPACE_SYMBOL_MAX_RESULTS:
+            shown = symbols[:_WORKSPACE_SYMBOL_MAX_RESULTS]
+            tail = f"\n(+{total - _WORKSPACE_SYMBOL_MAX_RESULTS} more)"
+        else:
+            shown = symbols
+            tail = ""
+        lines = [f"{s.kind} {s.name}\t{s.file}:{s.line}:{s.column}" for s in shown]
+        return ToolResult(output="\n".join(lines) + tail)
 
 
 class _CallHierarchyInput(BaseModel):
