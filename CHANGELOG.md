@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+- `dynamic_prompt.build_delegation_section` no longer hangs under pathologically small `max_bytes` (added iteration cap + length-stable bailout)
+- `classify_tool` recognizes bare `Task` tool name as `agent` category (was falling through to `other`)
+
 ### Added
 - Dynamic delegation prompt section: when the conversation runner has live
   tools and routed skills, the system prompt now includes an `## Active
