@@ -1034,6 +1034,17 @@ class ConversationRuntime:
             except Exception as exc:
                 _exc_str = str(exc)
                 self._fire_hook("http_error", {"error": _exc_str[:200], "model": self._active_model})
+                # Wave2-3 Fix 1: non-retryable errors (401/400/model-not-found)
+                # must propagate immediately — they waste the fallback budget
+                # and retrying cannot possibly succeed.
+                if getattr(exc, "is_retryable", None) is False:
+                    self._fire_hook(
+                        "http_non_retryable",
+                        {"error": _exc_str[:200], "model": self._active_model},
+                    )
+                    logger.error("Non-retryable provider error; not retrying: %s", exc)
+                    _close_llm_span_with_error(exc)
+                    raise
                 # Auto-fallback: if native tool calling is not supported by server
                 if "tool-call-parser" in _exc_str or "tool choice" in _exc_str.lower():
                     logger.debug("Server does not support native tool calling; falling back to XML tag mode")
@@ -1116,6 +1127,15 @@ class ConversationRuntime:
                             _fallback,
                         )
                         self._active_model = _fallback
+                        # Wave2-3 Fix 2: keep cost_tracker in sync so token
+                        # usage after fallback is attributed to the correct
+                        # model instead of the (failed) primary.
+                        if self._cost_tracker is not None:
+                            try:
+                                self._cost_tracker.model = _fallback
+                            except Exception:
+                                logger.debug("cost_tracker.model sync skipped", exc_info=True)
+                        self._consecutive_failures = 0
                         _close_llm_span_with_error(exc)
                         continue  # retry with fallback model
                     logger.error("Provider stream error: %s", exc)

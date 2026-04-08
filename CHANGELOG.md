@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — Wave2-3: Model fallback quick-win fixes
+
+### Fixed
+- **`llm_code/runtime/conversation.py` provider error handler** now short-circuits on `is_retryable=False` errors (`ProviderAuthError`, `ProviderModelNotFoundError`). Previously a 401/404 from the upstream API burned the full 3-strike retry budget before the fallback switch, wasting time and quota on errors that cannot possibly succeed on retry. A new `http_non_retryable` hook fires so observers can count these distinctly from transient failures.
+- **`cost_tracker.model` now follows a fallback switch.** When the 3-strike threshold flips `self._active_model` to the fallback model, the runtime also assigns `self._cost_tracker.model = _fallback` and resets `_consecutive_failures`. Previously every token after a fallback was still priced as the (failed) primary model, so session cost summaries mis-attributed spend. `_consecutive_failures` used to stay at 3 after the switch, which meant the new model got zero retries before the next escalation — that's now reset to 0 on switch.
+
+### Tests
+- **`tests/test_runtime/test_fallback_wave2_3.py`** — 7 new tests pin the two fixes: non-retryable error contract on `ProviderAuthError`/`ProviderModelNotFoundError`, retryable contract on rate-limit/overload, default retryable behavior for bare exceptions, writable `cost_tracker.model`, and end-to-end pricing attribution across a model switch (verifies the tracker uses the new custom-pricing row after reassignment).
+- Full conversation + retry-tracker regression sweep (37 tests) still passes.
+
 ## Unreleased — Wave2-4: Compaction todo preserver + phase-split hooks
 
 ### Added
