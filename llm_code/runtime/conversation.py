@@ -451,6 +451,27 @@ class ConversationRuntime:
         except Exception:
             pass
 
+    def _db_log_thinking(self, content: str, signature: str = "") -> None:
+        """Log an assistant thinking trace to ConversationDB.
+
+        Wave2-1a P5: reasoning traces are indexed in FTS5 alongside
+        visible assistant text so ``db.search(query, content_type=
+        "thinking")`` can surface them across sessions. Silently
+        degrades if the DB is unavailable or cap-limited.
+        """
+        if self._conv_db is None or not content:
+            return
+        try:
+            from datetime import datetime, timezone
+            self._conv_db.log_thinking(
+                conversation_id=self.session.id,
+                content=content[:10_000],
+                signature=signature,
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+        except Exception:
+            pass
+
     def set_mcp_approval_callback(self, callback: Any) -> None:
         """Install a callback used to approve non-root MCP spawns."""
         self._mcp_approval_callback = callback
@@ -1457,6 +1478,16 @@ class ConversationRuntime:
                 if _assistant_text:
                     _out_tok = stop_event.usage.output_tokens if stop_event else 0
                     self._db_log("assistant", _assistant_text, output_tokens=_out_tok)
+                # Wave2-1a P5: log thinking trace as a separate
+                # searchable row so FTS5 search can filter by
+                # content_type. Signature is empty for current
+                # providers; a future AnthropicProvider will emit
+                # non-empty signatures that survive the round-trip.
+                if thinking_parts:
+                    self._db_log_thinking(
+                        content="".join(thinking_parts),
+                        signature="",
+                    )
             else:
                 # Wave2-1c: empty assistant response (no text, no
                 # tool calls). Count, hook, nudge on 2nd in a row,

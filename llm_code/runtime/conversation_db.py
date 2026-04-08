@@ -17,6 +17,12 @@ class SearchResult:
     role: str
     content_snippet: str
     created_at: str
+    # Wave2-1a P5: which kind of block produced this match. "text"
+    # for ordinary messages (the vast majority, including every
+    # pre-P5 row after migration), "thinking" for reasoning traces.
+    # Callers can filter by type to build a thinking-only search UI
+    # or mix both in a unified timeline.
+    content_type: str = "text"
 
 
 @dataclass(frozen=True)
@@ -44,7 +50,14 @@ CREATE TABLE IF NOT EXISTS messages (
     content TEXT,
     input_tokens INTEGER DEFAULT 0,
     output_tokens INTEGER DEFAULT 0,
-    created_at TEXT
+    created_at TEXT,
+    -- Wave2-1a P5: content_type distinguishes "text" from "thinking"
+    -- rows so FTS5 search can filter by kind. Defaults to "text" so
+    -- the ALTER TABLE migration below lights up existing rows
+    -- without any data rewrite. signature holds the opaque bytes
+    -- Anthropic uses to verify thinking block round-trips.
+    content_type TEXT DEFAULT 'text',
+    signature TEXT DEFAULT ''
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts
@@ -79,6 +92,31 @@ class ConversationDB:
             self._conn.commit()
         except sqlite3.Error:
             logger.exception("Failed to initialize conversation database schema")
+        # Wave2-1a P5: forward-compat migration for pre-P5 DBs. The
+        # CREATE TABLE block above is idempotent and does not touch
+        # existing tables, so ALTER TABLE is needed to add the new
+        # columns to an older database file. SQLite's IF NOT EXISTS
+        # syntax for ADD COLUMN is not supported until 3.35; we work
+        # around that by reading PRAGMA table_info and only issuing
+        # the ALTER when the column is absent. This keeps the
+        # migration safely re-runnable on every startup.
+        self._migrate_add_column("messages", "content_type", "TEXT DEFAULT 'text'")
+        self._migrate_add_column("messages", "signature", "TEXT DEFAULT ''")
+
+    def _migrate_add_column(self, table: str, column: str, type_def: str) -> None:
+        """Add *column* to *table* if it does not already exist."""
+        try:
+            existing = {
+                r["name"]
+                for r in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if column in existing:
+                return
+            self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {type_def}")
+            self._conn.commit()
+            logger.info("Migrated %s: added column %s", table, column)
+        except sqlite3.Error:
+            logger.exception("Failed to add column %s to %s", column, table)
 
     def ensure_conversation(
         self,
@@ -107,35 +145,87 @@ class ConversationDB:
         input_tokens: int = 0,
         output_tokens: int = 0,
         created_at: str = "",
+        *,
+        content_type: str = "text",
+        signature: str = "",
     ) -> None:
-        """Log a single message. Call after each message completes."""
+        """Log a single message. Call after each message completes.
+
+        Wave2-1a P5: ``content_type`` defaults to "text" so every
+        existing caller keeps working unchanged. Pass
+        ``content_type="thinking"`` (and optionally ``signature``) to
+        log a reasoning trace as a searchable row.
+        """
         try:
             self._conn.execute(
-                "INSERT INTO messages (conversation_id, role, content, input_tokens, output_tokens, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (conversation_id, role, content, input_tokens, output_tokens, created_at),
+                "INSERT INTO messages "
+                "(conversation_id, role, content, input_tokens, "
+                "output_tokens, created_at, content_type, signature) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    conversation_id, role, content, input_tokens,
+                    output_tokens, created_at, content_type, signature,
+                ),
             )
             self._conn.commit()
         except sqlite3.Error:
             logger.exception("Failed to log message for conversation %s", conversation_id)
 
-    def search(self, query: str, limit: int = 20) -> list[SearchResult]:
-        """Full-text search across all conversations."""
+    def log_thinking(
+        self,
+        conversation_id: str,
+        content: str,
+        signature: str = "",
+        created_at: str = "",
+    ) -> None:
+        """Log an assistant thinking block as a searchable row.
+
+        Convenience wrapper over ``log_message`` that pins role to
+        "assistant" and content_type to "thinking". Used by the
+        runtime's _db_log path so a reasoning trace is indexed in
+        FTS5 alongside visible assistant text.
+        """
+        self.log_message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content=content,
+            created_at=created_at,
+            content_type="thinking",
+            signature=signature,
+        )
+
+    def search(
+        self,
+        query: str,
+        limit: int = 20,
+        *,
+        content_type: str | None = None,
+    ) -> list[SearchResult]:
+        """Full-text search across all conversations.
+
+        Wave2-1a P5: optional ``content_type`` filter picks "text"
+        only, "thinking" only, or both (None). Pre-P5 rows have
+        content_type == 'text' after migration.
+        """
         try:
-            rows = self._conn.execute(
-                """
+            sql = """
                 SELECT m.conversation_id, c.name, c.project_path, m.role,
                        snippet(messages_fts, 0, '>>>', '<<<', '...', 40) AS snippet,
-                       m.created_at
+                       m.created_at,
+                       COALESCE(m.content_type, 'text') AS content_type
                 FROM messages_fts
                 JOIN messages m ON messages_fts.rowid = m.id
                 JOIN conversations c ON m.conversation_id = c.id
                 WHERE messages_fts MATCH ?
-                ORDER BY m.created_at DESC
-                LIMIT ?
-                """,
-                (query, limit),
-            ).fetchall()
+            """
+            params: list = [query]
+            if content_type is not None:
+                sql += " AND COALESCE(m.content_type, 'text') = ?"
+                params.append(content_type)
+            sql += " ORDER BY m.created_at DESC LIMIT ?"
+            params.append(limit)
+
+            rows = self._conn.execute(sql, params).fetchall()
             return [
                 SearchResult(
                     conversation_id=r["conversation_id"],
@@ -144,6 +234,7 @@ class ConversationDB:
                     role=r["role"],
                     content_snippet=r["snippet"],
                     created_at=r["created_at"] or "",
+                    content_type=r["content_type"] or "text",
                 )
                 for r in rows
             ]
