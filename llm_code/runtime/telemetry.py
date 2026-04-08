@@ -100,6 +100,31 @@ class Telemetry:
         span_exporter = OTLPSpanExporter(endpoint=f"{config.endpoint}/v1/traces")
         tracer_provider = TracerProvider(resource=resource)
         tracer_provider.add_span_processor(BatchSpanProcessor(span_exporter))
+
+        # Optional Langfuse processor — installed alongside OTLP so spans
+        # are exported to both when langfuse keys are set.
+        if config.langfuse_public_key and config.langfuse_secret_key:
+            try:
+                from langfuse.otel import LangfuseSpanProcessor
+                langfuse_processor = LangfuseSpanProcessor(
+                    public_key=config.langfuse_public_key,
+                    secret_key=config.langfuse_secret_key,
+                    host=config.langfuse_host,
+                )
+                tracer_provider.add_span_processor(langfuse_processor)
+            except ImportError:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Telemetry: langfuse keys are set but the 'langfuse' "
+                    "package is not installed. Continuing with OTLP only. "
+                    "Install with: pip install 'llm-code[tracing]'"
+                )
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Telemetry: failed to register LangfuseSpanProcessor: %s", exc
+                )
+
         trace.set_tracer_provider(tracer_provider)
         self._tracer = trace.get_tracer(config.service_name)
 

@@ -71,3 +71,44 @@ def test_telemetry_config_defaults_have_no_langfuse_keys() -> None:
     cfg = RuntimeTelemetryConfig()
     assert cfg.langfuse_public_key == ""
     assert cfg.langfuse_secret_key == ""
+
+
+def test_telemetry_setup_does_not_crash_when_langfuse_keys_set_and_pkg_missing(monkeypatch) -> None:
+    import sys
+
+    monkeypatch.setitem(sys.modules, "langfuse", None)
+    monkeypatch.setitem(sys.modules, "langfuse.otel", None)
+
+    from llm_code.runtime.telemetry import Telemetry, TelemetryConfig
+
+    cfg = TelemetryConfig(
+        enabled=True,
+        langfuse_public_key="pk",
+        langfuse_secret_key="sk",
+    )
+    t = Telemetry(cfg)
+    assert t is not None
+
+
+def test_telemetry_records_langfuse_setup_attempt(monkeypatch) -> None:
+    import sys
+
+    class _FakeProcessor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class _FakeOtelMod:
+        LangfuseSpanProcessor = _FakeProcessor
+
+    monkeypatch.setitem(sys.modules, "langfuse", type(sys)("langfuse"))
+    monkeypatch.setitem(sys.modules, "langfuse.otel", _FakeOtelMod)
+
+    from llm_code.runtime.telemetry import Telemetry, TelemetryConfig
+
+    cfg = TelemetryConfig(
+        enabled=True,
+        langfuse_public_key="pk",
+        langfuse_secret_key="sk",
+    )
+    t = Telemetry(cfg)
+    assert t is not None
