@@ -1248,6 +1248,7 @@ class LLMCodeTUI(App):
         _in_think_tag = False
         _think_close_tag = "</think>"
         _in_tool_call_tag = False
+        _saw_tool_call_this_turn = False  # For empty-response diagnosis
         _raw_text_buffer = ""
         _is_first_text_delta = True  # Track first delta for think-start detection
         _full_text_accumulator = ""  # Accumulate ALL text for post-hoc think stripping
@@ -1360,6 +1361,7 @@ class LLMCodeTUI(App):
                                 assistant_added = True
                             assistant.append_text(before)
                         _in_tool_call_tag = True
+                        _saw_tool_call_this_turn = True
 
                     if _in_tool_call_tag:
                         if "</tool_call>" in _raw_text_buffer:
@@ -1535,10 +1537,21 @@ class LLMCodeTUI(App):
             chat.add_entry(AssistantText(thinking_buffer.strip()))
             assistant_added = True
         elif not assistant_added and turn_output_tokens > 0:
-            chat.add_entry(AssistantText(
-                "(模型沒有產生任何回應 — 可能 thinking 用光輸出 token。"
-                "試試重新表達或加長 context window。)"
-            ))
+            # Distinguish why visible output is empty. The most common cause
+            # (now that thinking parsing is robust) is that the model emitted
+            # only a <tool_call> XML block — which gets stripped from the
+            # visible stream — for a query that doesn't actually need a tool.
+            if _saw_tool_call_this_turn:
+                chat.add_entry(AssistantText(
+                    "(模型嘗試呼叫工具回答這個問題,但沒有產生可見回覆。"
+                    "如果這是一般知識/閒聊查詢,請試著更明確地表達你想要直接的回答,"
+                    "例如加上「請直接回答」或「不要用工具」。)"
+                ))
+            else:
+                chat.add_entry(AssistantText(
+                    "(模型沒有產生任何回應 — 可能 thinking 用光輸出 token。"
+                    "試試重新表達或加長 context window。)"
+                ))
 
         elapsed = time.monotonic() - start
         cost = self._cost_tracker.format_cost() if self._cost_tracker else ""
