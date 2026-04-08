@@ -563,3 +563,122 @@ class LspWorkspaceSymbolTool(Tool):
             return ToolResult(output=f"No symbols matching '{query}'.")
         lines = [f"{s.kind} {s.name}\t{s.file}:{s.line}:{s.column}" for s in symbols]
         return ToolResult(output="\n".join(lines))
+
+
+class _CallHierarchyInput(BaseModel):
+    file: str
+    line: int
+    column: int
+    direction: str = "both"
+
+
+_VALID_DIRECTIONS: frozenset[str] = frozenset({"incoming", "outgoing", "both"})
+
+
+class LspCallHierarchyTool(Tool):
+    """Show callers and/or callees of the symbol at a file position."""
+
+    def __init__(self, manager: LspServerManager) -> None:
+        self._manager = manager
+
+    @property
+    def name(self) -> str:
+        return "lsp_call_hierarchy"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Show the call hierarchy of the symbol at the given file position. "
+            "direction='incoming' lists callers (who calls this?), "
+            "direction='outgoing' lists callees (what does this call?), "
+            "direction='both' (default) lists both."
+        )
+
+    @property
+    def input_schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "file": {"type": "string", "description": "Absolute path to the file"},
+                "line": {"type": "integer", "description": "0-based line number"},
+                "column": {"type": "integer", "description": "0-based column number"},
+                "direction": {
+                    "type": "string",
+                    "enum": ["incoming", "outgoing", "both"],
+                    "description": "Which direction(s) of the call hierarchy to fetch.",
+                },
+            },
+            "required": ["file", "line", "column"],
+        }
+
+    @property
+    def required_permission(self) -> PermissionLevel:
+        return PermissionLevel.READ_ONLY
+
+    @property
+    def input_model(self) -> type[_CallHierarchyInput]:
+        return _CallHierarchyInput
+
+    def is_read_only(self, args: dict) -> bool:
+        return True
+
+    def is_concurrency_safe(self, args: dict) -> bool:
+        return True
+
+    def execute(self, args: dict) -> ToolResult:
+        import asyncio
+        import concurrent.futures
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(asyncio.run, self.execute_async(args)).result()
+        return asyncio.run(self.execute_async(args))
+
+    async def execute_async(self, args: dict) -> ToolResult:
+        file_path = args["file"]
+        line = int(args["line"])
+        column = int(args["column"])
+        direction = str(args.get("direction", "both")).lower()
+
+        if direction not in _VALID_DIRECTIONS:
+            return ToolResult(
+                output=f"Invalid direction '{direction}'. Use 'incoming', 'outgoing', or 'both'.",
+                is_error=True,
+            )
+
+        language = _language_for_file(file_path)
+        client = self._manager.get_client(language)
+        if client is None:
+            return ToolResult(
+                output=f"No LSP client available for language '{language}' (file: {file_path})",
+                is_error=True,
+            )
+
+        file_uri = Path(file_path).as_uri()
+        items = await client.prepare_call_hierarchy(file_uri, line, column)
+        if not items:
+            return ToolResult(output="No symbol at that position (call hierarchy could not be prepared).")
+
+        target = items[0]
+        sections: list[str] = [f"Symbol: {target.kind} {target.name} @ {target.file}:{target.line}:{target.column}"]
+
+        if direction in ("incoming", "both"):
+            callers = await client.incoming_calls(target)
+            if callers:
+                sections.append("Incoming (callers):")
+                sections.extend(f"  {c.kind} {c.name}\t{c.file}:{c.line}:{c.column}" for c in callers)
+            else:
+                sections.append("Incoming (callers): (none)")
+
+        if direction in ("outgoing", "both"):
+            callees = await client.outgoing_calls(target)
+            if callees:
+                sections.append("Outgoing (callees):")
+                sections.extend(f"  {c.kind} {c.name}\t{c.file}:{c.line}:{c.column}" for c in callees)
+            else:
+                sections.append("Outgoing (callees): (none)")
+
+        return ToolResult(output="\n".join(sections))
