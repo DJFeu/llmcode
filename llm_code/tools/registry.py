@@ -57,6 +57,27 @@ class ToolRegistry:
         """Return all registered tools as a tuple."""
         return tuple(self._tools.values())
 
+    def filtered(self, allowed: set[str] | frozenset[str]) -> "ToolRegistry":
+        """Return a new ToolRegistry containing only tools whose name is in allowed.
+
+        Empty allowed is the sentinel for "no whitelist" — the new registry
+        contains every tool the parent has. Unknown names in allowed are
+        silently dropped.
+
+        The returned registry is a fresh instance; mutating it does not affect
+        the parent. Tool instances themselves are shared by reference.
+        """
+        child = ToolRegistry()
+        if not allowed:
+            for tool in self._tools.values():
+                child._tools[tool.name] = tool
+            return child
+        for name in allowed:
+            tool = self._tools.get(name)
+            if tool is not None:
+                child._tools[name] = tool
+        return child
+
     def definitions(
         self,
         allowed: set[str] | None = None,
