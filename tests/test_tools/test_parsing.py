@@ -259,3 +259,89 @@ class TestHermesFormatParsing:
         assert len(result) == 2
         assert result[0].name == "glob_search"
         assert result[1].name == "read_file"
+
+
+class TestHermesTemplateTruncatedFormat:
+    """vLLM-served Qwen3 chat template injects ``<tool_call>\\n<function=``
+    as the assistant prompt prefix in tool-calling mode. The model then
+    continues with ``NAME>...params...</function></tool_call>``. The
+    streamed response therefore contains ``<function=`` *missing* — the
+    body of ``<tool_call>`` starts directly with the function name.
+
+    Captured live from Qwen3.5-122B-A10B-int4-AutoRound on 2026-04-08.
+    """
+
+    def test_template_truncated_single_param(self):
+        text = (
+            "<tool_call>web_search>\n"
+            "<parameter=query>\n"
+            "今日熱門新聞\n"
+            "</parameter>\n"
+            "</function></tool_call>"
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "web_search"
+        assert result[0].args == {"query": "今日熱門新聞"}
+
+    def test_template_truncated_exact_capture_from_production(self):
+        """Verbatim bytes from /tmp/llm_code_parse_debug.log captured
+        2026-04-08 from local Qwen3.5-122B."""
+        text = (
+            "<tool_call>web_search>\n"
+            "<parameter=max_results>\n"
+            "3</parameter>\n"
+            "<parameter=query>\n"
+            "今日熱門新聞\n"
+            "</parameter>\n"
+            "</function></tool_call>"
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "web_search"
+        assert result[0].args["query"] == "今日熱門新聞"
+        assert result[0].args["max_results"] in ("3", 3)
+
+    def test_template_truncated_no_params(self):
+        text = "<tool_call>git_status>\n</function></tool_call>"
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "git_status"
+        assert result[0].args == {}
+
+    def test_template_truncated_does_not_clobber_full_form(self):
+        """Both forms must coexist — full form still parses normally."""
+        full = (
+            "<tool_call>\n<function=read_file>\n"
+            "<parameter=file_path>\n/tmp/x</parameter>\n"
+            "</function>\n</tool_call>"
+        )
+        result = parse_tool_calls(full, None)
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].args == {"file_path": "/tmp/x"}
+
+    def test_template_truncated_with_underscore_in_name(self):
+        text = (
+            "<tool_call>my_special_tool>\n"
+            "<parameter=arg>val</parameter>\n"
+            "</function></tool_call>"
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "my_special_tool"
+
+    def test_template_truncated_function_literal_still_skipped(self):
+        """Backward-compat: a literal '<function>' (no name, no equals)
+        must NOT be parsed as a tool with name '<function>'. The
+        truncated-format heuristic only fires when the body starts with a
+        bare identifier followed by '>'."""
+        text = (
+            "<tool_call>\n"
+            "<function>\n"
+            "<parameter=query>foo</parameter>\n"
+            "</function>\n"
+            "</tool_call>"
+        )
+        result = parse_tool_calls(text, None)
+        assert result == []
