@@ -1,7 +1,6 @@
 """LSP tools must reject invalid inputs cleanly via ToolResult.is_error=True."""
 from __future__ import annotations
 
-import pytest
 
 from llm_code.lsp.tools import LspHoverTool, _validate_lsp_path
 

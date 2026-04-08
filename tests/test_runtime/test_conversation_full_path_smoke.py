@@ -36,7 +36,7 @@ async def test_hermes_truncated_tool_call_dispatched_via_runner() -> None:
     Hermes-truncated <tool_call> emitted by the provider."""
     # 1. Build a fake provider that yields the production-captured
     #    Hermes-truncated bytes from PR #16.
-    captured = (
+    captured = (  # noqa: F841 — documented reference bytes for the future fixture
         '<tool_call>web_search>'
         '{"args": {"query": "test", "max_results": 3}}'
         '</tool_call>'

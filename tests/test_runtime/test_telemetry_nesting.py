@@ -70,7 +70,7 @@ def recording_telemetry() -> tuple[Telemetry, _RecordingTracer]:
 def test_agent_turn_span_nests_llm_completion_and_tool(recording_telemetry) -> None:
     t, rec = recording_telemetry
 
-    with t.span("agent.turn", **{"session.id": "s1"}) as turn:
+    with t.span("agent.turn", **{"session.id": "s1"}):
         with t.trace_llm_completion(
             session_id="s1", model="m", prompt_preview="p", input_tokens=1
         ):

@@ -110,7 +110,6 @@ def test_run_turn_enriches_llm_completion_span_after_stream(monkeypatch, recordi
         StreamTextDelta,
         TokenUsage,
     )
-    from llm_code.runtime import conversation as conv_module
 
     t, rec = recording_telemetry
 
