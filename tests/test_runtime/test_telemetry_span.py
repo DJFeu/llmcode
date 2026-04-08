@@ -51,3 +51,47 @@ def test_span_propagates_exceptions() -> None:
     with pytest.raises(ValueError):
         with t.span("err"):
             raise ValueError("boom")
+
+
+def test_trace_llm_completion_no_op_when_disabled() -> None:
+    t = get_noop_telemetry()
+    with t.trace_llm_completion(
+        session_id="s1",
+        model="claude-opus-4-6",
+        prompt_preview="hello",
+        input_tokens=5,
+    ) as span:
+        assert span is None
+
+
+def test_trace_llm_completion_truncates_prompt_to_4k() -> None:
+    t = get_noop_telemetry()
+    big = "x" * 100_000
+    with t.trace_llm_completion(
+        session_id="s1",
+        model="claude-opus-4-6",
+        prompt_preview=big,
+        input_tokens=5,
+    ):
+        pass
+
+
+def test_trace_llm_completion_inside_outer_span_is_nested() -> None:
+    t = get_noop_telemetry()
+    with t.span("agent.turn"):
+        with t.trace_llm_completion(
+            session_id="s1", model="m", prompt_preview="p", input_tokens=1
+        ):
+            pass
+
+
+def test_truncate_text_helper_caps_at_4k() -> None:
+    from llm_code.runtime.telemetry import _truncate_for_attribute
+    out = _truncate_for_attribute("y" * 10_000, max_chars=4096)
+    assert len(out) <= 4096 + len("...[truncated]")
+    assert out.endswith("...[truncated]")
+
+
+def test_truncate_text_helper_passthrough_when_short() -> None:
+    from llm_code.runtime.telemetry import _truncate_for_attribute
+    assert _truncate_for_attribute("short", max_chars=4096) == "short"

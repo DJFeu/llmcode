@@ -26,6 +26,15 @@ class TelemetryConfig:
     langfuse_host: str = "https://cloud.langfuse.com"
 
 
+def _truncate_for_attribute(text: str, max_chars: int = 4096) -> str:
+    """Truncate text for span attribute payloads."""
+    if not text:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "...[truncated]"
+
+
 def _coerce_attr_value(value):
     """Coerce a Python value into something OTel attribute API accepts."""
     if isinstance(value, (str, bool, int, float)):
@@ -160,6 +169,34 @@ class Telemetry:
         except Exception:
             # Any failure in the OTel layer must not break the caller
             pass
+
+    @contextmanager
+    def trace_llm_completion(
+        self,
+        *,
+        session_id: str,
+        model: str,
+        prompt_preview: str = "",
+        completion_preview: str = "",
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        provider: str = "",
+        finish_reason: str = "",
+    ):
+        """Open a span for one LLM completion call inside the current turn."""
+        attrs = {
+            "session.id": session_id,
+            "llm.model": model,
+            "llm.provider": provider,
+            "llm.tokens.input": input_tokens,
+            "llm.tokens.output": output_tokens,
+            "llm.tokens.total": input_tokens + output_tokens,
+            "llm.prompt.preview": _truncate_for_attribute(prompt_preview),
+            "llm.completion.preview": _truncate_for_attribute(completion_preview),
+            "llm.finish_reason": finish_reason,
+        }
+        with self.span("llm.completion", **attrs) as s:
+            yield s
 
     # ------------------------------------------------------------------
     # Public API — all methods are safe to call unconditionally
