@@ -1545,8 +1545,15 @@ class LLMCodeTUI(App):  # noqa: E302
                         self._input_tokens += event.usage.input_tokens
                         self._output_tokens += event.usage.output_tokens
                         if self._cost_tracker:
+                            # Wave2-2: forward cache token buckets so cache
+                            # reads (10% of input price) and cache writes
+                            # (125%) are priced correctly instead of being
+                            # counted as zero.
                             self._cost_tracker.add_usage(
-                                event.usage.input_tokens, event.usage.output_tokens,
+                                event.usage.input_tokens,
+                                event.usage.output_tokens,
+                                cache_read_tokens=getattr(event.usage, "cache_read_tokens", 0),
+                                cache_creation_tokens=getattr(event.usage, "cache_creation_tokens", 0),
                             )
                         # Real-time status bar update
                         status.tokens = self._output_tokens

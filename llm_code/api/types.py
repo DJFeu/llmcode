@@ -64,6 +64,12 @@ class MessageRequest:
 class TokenUsage:
     input_tokens: int
     output_tokens: int
+    # Wave2-2: cache tokens are reported separately by both Anthropic
+    # (``cache_read_input_tokens`` / ``cache_creation_input_tokens``) and
+    # OpenAI-compat servers (``prompt_tokens_details.cached_tokens``).
+    # Default to 0 so existing call sites keep working unchanged.
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
 
 
 @dataclasses.dataclass(frozen=True)

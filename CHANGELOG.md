@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — Wave2-2: Cost tracker cache tokens + unknown-model warning
+
+### Fixed
+- **`TokenUsage` now carries `cache_read_tokens` / `cache_creation_tokens`** end-to-end. Previously the streaming provider parser dropped both buckets on the floor when building `TokenUsage`, so even though `CostTracker.add_usage()` already supported the 10% / 125% cache-pricing math, the TUI hook had nothing to feed it. Cache reads on claude-sonnet-4-6 are roughly 10% of input price, so a session doing heavy prompt caching was over-billed by the full cache-read amount in every summary.
+- **`llm_code/api/openai_compat.py`** centralizes usage-dict → `TokenUsage` conversion in `_token_usage_from_dict()`, which handles both payload shapes: OpenAI-compat nests cache reads under `prompt_tokens_details.cached_tokens`; Anthropic surfaces them as top-level `cache_read_input_tokens` / `cache_creation_input_tokens`. Anthropic's explicit field wins when both appear.
+- **`llm_code/tui/app.py` `StreamMessageStop` hook** now forwards the cache buckets into `cost_tracker.add_usage(cache_read_tokens=..., cache_creation_tokens=...)`. Uses `getattr(..., 0)` so any stray `TokenUsage` constructed without the new fields stays safe.
+- **`CostTracker` warns once per unknown model.** Self-hosted setups (Qwen on GX10 etc.) still stay silent after the first event, but a genuine typo in the model name now surfaces with `cost_tracker: no pricing entry for model 'xxx'; treating as free. Add a custom_pricing row in config if this is a paid model.` — previously it silently priced the whole session at $0. Empty model name is also silent so initialization ordering doesn't spam the log.
+
+### Tests
+- **`tests/test_runtime/test_cost_tracker_wave2_2.py`** — 11 new tests: TokenUsage backward-compat defaults, OpenAI vs Anthropic usage-dict extraction (including the "both shapes present" edge case), empty-dict handling, warn-once / warn-per-new-model / known-model-silent / empty-model-silent, and end-to-end cache pricing (`claude-sonnet-4-6`: 1M cache_read + 1M cache_write = $4.05).
+- Full `tests/test_runtime/` + `tests/test_api/` sweep: **1660 passed** (up from 1653, no regressions).
+
 ## Unreleased — Wave2-3: Model fallback quick-win fixes
 
 ### Fixed

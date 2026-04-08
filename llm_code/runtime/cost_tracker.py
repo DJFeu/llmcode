@@ -1,6 +1,10 @@
 """Token cost tracking with model pricing — user-customizable via config."""
 from __future__ import annotations
-from dataclasses import dataclass
+
+import logging
+from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 # Built-in fallback pricing per 1M tokens [input, output]
 BUILTIN_PRICING: dict[str, tuple[float, float]] = {
@@ -45,6 +49,9 @@ class CostTracker:
     custom_pricing: dict | None = None  # from config.json "pricing"
     max_budget_usd: float | None = None
     rate_limit_info: dict | None = None  # {used, limit, reset_at: epoch seconds} or None
+    # Wave2-2: models we've already warned about so we don't spam the log
+    # on every single add_usage() call when running with a custom model.
+    _warned_unknown_models: set[str] = field(default_factory=set)
 
     def add_usage(
         self,
@@ -111,7 +118,16 @@ class CostTracker:
             if key in model_lower:
                 return pricing
 
-        # 4. Unknown model = free
+        # 4. Unknown model = free. Warn once per model so self-hosted
+        # setups (Qwen on GX10 etc.) stay silent but truly-unknown names
+        # surface in the log the first time they're seen.
+        if self.model and self.model not in self._warned_unknown_models:
+            self._warned_unknown_models.add(self.model)
+            logger.warning(
+                "cost_tracker: no pricing entry for model %r; treating as free. "
+                "Add a custom_pricing row in config if this is a paid model.",
+                self.model,
+            )
         return (0.0, 0.0)
 
     def format_cost(self) -> str:

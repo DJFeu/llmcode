@@ -16,6 +16,39 @@ from llm_code.api.errors import (
 )
 from llm_code.api.provider import LLMProvider
 from llm_code.api.sse import parse_sse_events
+
+
+def _token_usage_from_dict(usage_data: dict) -> "TokenUsage":
+    """Build TokenUsage from a raw provider usage dict.
+
+    Handles both payload shapes:
+
+    * OpenAI-compat (``prompt_tokens`` / ``completion_tokens`` +
+      ``prompt_tokens_details.cached_tokens`` for cache reads).
+    * Anthropic-style (``cache_read_input_tokens`` /
+      ``cache_creation_input_tokens`` top-level).
+
+    Falls back to 0 for any missing field so upstream code can assume
+    a fully-populated object.
+    """
+    input_tokens = int(usage_data.get("prompt_tokens") or usage_data.get("input_tokens") or 0)
+    output_tokens = int(usage_data.get("completion_tokens") or usage_data.get("output_tokens") or 0)
+
+    # OpenAI-compat nests cache reads under prompt_tokens_details.
+    cache_read = 0
+    details = usage_data.get("prompt_tokens_details")
+    if isinstance(details, dict):
+        cache_read = int(details.get("cached_tokens") or 0)
+    # Anthropic surfaces them top-level; prefer the explicit field.
+    cache_read = int(usage_data.get("cache_read_input_tokens") or cache_read)
+    cache_creation = int(usage_data.get("cache_creation_input_tokens") or 0)
+
+    return TokenUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_tokens=cache_read,
+        cache_creation_tokens=cache_creation,
+    )
 from llm_code.api.types import (
     ContentBlock,
     ImageBlock,
@@ -272,10 +305,7 @@ class OpenAICompatProvider(LLMProvider):
             content_blocks.append(TextBlock(text=text))
 
         usage_data = data.get("usage", {})
-        usage = TokenUsage(
-            input_tokens=usage_data.get("prompt_tokens", 0),
-            output_tokens=usage_data.get("completion_tokens", 0),
-        )
+        usage = _token_usage_from_dict(usage_data)
 
         return MessageResponse(
             content=tuple(content_blocks),
@@ -354,10 +384,7 @@ class _StreamIterator:
                 if finish_reason and not _stop_emitted:
                     _stop_emitted = True
                     usage_data = chunk_usage or _last_usage or {}
-                    usage = TokenUsage(
-                        input_tokens=usage_data.get("prompt_tokens", 0),
-                        output_tokens=usage_data.get("completion_tokens", 0),
-                    )
+                    usage = _token_usage_from_dict(usage_data)
                     events.append(
                         StreamMessageStop(usage=usage, stop_reason=finish_reason)
                     )
@@ -369,10 +396,7 @@ class _StreamIterator:
                     existing = events[i]
                     if existing.usage.input_tokens == 0 and existing.usage.output_tokens == 0:
                         events[i] = StreamMessageStop(
-                            usage=TokenUsage(
-                                input_tokens=_last_usage.get("prompt_tokens", 0),
-                                output_tokens=_last_usage.get("completion_tokens", 0),
-                            ),
+                            usage=_token_usage_from_dict(_last_usage),
                             stop_reason=existing.stop_reason,
                         )
                     break
