@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Fixed (hotfix — Hermes truncated form with JSON args)
+- `tools/parsing.py:_parse_hermes_block` now also handles a third
+  Hermes sub-format: truncated function name followed by a JSON
+  object payload instead of `<parameter=...>` blocks. PR #15 added
+  the truncated form parser but only matched `<parameter=KEY>` blocks,
+  so when the model emitted
+  `<tool_call>web_search>{"args": {"query": "...", "max_results": 3}}</tool_call>`
+  the parser extracted the function name `web_search` but returned
+  empty args, causing the runtime to dispatch with empty args, fail
+  validation, retry, and accumulate ~76K tokens in a 3.6-minute
+  retry loop before giving up. New `_parse_hermes_args` helper tries
+  parameter blocks first, then JSON payload (with optional `args` /
+  `arguments` wrapper). 6 new TDD tests including the verbatim
+  production capture. 37 / 37 parsing tests pass.
+
 ### Fixed (hotfix — Hermes template-truncated tool call format)
 - `tools/parsing.py:_parse_hermes_block` now also handles the
   template-truncated form of Hermes function calls. Some chat templates
