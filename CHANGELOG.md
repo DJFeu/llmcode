@@ -22,7 +22,21 @@
   langfuse_host fields. The config parser falls back to environment variables
   with the same names (uppercase) when the dict keys are absent.
 
+### Fixed
+- Telemetry.span() outer guard restored: failures from the underlying OTel
+  context manager (start_as_current_span enter / exit) no longer propagate
+  to the caller, preserving the contract that "telemetry must never break
+  the caller". Caller exceptions raised inside the with-block still
+  propagate as before.
+- llm.completion span no longer leaks if the XML tool-call fallback retry
+  itself raises. The retry call site in Conversation._run_turn is now
+  wrapped so any exception triggers _close_llm_span_with_error before
+  propagating.
+
 ### Refactored
+- _truncate_for_attribute is now imported at the top of conversation.py
+  instead of lazily inside the post-stream enrichment block. Removes
+  per-call import overhead and surfaces genuine import bugs.
 - TelemetryConfig is now declared in exactly one place
   (llm_code/runtime/telemetry.py) and re-exported from
   llm_code/runtime/config.py for backward compatibility. Eliminates a
