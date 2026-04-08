@@ -11,6 +11,11 @@ from pydantic import BaseModel, ValidationError, field_validator
 
 from llm_code.harness.config import HarnessConfig, HarnessControl
 
+# TelemetryConfig is owned by the telemetry subsystem; re-export here so the
+# legacy import path `from llm_code.runtime.config import TelemetryConfig`
+# continues to work for downstream callers.
+from llm_code.runtime.telemetry import TelemetryConfig as TelemetryConfig
+
 
 @dataclass(frozen=True)
 class MCPConfig:
@@ -194,13 +199,6 @@ class HidaConfig:
     enabled: bool = False
     confidence_threshold: float = 0.6
     custom_profiles: tuple[dict, ...] = ()
-
-
-@dataclass(frozen=True)
-class TelemetryConfig:
-    enabled: bool = False
-    endpoint: str = "http://localhost:4318"  # OTLP HTTP default
-    service_name: str = "llm-code"
 
 
 @dataclass(frozen=True)
