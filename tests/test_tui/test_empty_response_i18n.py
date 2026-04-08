@@ -95,3 +95,73 @@ def test_message_default_for_empty_input_is_english() -> None:
     """Edge case: empty user_input falls through to non-CJK → English."""
     msg = _empty_response_message(saw_tool_call=True, user_input="")
     assert "tried to invoke a tool" in msg.lower()
+
+
+# ---------- session-aware language detection ----------
+
+
+class _FakeBlock:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
+class _FakeMsg:
+    def __init__(self, role: str, text: str) -> None:
+        self.role = role
+        self.content = (_FakeBlock(text),)
+
+
+def test_session_chinese_short_followup_stays_chinese() -> None:
+    """A user who said 今日熱門新聞三則 then types '1' as a follow-up
+    should still see a Chinese diagnostic. Without session-awareness the
+    bare '1' would flip back to English."""
+    history = (_FakeMsg("user", "今日熱門新聞三則"),)
+    msg = _empty_response_message(
+        saw_tool_call=True, user_input="1", session_messages=history
+    )
+    assert "模型嘗試呼叫工具" in msg
+    assert "tried to invoke" not in msg.lower()
+
+
+def test_session_english_only_stays_english() -> None:
+    """A user with only English session history typing '1' stays English."""
+    history = (
+        _FakeMsg("user", "what is rest"),
+        _FakeMsg("assistant", "REST is a protocol style for..."),
+    )
+    msg = _empty_response_message(
+        saw_tool_call=True, user_input="1", session_messages=history
+    )
+    assert "tried to invoke a tool" in msg.lower()
+    assert "模型" not in msg
+
+
+def test_session_assistant_only_chinese_does_not_count() -> None:
+    """If only the assistant emitted Chinese (e.g. CLI status messages
+    happen to translate), don't infer the user is Chinese."""
+    history = (
+        _FakeMsg("user", "hello"),
+        _FakeMsg("assistant", "你好,有什麼可以幫您"),
+    )
+    msg = _empty_response_message(
+        saw_tool_call=True, user_input="ok", session_messages=history
+    )
+    assert "tried to invoke a tool" in msg.lower()
+
+
+def test_session_messages_none_falls_back_to_input_only() -> None:
+    """When no session is available, behavior matches the previous
+    user_input-only mode."""
+    msg = _empty_response_message(
+        saw_tool_call=True, user_input="今日新聞", session_messages=None
+    )
+    assert "模型嘗試呼叫工具" in msg
+
+
+def test_session_handles_non_iterable_gracefully() -> None:
+    """Defensive: a malformed session_messages object should not crash."""
+    msg = _empty_response_message(
+        saw_tool_call=True, user_input="1", session_messages=42  # type: ignore[arg-type]
+    )
+    # Should fall through to English (no CJK detected, no session walk)
+    assert "tried to invoke a tool" in msg.lower()
