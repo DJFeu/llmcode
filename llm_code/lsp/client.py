@@ -209,6 +209,8 @@ class LspClient:
     def __init__(self, transport: LspTransport) -> None:
         self._transport = transport
         self._id_counter = itertools.count(1)
+        self._read_lock = asyncio.Lock()
+        self._buffered: dict[int, dict[str, Any]] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -487,7 +489,7 @@ class LspClient:
             "params": params,
         }
         await self._transport.send_message(message)
-        response = await self._transport.receive_message()
+        response = await self._await_response(request_id)
 
         if "error" in response:
             error = response["error"]
@@ -495,6 +497,28 @@ class LspClient:
                 f"LSP error {error.get('code')}: {error.get('message', 'Unknown error')}"
             )
         return response.get("result")
+
+    async def _await_response(self, request_id: int) -> dict[str, Any]:
+        """Read messages until the one matching ``request_id`` is found.
+
+        Dispatches unmatched ID'd responses into a buffer (for concurrent
+        requests) and silently drops notifications (no ``id``).
+        """
+        # Fast path: another caller may have already read our response.
+        while True:
+            if request_id in self._buffered:
+                return self._buffered.pop(request_id)
+            async with self._read_lock:
+                if request_id in self._buffered:
+                    return self._buffered.pop(request_id)
+                msg = await self._transport.receive_message()
+                mid = msg.get("id")
+                if mid == request_id:
+                    return msg
+                if mid is not None:
+                    # Response for a concurrent request — stash for it.
+                    self._buffered[mid] = msg
+                # Notification: drop and loop.
 
     async def _notify(self, method: str, params: dict[str, Any]) -> None:
         """Send a JSON-RPC notification (no id, no response)."""
