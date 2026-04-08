@@ -836,6 +836,11 @@ class ConversationRuntime:
             _routed: tuple = ()
             if self._skill_router is not None:
                 _routed = tuple(await self._skill_router.route_async(user_input))
+            # Low confidence when the match was produced by Tier C LLM classifier
+            _routed_low_confidence = (
+                self._skill_router is not None
+                and getattr(self._skill_router, "last_tier_used", "") == "c"
+            )
             # Track routed skills on runtime so TUI can show them in status
             self._last_routed_skills = tuple(s.name for s in _routed) if _routed else ()
             if _routed:
@@ -854,6 +859,7 @@ class ConversationRuntime:
                 task_manager=self._task_manager,
                 project_index=self._project_index,
                 routed_skills=_routed,
+                routed_skills_low_confidence=_routed_low_confidence,
                 is_local_model=_is_local,
                 model_name=self._active_model,
             )
@@ -949,6 +955,7 @@ class ConversationRuntime:
                         task_manager=self._task_manager,
                         project_index=self._project_index,
                         routed_skills=_routed,
+                        routed_skills_low_confidence=_routed_low_confidence,
                         is_local_model=_is_local,
                         model_name=self._active_model,
                     )

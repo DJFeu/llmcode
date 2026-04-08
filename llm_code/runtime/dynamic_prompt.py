@@ -173,6 +173,7 @@ def build_delegation_section(
     max_tools: int = DEFAULT_MAX_TOOLS,
     max_skills: int = DEFAULT_MAX_SKILLS,
     max_bytes: int = DEFAULT_MAX_BYTES,
+    low_confidence: bool = False,
 ) -> str:
     """Return a markdown ``## Active Capabilities`` section, or empty string.
 
@@ -194,7 +195,7 @@ def build_delegation_section(
     if tool_lines:
         blocks.append(("tools", tool_lines))
     trigger_lines = _render_key_triggers(skills, max_skills)
-    if trigger_lines:
+    if trigger_lines and not low_confidence:
         blocks.append(("triggers", trigger_lines))
     category_lines = _render_skill_categories(skills, max_skills)
     if category_lines:

@@ -309,6 +309,8 @@ class SkillRouter:
         self._cache_max = 128
         # Debug: last Tier C trace (for TUI surfacing)
         self.last_tier_c_debug: str = ""
+        # Tracks which tier produced the most recent match: "a" | "b" | "c" | "".
+        self.last_tier_used: str = ""
 
     # ------------------------------------------------------------------
     # Public API
@@ -325,8 +327,14 @@ class SkillRouter:
             return self._cache[cache_key]
 
         result = self._tier_a(user_message)
-        if not result and self._config.tier_b:
+        if result:
+            self.last_tier_used = "a"
+        elif self._config.tier_b:
             result = self._tier_b(user_message)
+            if result:
+                self.last_tier_used = "b"
+        if not result:
+            self.last_tier_used = ""
 
         result = result[: self._config.max_skills_per_turn]
 
@@ -379,6 +387,7 @@ class SkillRouter:
                         # Cache the LLM result
                         cache_key = user_message[:200]
                         self._cache[cache_key] = result
+                        self.last_tier_used = "c"
                         return result
 
         return []
