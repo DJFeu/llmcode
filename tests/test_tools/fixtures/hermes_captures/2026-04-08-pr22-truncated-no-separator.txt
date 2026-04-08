@@ -1,0 +1,1 @@
+<tool_call>web_search{"args": {"max_results": 5, "query": "今日熱門新聞 2026"}}</tool_call>
