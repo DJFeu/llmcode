@@ -17,9 +17,10 @@ class TestWebFetchToolProperties:
         tool = WebFetchTool()
         assert tool.required_permission == PermissionLevel.READ_ONLY
 
-    def test_is_read_only_false(self) -> None:
+    def test_is_read_only_true(self) -> None:
+        # Network read — does not mutate local FS.
         tool = WebFetchTool()
-        assert tool.is_read_only({}) is False
+        assert tool.is_read_only({}) is True
 
     def test_is_concurrency_safe_true(self) -> None:
         tool = WebFetchTool()

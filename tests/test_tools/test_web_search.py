@@ -23,7 +23,9 @@ class TestWebSearchToolProperties:
         assert self.tool.required_permission == PermissionLevel.READ_ONLY
 
     def test_is_read_only(self) -> None:
-        assert self.tool.is_read_only({}) is False
+        # Network read — does not mutate local FS, so qualifies as read-only
+        # for the purposes of speculative concurrent dispatch.
+        assert self.tool.is_read_only({}) is True
 
     def test_is_concurrency_safe(self) -> None:
         assert self.tool.is_concurrency_safe({}) is True

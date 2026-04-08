@@ -121,7 +121,8 @@ class WebFetchTool(Tool):
         return WebFetchInput
 
     def is_read_only(self, args: dict) -> bool:  # noqa: ARG002
-        return False
+        # Network read — does not mutate local filesystem.
+        return True
 
     def is_concurrency_safe(self, args: dict) -> bool:  # noqa: ARG002
         return True

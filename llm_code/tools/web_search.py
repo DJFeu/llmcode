@@ -73,7 +73,8 @@ class WebSearchTool(Tool):
         return WebSearchInput
 
     def is_read_only(self, args: dict) -> bool:
-        return False
+        # Network read — does not mutate local filesystem.
+        return True
 
     def is_concurrency_safe(self, args: dict) -> bool:
         return True
