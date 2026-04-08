@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Fixed (hotfix — Hermes template-truncated tool call format)
+- `tools/parsing.py:_parse_hermes_block` now also handles the
+  template-truncated form of Hermes function calls. Some chat templates
+  (notably vLLM-served Qwen3 in tool-calling mode) inject
+  ``<tool_call>\n<function=`` as the assistant prompt prefix, so the
+  streamed body of `<tool_call>` starts directly with the bare function
+  name (e.g. `web_search>...`) instead of `<function=web_search>...`.
+  PR #14 added the full-form parser but did not handle this truncated
+  variant; the parser silently dropped these calls and the runtime saw
+  zero parsed tool calls, ending the turn with an empty visible reply.
+  Captured live from local Qwen3.5-122B and pinned in TDD test
+  `test_template_truncated_exact_capture_from_production`. 6 new tests
+  cover single/multi/no params, underscore-name, full-form coexistence,
+  and the malformed `<function>` literal that must still be skipped.
+  31 / 31 parsing tests pass.
+
 ### Fixed (hotfix — skill router false-match + thinking budget blowout)
 - `skill_router` Tier C classifier: clean `none` answers are now authoritative and no longer fall through to the substring fallback. Fixes a regression where CJK queries auto-triggered an irrelevant skill (e.g. `brainstorming` for a news query) because reasoning models mention candidate skill names while ruling them out.
 - `skill_router` Tier C substring fallback now requires ≥2 mentions of the winning skill AND a margin of ≥2 over the runner-up before accepting a match. A single mention in the reasoning block is no longer sufficient.

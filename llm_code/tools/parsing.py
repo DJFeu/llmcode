@@ -31,6 +31,17 @@ _HERMES_FUNCTION_RE = re.compile(
     r"<function=([^>\s]+)\s*>(.*?)</function>",
     re.DOTALL,
 )
+# Template-truncated form. Some chat templates (notably vLLM-served Qwen3
+# in tool-calling mode) inject "<tool_call>\n<function=" as the assistant
+# prompt PREFIX. The model continues with "NAME>...params...</function>",
+# so the streamed body of <tool_call> starts with the bare function name
+# followed by ">" instead of with "<function=NAME>". Match identifier
+# characters only at the start (so a literal "<function>" with no name
+# still fails this regex and the body falls through to "no parse").
+_HERMES_FUNCTION_TRUNCATED_RE = re.compile(
+    r"^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*>(.*?)(?:</function>|\Z)",
+    re.DOTALL,
+)
 _HERMES_PARAMETER_RE = re.compile(
     r"<parameter=([^>\s]+)\s*>(.*?)</parameter>",
     re.DOTALL,
@@ -116,20 +127,38 @@ def _parse_hermes_block(raw: str) -> ParsedToolCall | None:
     """Parse the Hermes function-calling format used by Qwen3, NousHermes,
     and most vLLM-served tool-fine-tuned local models.
 
-    ``<function=NAME>`` opens, ``<parameter=KEY>VALUE</parameter>`` repeats,
-    ``</function>`` closes. Parameter values are stripped of leading/trailing
-    whitespace; internal whitespace (including newlines) is preserved so
-    multi-line content (e.g. file bodies) round-trips correctly.
+    Two sub-formats are supported:
 
-    Returns None if no ``<function=...>`` is found inside the block.
+    1. **Full form** — ``<function=NAME>`` opens, parameters repeat,
+       ``</function>`` closes.
+    2. **Template-truncated form** — vLLM-served Qwen3 chat template
+       injects ``<tool_call>\\n<function=`` as the assistant prompt
+       prefix, so the streamed body of ``<tool_call>`` starts directly
+       with the bare function name (e.g. ``web_search>...``). The
+       function name is extracted from the leading identifier instead
+       of from a ``<function=...>`` tag.
+
+    ``<parameter=KEY>VALUE</parameter>`` blocks are parsed identically
+    in both forms. Parameter values are stripped of leading/trailing
+    whitespace; internal whitespace (including newlines) is preserved
+    so multi-line content (e.g. file bodies) round-trips correctly.
+
+    Returns None if neither form matches.
     """
+    # Try full form first.
     fn_match = _HERMES_FUNCTION_RE.search(raw)
-    if not fn_match:
-        return None
-    name = fn_match.group(1).strip()
+    if fn_match:
+        name = fn_match.group(1).strip()
+        body = fn_match.group(2)
+    else:
+        # Fall back to template-truncated form.
+        trunc_match = _HERMES_FUNCTION_TRUNCATED_RE.match(raw)
+        if not trunc_match:
+            return None
+        name = trunc_match.group(1).strip()
+        body = trunc_match.group(2)
     if not name:
         return None
-    body = fn_match.group(2)
     args: dict = {}
     for param_match in _HERMES_PARAMETER_RE.finditer(body):
         key = param_match.group(1).strip()
