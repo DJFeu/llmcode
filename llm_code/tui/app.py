@@ -21,6 +21,8 @@ from llm_code.tui.theme import APP_CSS
 from llm_code.logging import get_logger
 
 if TYPE_CHECKING:
+    from llm_code.runtime.config import RuntimeConfig
+    from llm_code.tools.registry import ToolRegistry
     from llm_code.tui.marketplace import MarketplaceBrowser  # noqa: F811
 
 logger = get_logger(__name__)
@@ -123,7 +125,87 @@ def _empty_response_message(
     return _EMPTY_RESPONSE_THINKING_ZH if zh else _EMPTY_RESPONSE_THINKING_EN
 
 
-class LLMCodeTUI(App):
+def _register_core_tools(registry: "ToolRegistry", config: "RuntimeConfig") -> None:
+    """Register the collaborator-free core tool set into ``registry``.
+
+    Shared between the TUI boot path and headless callers (like
+    ``llm_code.cli.oneshot.run_quick_mode``) so both exercise the same
+    file / shell / search / git tool set. Tools that depend on
+    instance-scoped collaborators (MemoryStore, SkillSet, SwarmManager,
+    IDEBridge, LspManager, etc.) are intentionally NOT registered here
+    — the TUI boot path registers those separately after this helper
+    runs.
+    """
+    from llm_code.tools.bash import BashTool
+    from llm_code.tools.edit_file import EditFileTool
+    from llm_code.tools.git_tools import (
+        GitBranchTool,
+        GitCommitTool,
+        GitDiffTool,
+        GitLogTool,
+        GitPushTool,
+        GitStashTool,
+        GitStatusTool,
+    )
+    from llm_code.tools.glob_search import GlobSearchTool
+    from llm_code.tools.grep_search import GrepSearchTool
+    from llm_code.tools.notebook_edit import NotebookEditTool
+    from llm_code.tools.notebook_read import NotebookReadTool
+    from llm_code.tools.read_file import ReadFileTool
+    from llm_code.tools.web_fetch import WebFetchTool
+    from llm_code.tools.web_search import WebSearchTool
+    from llm_code.tools.write_file import WriteFileTool
+
+    base_url = config.provider_base_url or ""
+    is_local = any(
+        h in base_url
+        for h in ("localhost", "127.0.0.1", "0.0.0.0", "192.168.", "10.", "172.")
+    )
+    bash_timeout = 0 if is_local else 30  # 0 = no timeout for local models
+
+    for tool in (
+        ReadFileTool(),
+        WriteFileTool(),
+        EditFileTool(),
+        BashTool(default_timeout=bash_timeout, compress_output=config.output_compression),
+        GlobSearchTool(),
+        GrepSearchTool(),
+        NotebookReadTool(),
+        NotebookEditTool(),
+        WebFetchTool(),
+        WebSearchTool(),
+    ):
+        try:
+            registry.register(tool)
+        except ValueError:
+            pass
+
+    for cls in (
+        GitStatusTool,
+        GitDiffTool,
+        GitLogTool,
+        GitCommitTool,
+        GitPushTool,
+        GitStashTool,
+        GitBranchTool,
+    ):
+        try:
+            registry.register(cls())
+        except ValueError:
+            pass
+
+
+class LLMCodeTUI(App):  # noqa: E302
+    @classmethod
+    def _register_core_tools_into(
+        cls, registry: "ToolRegistry", config: "RuntimeConfig"
+    ) -> None:
+        """Classmethod facade over the module-level ``_register_core_tools``
+        helper. Kept on the class so headless callers can do
+        ``LLMCodeTUI._register_core_tools_into(reg, cfg)`` without
+        instantiating a TUI."""
+        _register_core_tools(registry, config)
+
     """Fullscreen TUI matching Claude Code's visual experience."""
 
     TITLE = "llm-code"
@@ -467,19 +549,7 @@ class LLMCodeTUI(App):
         from llm_code.runtime.permissions import PermissionMode, PermissionPolicy
         from llm_code.runtime.prompt import SystemPromptBuilder
         from llm_code.runtime.session import Session
-        from llm_code.tools.bash import BashTool
-        from llm_code.tools.edit_file import EditFileTool
-        from llm_code.tools.git_tools import (
-            GitBranchTool, GitCommitTool, GitDiffTool,
-            GitLogTool, GitPushTool, GitStashTool, GitStatusTool,
-        )
-        from llm_code.tools.glob_search import GlobSearchTool
-        from llm_code.tools.grep_search import GrepSearchTool
-        from llm_code.tools.notebook_edit import NotebookEditTool
-        from llm_code.tools.notebook_read import NotebookReadTool
-        from llm_code.tools.read_file import ReadFileTool
         from llm_code.tools.registry import ToolRegistry
-        from llm_code.tools.write_file import WriteFileTool
 
         api_key = os.environ.get(self._config.provider_api_key_env, "")
         base_url = self._config.provider_base_url or ""
@@ -502,40 +572,12 @@ class LLMCodeTUI(App):
             native_tools=self._config.native_tools,
         )
 
-        # Register core tools — local models get longer bash timeout
-        _base_url = self._config.provider_base_url or ""
-        _is_local = any(h in _base_url for h in ("localhost", "127.0.0.1", "0.0.0.0", "192.168.", "10.", "172."))
-        _bash_timeout = 0 if _is_local else 30  # 0 = no timeout for local models
-
+        # Register core tools — collaborator-free set shared with the
+        # headless ``run_quick_mode`` path so both exercise the same
+        # tools. Instance-scoped tools (memory, skills, swarm, IDE, LSP,
+        # etc.) are registered further down.
         self._tool_reg = ToolRegistry()
-        from llm_code.tools.web_fetch import WebFetchTool
-        from llm_code.tools.web_search import WebSearchTool
-
-        for tool in (
-            ReadFileTool(),
-            WriteFileTool(),
-            EditFileTool(),
-            BashTool(default_timeout=_bash_timeout, compress_output=self._config.output_compression),
-            GlobSearchTool(),
-            GrepSearchTool(),
-            NotebookReadTool(),
-            NotebookEditTool(),
-            WebFetchTool(),
-            WebSearchTool(),
-        ):
-            try:
-                self._tool_reg.register(tool)
-            except ValueError:
-                pass
-
-        for cls in (
-            GitStatusTool, GitDiffTool, GitLogTool, GitCommitTool,
-            GitPushTool, GitStashTool, GitBranchTool,
-        ):
-            try:
-                self._tool_reg.register(cls())
-            except ValueError:
-                pass
+        LLMCodeTUI._register_core_tools_into(self._tool_reg, self._config)
 
         # Register AgentTool with a lazy factory closure that captures `self`
         # so the parent runtime — built later in startup — is reachable.
@@ -1340,15 +1382,13 @@ class LLMCodeTUI(App):
         assistant_added = False
         thinking_buffer = ""
         thinking_start = time.monotonic()
-        # Client-side tag parsing for models (like Qwen) that emit
-        # <think> and <tool_call> as raw StreamTextDelta
-        _in_think_tag = False
-        _think_close_tag = "</think>"
-        _in_tool_call_tag = False
+        # Canonical stream parser: single state machine shared with the
+        # runtime dispatch path (llm_code.streaming.stream_parser). Emits
+        # TEXT / THINKING / TOOL_CALL events that we route into the TUI
+        # widgets below. Replaced ~110 lines of inline tag parsing.
+        from llm_code.streaming.stream_parser import StreamEventKind, StreamParser
+        _stream_parser = StreamParser()
         _saw_tool_call_this_turn = False  # For empty-response diagnosis
-        _raw_text_buffer = ""
-        _is_first_text_delta = True  # Track first delta for think-start detection
-        _full_text_accumulator = ""  # Accumulate ALL text for post-hoc think stripping
 
         async def remove_spinner() -> None:
             """Remove spinner if it is currently mounted."""
@@ -1381,113 +1421,48 @@ class LLMCodeTUI(App):
                     chat.add_entry(spinner)
 
                 if isinstance(event, StreamTextDelta):
-                    _raw_text_buffer += event.text
-
-                    # ── First delta detection ──
-                    # Qwen (and similar) always start with <think> when thinking.
-                    # On the first text delta, check if response starts with a think tag.
-                    if _is_first_text_delta:
-                        stripped_start = _raw_text_buffer.lstrip()
-                        # Still accumulating a potential partial tag prefix
-                        if len(stripped_start) < len("<thinking>") and stripped_start.startswith("<"):
-                            continue  # wait for more data
-                        _is_first_text_delta = False
-                        for open_tag, close_tag in [("<think>", "</think>"), ("<thinking>", "</thinking>")]:
-                            if stripped_start.startswith(open_tag):
-                                # Strip the open tag and enter thinking mode
-                                idx = _raw_text_buffer.index(open_tag) + len(open_tag)
-                                _raw_text_buffer = _raw_text_buffer[idx:]
-                                _in_think_tag = True
-                                _think_close_tag = close_tag
+                    # Delegate all <think> / <tool_call> tag recognition
+                    # to the shared StreamParser. It produces TEXT,
+                    # THINKING, and TOOL_CALL events that we route into
+                    # TUI widgets below.
+                    for parsed_ev in _stream_parser.feed(event.text):
+                        if parsed_ev.kind == StreamEventKind.THINKING:
+                            if not thinking_buffer:
+                                # First thinking content this turn — start
+                                # the elapsed timer and set spinner phase.
+                                thinking_start = time.monotonic()
                                 spinner.phase = "thinking"
-                                break
-
-                    # ── Thinking mode: route everything to thinking_buffer ──
-                    if _in_think_tag:
-                        if _think_close_tag in _raw_text_buffer:
-                            think_content, _, _raw_text_buffer = _raw_text_buffer.partition(_think_close_tag)
-                            thinking_buffer += think_content
-                            _in_think_tag = False
+                            thinking_buffer += parsed_ev.text
+                        elif parsed_ev.kind == StreamEventKind.TEXT:
+                            # Flush any pending thinking into a ThinkingBlock
+                            # before rendering visible text.
                             if thinking_buffer.strip():
                                 elapsed_t = time.monotonic() - thinking_start
                                 tokens_t = len(thinking_buffer) // 4
-                                chat.add_entry(ThinkingBlock(thinking_buffer, elapsed_t, tokens_t))
+                                chat.add_entry(
+                                    ThinkingBlock(thinking_buffer, elapsed_t, tokens_t)
+                                )
                                 thinking_buffer = ""
-                            # After closing think, check for another think block
-                            _is_first_text_delta = True
-                        else:
-                            thinking_buffer += _raw_text_buffer
-                            _raw_text_buffer = ""
-                        continue
-
-                    # ── Mid-stream think tags (e.g. after tool results) ──
-                    for open_tag, close_tag in [("<think>", "</think>"), ("<thinking>", "</thinking>")]:
-                        if open_tag in _raw_text_buffer:
-                            before, _, _raw_text_buffer = _raw_text_buffer.partition(open_tag)
-                            if before.strip():
+                            if parsed_ev.text:
                                 if not assistant_added:
                                     await remove_spinner()
                                     chat.add_entry(assistant)
                                     assistant_added = True
-                                assistant.append_text(before)
-                            _in_think_tag = True
-                            _think_close_tag = close_tag
-                            spinner.phase = "thinking"
-                            # Re-process remaining buffer in thinking mode
-                            if _think_close_tag in _raw_text_buffer:
-                                tc, _, _raw_text_buffer = _raw_text_buffer.partition(_think_close_tag)
-                                thinking_buffer += tc
-                                _in_think_tag = False
-                                if thinking_buffer.strip():
-                                    elapsed_t = time.monotonic() - thinking_start
-                                    tokens_t = len(thinking_buffer) // 4
-                                    chat.add_entry(ThinkingBlock(thinking_buffer, elapsed_t, tokens_t))
-                                    thinking_buffer = ""
-                            else:
-                                thinking_buffer += _raw_text_buffer
-                                _raw_text_buffer = ""
-                            continue
-
-                    # ── Handle <tool_call> tags ──
-                    while "<tool_call>" in _raw_text_buffer and not _in_tool_call_tag:
-                        before, _, _raw_text_buffer = _raw_text_buffer.partition("<tool_call>")
-                        if before.strip():
-                            if not assistant_added:
-                                await remove_spinner()
-                                chat.add_entry(assistant)
-                                assistant_added = True
-                            assistant.append_text(before)
-                        _in_tool_call_tag = True
-                        _saw_tool_call_this_turn = True
-
-                    if _in_tool_call_tag:
-                        if "</tool_call>" in _raw_text_buffer:
-                            _, _, _raw_text_buffer = _raw_text_buffer.partition("</tool_call>")
-                            _in_tool_call_tag = False
-                        else:
-                            _raw_text_buffer = ""
-                        continue
-
-                    # ── Safety: strip any remaining think tags ──
-                    for _tag in ("<think>", "</think>", "<thinking>", "</thinking>"):
-                        _raw_text_buffer = _raw_text_buffer.replace(_tag, "")
-
-                    # ── Normal text — output to assistant ──
-                    if _raw_text_buffer:
-                        # Hold back potential partial tags
-                        last_lt = _raw_text_buffer.rfind("<")
-                        if last_lt >= 0 and ">" not in _raw_text_buffer[last_lt:]:
-                            flush = _raw_text_buffer[:last_lt]
-                            _raw_text_buffer = _raw_text_buffer[last_lt:]
-                        else:
-                            flush = _raw_text_buffer
-                            _raw_text_buffer = ""
-                        if flush:
-                            if not assistant_added:
-                                await remove_spinner()
-                                chat.add_entry(assistant)
-                                assistant_added = True
-                            assistant.append_text(flush)
+                                assistant.append_text(parsed_ev.text)
+                        elif parsed_ev.kind == StreamEventKind.TOOL_CALL:
+                            # Flush any pending thinking before the tool
+                            # call (so it's rendered in the right order).
+                            if thinking_buffer.strip():
+                                elapsed_t = time.monotonic() - thinking_start
+                                tokens_t = len(thinking_buffer) // 4
+                                chat.add_entry(
+                                    ThinkingBlock(thinking_buffer, elapsed_t, tokens_t)
+                                )
+                                thinking_buffer = ""
+                            # The runtime parser will re-detect and
+                            # dispatch the call; TUI just records the
+                            # fact for the empty-response diagnostic.
+                            _saw_tool_call_this_turn = True
                     chat.resume_auto_scroll()
 
                 elif isinstance(event, StreamThinkingDelta):
@@ -1611,18 +1586,22 @@ class LLMCodeTUI(App):
             input_bar.disabled = False
             status.is_streaming = False
 
-        # Flush any remaining buffers after stream ends
+        # Flush any remaining buffered content from the shared parser
+        for parsed_ev in _stream_parser.flush():
+            if parsed_ev.kind == StreamEventKind.THINKING:
+                thinking_buffer += parsed_ev.text
+            elif parsed_ev.kind == StreamEventKind.TEXT and parsed_ev.text:
+                if not assistant_added:
+                    chat.add_entry(assistant)
+                    assistant_added = True
+                assistant.append_text(parsed_ev.text)
+            elif parsed_ev.kind == StreamEventKind.TOOL_CALL:
+                _saw_tool_call_this_turn = True
+
         if thinking_buffer.strip():
             elapsed_t = time.monotonic() - thinking_start
             tokens_t = len(thinking_buffer) // 4
             chat.add_entry(ThinkingBlock(thinking_buffer, elapsed_t, tokens_t))
-
-        if _raw_text_buffer.strip():
-            if not assistant_added:
-                chat.add_entry(assistant)
-                assistant_added = True
-            assistant.append_text(_raw_text_buffer)
-            _raw_text_buffer = ""
 
         # If no text was ever displayed but we DO have thinking content,
         # surface the thinking as the answer. Reasoning models (Qwen3,

@@ -113,7 +113,14 @@ def run_quick_mode(
     config: RuntimeConfig,
     stdin_text: str | None = None,
 ) -> None:
-    """Quick Q&A -- send prompt to LLM and print response to stdout.
+    """Quick Q&A — send prompt through the full ConversationRuntime and
+    print the visible text to stdout.
+
+    Before 2026-04-08 this function called the provider directly,
+    bypassing the system prompt, the tool registry, the tool-call
+    parser, and the renderer. That meant ``-q`` was useless as a smoke
+    test for the main code path, and PRs #11/#13/#14 each shipped bugs
+    that ``-q`` verification missed.
 
     Args:
         prompt: The question or instruction.
@@ -124,5 +131,52 @@ def run_quick_mode(
     if stdin_text:
         full_prompt = f"{prompt}\n\n```\n{stdin_text}\n```"
 
-    response = _send_sync(config, full_prompt)
-    print(response)
+    from llm_code.api.types import StreamTextDelta
+    from llm_code.runtime.context import ProjectContext
+    from llm_code.runtime.conversation import ConversationRuntime
+    from llm_code.runtime.permissions import PermissionMode, PermissionPolicy
+    from llm_code.runtime.prompt import SystemPromptBuilder
+    from llm_code.runtime.session import Session
+    from llm_code.tools.registry import ToolRegistry
+    from llm_code.tui.app import LLMCodeTUI
+
+    provider = _create_provider(config)
+    registry = ToolRegistry()
+    # Register the same collaborator-free tool set as the TUI for parity.
+    LLMCodeTUI._register_core_tools_into(registry, config)
+
+    cwd = Path.cwd()
+    mode_map = {
+        "read_only": PermissionMode.READ_ONLY,
+        "workspace_write": PermissionMode.WORKSPACE_WRITE,
+        "full_access": PermissionMode.FULL_ACCESS,
+        "auto_accept": PermissionMode.AUTO_ACCEPT,
+        "prompt": PermissionMode.PROMPT,
+    }
+    perm_mode = mode_map.get(
+        getattr(config, "permission_mode", "prompt"), PermissionMode.PROMPT
+    )
+
+    runtime = ConversationRuntime(
+        provider=provider,
+        tool_registry=registry,
+        permission_policy=PermissionPolicy(mode=perm_mode),
+        hook_runner=None,
+        prompt_builder=SystemPromptBuilder(),
+        config=config,
+        session=Session.create(project_path=cwd),
+        context=ProjectContext(
+            cwd=cwd, is_git_repo=False, git_status="", instructions=""
+        ),
+    )
+
+    async def _drive() -> str:
+        events = await runtime.run_one_turn(full_prompt)
+        parts: list[str] = []
+        for ev in events:
+            if isinstance(ev, StreamTextDelta):
+                parts.append(ev.text)
+        return "".join(parts)
+
+    visible = asyncio.run(_drive())
+    print(visible)

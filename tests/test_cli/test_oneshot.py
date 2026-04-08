@@ -103,17 +103,52 @@ class TestRunExecuteMode:
         assert "Cancelled" in captured.out
 
 
+class _StubStreamProvider:
+    """Provider double for the migrated run_quick_mode path.
+
+    ``run_quick_mode`` now drives ConversationRuntime.run_turn, which
+    calls ``provider.stream_message`` (not ``send_message``) and iterates
+    the resulting async generator. This stub yields a single text delta
+    plus a stop event, and records the MessageRequest it was called with
+    so tests can assert on the user-visible prompt text.
+    """
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+        self.last_request = None
+
+    def supports_native_tools(self) -> bool:  # pragma: no cover - trivial
+        return False
+
+    def supports_reasoning(self) -> bool:  # pragma: no cover - trivial
+        return False
+
+    async def stream_message(self, request):
+        from llm_code.api.types import (
+            StreamMessageStop,
+            StreamTextDelta,
+            TokenUsage,
+        )
+
+        self.last_request = request
+        text = self._text
+
+        async def _gen():
+            yield StreamTextDelta(text=text)
+            yield StreamMessageStop(
+                usage=TokenUsage(input_tokens=1, output_tokens=1),
+                stop_reason="stop",
+            )
+
+        return _gen()
+
+
 class TestRunQuickMode:
-    """Tests for run_quick_mode."""
+    """Tests for run_quick_mode (post-migration to ConversationRuntime)."""
 
     @patch("llm_code.cli.oneshot._create_provider")
     def test_outputs_response(self, mock_create, capsys):
-        provider = MagicMock()
-        provider.send_message = AsyncMock(
-            return_value=_mock_response("The answer is 42."),
-        )
-        mock_create.return_value = provider
-
+        mock_create.return_value = _StubStreamProvider("The answer is 42.")
         config = _make_config()
         run_quick_mode("what is the answer?", config)
 
@@ -122,18 +157,22 @@ class TestRunQuickMode:
 
     @patch("llm_code.cli.oneshot._create_provider")
     def test_with_stdin_text(self, mock_create, capsys):
-        provider = MagicMock()
-        provider.send_message = AsyncMock(
-            return_value=_mock_response("It has 3 lines."),
-        )
+        provider = _StubStreamProvider("It has 3 lines.")
         mock_create.return_value = provider
 
         config = _make_config()
         run_quick_mode("count lines", config, stdin_text="a\nb\nc")
 
-        # Verify the prompt included the stdin text
-        call_args = provider.send_message.call_args[0][0]
-        user_text = call_args.messages[0].content[0].text
+        # The runtime builds a user message from the prompt. Look for the
+        # stdin text inside the latest user Message on the request.
+        req = provider.last_request
+        assert req is not None
+        user_msgs = [m for m in req.messages if m.role == "user"]
+        assert user_msgs, "expected at least one user message"
+        user_text = "".join(
+            b.text for b in user_msgs[-1].content
+            if hasattr(b, "text")
+        )
         assert "a\nb\nc" in user_text
         assert "count lines" in user_text
 
@@ -142,15 +181,18 @@ class TestRunQuickMode:
 
     @patch("llm_code.cli.oneshot._create_provider")
     def test_without_stdin_text(self, mock_create):
-        provider = MagicMock()
-        provider.send_message = AsyncMock(
-            return_value=_mock_response("done"),
-        )
+        provider = _StubStreamProvider("done")
         mock_create.return_value = provider
 
         config = _make_config()
         run_quick_mode("hello", config, stdin_text=None)
 
-        call_args = provider.send_message.call_args[0][0]
-        user_text = call_args.messages[0].content[0].text
+        req = provider.last_request
+        assert req is not None
+        user_msgs = [m for m in req.messages if m.role == "user"]
+        assert user_msgs
+        user_text = "".join(
+            b.text for b in user_msgs[-1].content
+            if hasattr(b, "text")
+        )
         assert user_text == "hello"
