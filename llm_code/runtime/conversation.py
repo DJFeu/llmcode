@@ -47,11 +47,35 @@ if TYPE_CHECKING:
     from llm_code.tools.registry import ToolRegistry
 
 
+_THINKING_BOOST_MULTIPLIER = 2
+
+
+def _apply_thinking_boost(
+    runtime: Any,
+    *,
+    base_budget: int,
+    max_budget: int | None = None,
+) -> int:
+    """If runtime._thinking_boost_active is set, multiply base_budget by
+    _THINKING_BOOST_MULTIPLIER (clamped to max_budget) and clear the flag.
+
+    Top-level runtimes without the attribute fall through unchanged.
+    """
+    if not getattr(runtime, "_thinking_boost_active", False):
+        return base_budget
+    boosted = base_budget * _THINKING_BOOST_MULTIPLIER
+    if max_budget is not None:
+        boosted = min(boosted, max_budget)
+    runtime._thinking_boost_active = False
+    return boosted
+
+
 def build_thinking_extra_body(
     thinking_config,
     *,
     is_local: bool = False,
     provider_supports_reasoning: bool = False,
+    runtime: Any = None,
 ) -> dict | None:
     """Build extra_body dict for thinking mode configuration.
 
@@ -67,6 +91,11 @@ def build_thinking_extra_body(
         budget = thinking_config.budget_tokens
         if is_local:
             budget = max(budget, 131072)
+        budget = _apply_thinking_boost(
+            runtime,
+            base_budget=budget,
+            max_budget=131072 if is_local else None,
+        )
         return {
             "chat_template_kwargs": {
                 "enable_thinking": True,
@@ -80,6 +109,11 @@ def build_thinking_extra_body(
     if is_local:
         if provider_supports_reasoning:
             budget = max(thinking_config.budget_tokens, 131072)
+            budget = _apply_thinking_boost(
+                runtime,
+                base_budget=budget,
+                max_budget=131072,
+            )
             return {
                 "chat_template_kwargs": {
                     "enable_thinking": True,
@@ -97,6 +131,22 @@ logger = get_logger(__name__)
 
 # Maximum number of characters to inline in tool results
 _MAX_INLINE_RESULT = 2000
+
+# Fallback used when neither provider nor config exposes a context limit and
+# the runtime has not yet detected one from an API response.
+_DEFAULT_MAX_INPUT_TOKENS = 200_000
+
+
+def _record_token_usage(
+    runtime: "ConversationRuntime", *, used_tokens: int, max_tokens: int
+) -> None:
+    """Store cumulative input tokens + model context limit on the runtime so
+    the context_window_monitor builtin hook can read them via getattr.
+
+    Called after every LLM stream completes.
+    """
+    runtime._last_input_tokens = int(used_tokens)
+    runtime._max_input_tokens = int(max_tokens)
 
 
 def _merge_hook_extra_output(result: ToolResult, outcome) -> ToolResult:
@@ -128,6 +178,11 @@ class TurnSummary:
 class ConversationRuntime:
     """Agentic loop that drives LLM turns, tool execution, and session updates."""
 
+    # Class-level defaults so builtin hooks can read these via getattr even
+    # before the runtime has processed its first stream.
+    _last_input_tokens: int = 0
+    _max_input_tokens: int = 0
+
     def __init__(
         self,
         provider: Any,
@@ -154,6 +209,8 @@ class ConversationRuntime:
         typed_memory_store: Any = None,
     ) -> None:
         self._provider = provider
+        self._last_input_tokens: int = 0
+        self._max_input_tokens: int = 0
         self._tool_registry = tool_registry
         self._permissions = permission_policy
         self._hooks = hook_runner
@@ -787,6 +844,7 @@ class ConversationRuntime:
                     self._config.thinking,
                     is_local=_is_local,
                     provider_supports_reasoning=self._provider.supports_reasoning(),
+                    runtime=self,
                 ) if not use_native else None,
             )
 
@@ -935,6 +993,14 @@ class ConversationRuntime:
                 accumulated_usage = TokenUsage(
                     input_tokens=accumulated_usage.input_tokens + stop_event.usage.input_tokens,
                     output_tokens=accumulated_usage.output_tokens + stop_event.usage.output_tokens,
+                )
+                _record_token_usage(
+                    self,
+                    used_tokens=accumulated_usage.input_tokens,
+                    max_tokens=getattr(self._provider, "max_input_tokens", 0)
+                    or getattr(self._config, "max_input_tokens", 0)
+                    or getattr(self, "_detected_context_window", 0)
+                    or _DEFAULT_MAX_INPUT_TOKENS,
                 )
 
                 # Per-model query profiler (Task 3)

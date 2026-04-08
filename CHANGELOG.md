@@ -10,6 +10,14 @@
     when a project file is read
 - `HookOutcome.extra_output: str` — allows in-process hooks to append content to
   the visible tool result (used by `rules_injector` and `context_window_monitor`).
+- `context_window_monitor` builtin hook now actually fires — `ConversationRuntime`
+  populates `_last_input_tokens` / `_max_input_tokens` after every LLM stream.
+- `thinking_mode` builtin hook is now consumed — `_thinking_boost_active` doubles
+  the next turn's `thinking_budget` (capped at provider max).
+
+### Fixed
+- `rules_injector` no longer reads `CLAUDE.md` / `AGENTS.md` from ancestor
+  directories outside the resolved project root (symlink edge case).
 
 ## v0.1.0 (2026-04-03) — Production Cleanup
 
