@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased — Wave2-1a P2: ThinkingBlock inbound parsing
+
+### Added
+- **`MessageResponse.thinking: tuple[ThinkingBlock, ...] = ()`** side-channel field for provider-reported thinking blocks. Non-thinking providers leave it empty. P3 is where these move into the assembled assistant `Message.content`; P2 only surfaces them on the response object so downstream assembly can see them.
+- **`llm_code/api/openai_compat.py` now extracts reasoning content** from 5 provider shapes:
+  - `message.reasoning_content` (DeepSeek-R1 / DeepSeek-reasoner / Qwen QwQ / vLLM) — scalar string
+  - `message.reasoning` (OpenAI o-series newer SDK) — scalar string
+  - Anthropic-style structured blocks: `message.content` is a list containing `{"type": "thinking", "thinking": "...", "signature": "..."}` — signature preserved byte-for-byte (never normalized, decoded, or trimmed — Anthropic verifies it server-side on the next request echo)
+  - Streaming `delta.reasoning_content` — emits `StreamThinkingDelta` chunks so the TUI's existing flush logic picks them up
+  - Streaming `delta.reasoning` — same, for o-series
+- **`_extract_reasoning_text(source)` and `_extract_anthropic_thinking(content)`** helpers in openai_compat provide the extraction logic. Both are defensive: non-string fields, non-list inputs, and malformed list entries are silently skipped rather than crashing the parser.
+- **Non-streaming parse** now handles both scalar `message.content` (unchanged) and Anthropic-style structured content list — text blocks become `TextBlock`, thinking blocks go to the side channel.
+- **Streaming parse** now handles interleaved thinking + text in a single chunk: thinking is emitted first so the TUI flushes it before the visible text arrives (stable ordering pinned by test).
+
+### Context
+This is P2 of the thinking-blocks-first-class spec (see `docs/superpowers/specs/2026-04-09-llm-code-thinking-blocks-first-class-design.md`, local-only). P1 added the data model; P2 makes the provider parser actually populate it. Nothing downstream consumes `MessageResponse.thinking` yet — P3 is where `conversation.py` accumulates these and prepends them into `Message.content` before assembly.
+
+Empty-string reasoning chunks are ignored so turns without thinking don't emit zero-length blocks. This matters for cost tracking and compression: a no-op thinking chunk would otherwise inflate token estimates in P3.
+
+### Tests
+- **`tests/test_api/test_openai_compat_thinking.py`** — 19 new tests:
+  - 5 unit tests for `_extract_reasoning_text`: field priority, fallback, non-string rejection, empty-string treated as absent
+  - 5 unit tests for `_extract_anthropic_thinking`: structured list walking, byte-opaque signature, signature default, scalar/None input rejection, malformed-entry skipping
+  - 5 integration tests for non-streaming `_parse_response`: DeepSeek reasoning_content, OpenAI o-series reasoning, Anthropic structured, no-reasoning default, reasoning + tool_call combo
+  - 4 streaming integration tests: reasoning_content chunks → StreamThinkingDelta, OpenAI reasoning field, empty chunks skipped, interleaved thinking+text ordering
+- Full `tests/test_runtime/` + `tests/test_api/` sweep: **1677 passed**, no regressions.
+
 ## Unreleased — Wave2-1a P1: ThinkingBlock as first-class ContentBlock
 
 ### Added

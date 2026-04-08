@@ -99,6 +99,11 @@ class MessageResponse:
     content: tuple[ContentBlock, ...]
     usage: TokenUsage
     stop_reason: str
+    # Wave2-1a P2: thinking blocks parsed from the provider response.
+    # Non-thinking providers leave this empty. P3 is where these move
+    # into the assembled assistant Message.content; P2 only surfaces
+    # them on the response object so downstream assembly can see them.
+    thinking: tuple[ThinkingBlock, ...] = ()
 
 
 @dataclasses.dataclass(frozen=True)
