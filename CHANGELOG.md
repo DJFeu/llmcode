@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — Wave2-4: Compaction todo preserver + phase-split hooks
+
+### Added
+- **`pre_compact` / `post_compact` hook events.** Observers can now distinguish the snapshot moment from the rehydration moment of a compaction pass. The legacy `session_compact` event still fires alongside `pre_compact` so existing hook configurations keep working unchanged. Both new events are in the canonical `session.*` group, so any glob subscriber (e.g. `session.*`) picks them up automatically.
+- **`llm_code/runtime/todo_preserver.py`** — pure module providing `snapshot_incomplete_tasks(task_manager)` (best-effort, never raises even on a broken task store) and `format_todo_reminder(snapshot, max_tokens=500)` with a hard token cap. The formatter truncates with a `... (N more)` footer when the cap would be exceeded, so a runaway task list cannot balloon an already-tight context window.
+- **`ConversationRuntime._compact_with_todo_preserve(max_tokens, reason)`** helper routes all four in-tree compaction call sites (proactive / prompt_too_long / api_reported / post_tool) through a single path that fires the phase-split hooks with uniform payload: `{reason, before_tokens, target_tokens, preserved_todos}`. Previously only one of the four sites fired `session_compact` at all, so observers had no visibility into three of the compaction triggers.
+
+### Tests
+- **`tests/test_runtime/test_todo_preserver_wave2_4.py`** — 12 new tests covering: empty/broken/None task-manager handling, snapshot structure, format hard-cap truncation with `... (N more)` footer, default-cap sanity for typical sessions, phase-event registration in `_EVENT_GROUP`, and `session.*` glob matching for both new phase events.
+- Full `tests/test_runtime/` + `tests/test_api/` sweep: **1654 passed**, no regressions.
+
 ## Unreleased — Wave2-5: Plugin executor (schema + dynamic loader + SkillRouter hooks)
 
 ### Added
@@ -62,6 +73,7 @@ This PR lands the **API + two non-interactive backends only**. The Textual backe
 - `TextualDialogs` backend (needs screen push/pop integration)
 - Call-site migration sweep (worktree confirm, permission prompt, skill picker, commit-message input, settings modal, quick-open, MCP approval, etc.)
 - Removal of legacy prompt helpers after migration
+
 
 ## v1.12.0 (2026-04-08)
 

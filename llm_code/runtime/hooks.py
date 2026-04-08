@@ -23,7 +23,7 @@ HOOK_TIMEOUT = 10.0
 # command  -> pre_command, post_command, command_error
 # prompt   -> prompt_submit, prompt_compile, prompt_cache_hit, prompt_cache_miss
 # agent    -> agent_spawn, agent_complete, agent_error, agent_message
-# session  -> session_start, session_end, session_save, session_compact, session_dream
+# session  -> session_start, session_end, session_save, session_compact, pre_compact, post_compact, session_dream
 # http     -> http_request, http_response, http_error, http_retry, http_fallback
 
 # Mapping from event name to its dot-prefixed canonical group name used for glob matching.
@@ -53,6 +53,12 @@ _EVENT_GROUP: dict[str, str] = {
     "session_end": "session.session_end",
     "session_save": "session.session_save",
     "session_compact": "session.session_compact",
+    # Wave2-4: phase-split compaction events so observers can distinguish
+    # the pre-compact snapshot moment from the post-compact rehydration
+    # moment. ``session_compact`` is kept for back-compat and fires
+    # alongside pre_compact.
+    "pre_compact": "session.pre_compact",
+    "post_compact": "session.post_compact",
     "session_dream": "session.session_dream",
     # http
     "http_request": "http.http_request",
