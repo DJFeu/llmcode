@@ -306,6 +306,13 @@ class LspClient:
         for child in node.get("children", []) or []:
             self._collect_document_symbol(child, default_uri, accum)
 
+    async def workspace_symbol(self, query: str) -> list[SymbolInfo]:
+        result = await self._request(
+            "workspace/symbol",
+            {"query": query},
+        )
+        return self._parse_symbols(result, default_uri="")
+
     async def get_diagnostics(self, file_uri: str) -> list[Diagnostic]:
         result = await self._request(
             "textDocument/diagnostic",

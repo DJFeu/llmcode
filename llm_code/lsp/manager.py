@@ -54,3 +54,9 @@ class LspServerManager:
     def get_client(self, language: str) -> LspClient | None:
         """Return the LspClient for *language*, or None if not running."""
         return self._clients.get(language)
+
+    def any_client(self) -> LspClient | None:
+        """Return any running client (used by workspace-wide LSP requests)."""
+        for client in self._clients.values():
+            return client
+        return None

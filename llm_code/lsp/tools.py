@@ -413,3 +413,79 @@ class LspDocumentSymbolTool(Tool):
             return ToolResult(output="No symbols found.")
         lines = [f"{s.kind} {s.name}\t{s.line}:{s.column}" for s in symbols]
         return ToolResult(output="\n".join(lines))
+
+
+class _QueryInput(BaseModel):
+    query: str
+
+
+class LspWorkspaceSymbolTool(Tool):
+    """Search for a symbol across the entire workspace via the language server."""
+
+    def __init__(self, manager: LspServerManager) -> None:
+        self._manager = manager
+
+    @property
+    def name(self) -> str:
+        return "lsp_workspace_symbol"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Fuzzy-search for a symbol (class, function, variable) across the "
+            "entire workspace using the language server's workspace/symbol "
+            "request. Faster and more precise than grep for code identifiers."
+        )
+
+    @property
+    def input_schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Symbol query string (fuzzy match)",
+                },
+            },
+            "required": ["query"],
+        }
+
+    @property
+    def required_permission(self) -> PermissionLevel:
+        return PermissionLevel.READ_ONLY
+
+    @property
+    def input_model(self) -> type[_QueryInput]:
+        return _QueryInput
+
+    def is_read_only(self, args: dict) -> bool:
+        return True
+
+    def is_concurrency_safe(self, args: dict) -> bool:
+        return True
+
+    def execute(self, args: dict) -> ToolResult:
+        import asyncio
+        import concurrent.futures
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(asyncio.run, self.execute_async(args)).result()
+        return asyncio.run(self.execute_async(args))
+
+    async def execute_async(self, args: dict) -> ToolResult:
+        query = str(args["query"])
+        client = self._manager.any_client()
+        if client is None:
+            return ToolResult(
+                output="No LSP server is currently running. Start a project with a known marker file.",
+                is_error=True,
+            )
+        symbols = await client.workspace_symbol(query)
+        if not symbols:
+            return ToolResult(output=f"No symbols matching '{query}'.")
+        lines = [f"{s.kind} {s.name}\t{s.file}:{s.line}:{s.column}" for s in symbols]
+        return ToolResult(output="\n".join(lines))
