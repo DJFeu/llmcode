@@ -5,6 +5,7 @@ All OpenTelemetry imports are lazy — the module works as a no-op when the
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,6 +24,15 @@ class TelemetryConfig:
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
     langfuse_host: str = "https://cloud.langfuse.com"
+
+
+def _coerce_attr_value(value):
+    """Coerce a Python value into something OTel attribute API accepts."""
+    if isinstance(value, (str, bool, int, float)):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [str(v)[:1024] for v in value]
+    return str(value)[:2048]
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +110,56 @@ class Telemetry:
             name="llm.errors",
             description="Count of errors by type",
         )
+
+    # ------------------------------------------------------------------
+    # Canonical span context manager (use this for new instrumentation)
+    # ------------------------------------------------------------------
+
+    @contextmanager
+    def span(self, name: str, **attributes):
+        """Open a span as the current context manager.
+
+        Yields the underlying OTel span (or ``None`` when telemetry is
+        disabled). Nested ``with telemetry.span(...)`` calls form a tree
+        because OTel uses an in-process context var to track the current
+        span.
+        """
+        if not self._enabled or self._tracer is None:
+            yield None
+            return
+
+        try:
+            cm = self._tracer.start_as_current_span(name)
+        except Exception:
+            yield None
+            return
+
+        try:
+            with cm as otel_span:
+                try:
+                    for key, value in attributes.items():
+                        if value is None:
+                            continue
+                        otel_span.set_attribute(key, _coerce_attr_value(value))
+                except Exception:
+                    pass
+                try:
+                    yield otel_span
+                except Exception as exc:
+                    try:
+                        otel_span.set_status(self._StatusCode.ERROR)
+                        otel_span.record_exception(exc)
+                    except Exception:
+                        pass
+                    raise
+                else:
+                    try:
+                        otel_span.set_status(self._StatusCode.OK)
+                    except Exception:
+                        pass
+        except Exception:
+            # Any failure in the OTel layer must not break the caller
+            pass
 
     # ------------------------------------------------------------------
     # Public API — all methods are safe to call unconditionally
