@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 from llm_code.tui.keybindings import (
-    DEFAULT_CHORDS,
     KeybindingManager,
     load_keybindings,
     parse_chord,

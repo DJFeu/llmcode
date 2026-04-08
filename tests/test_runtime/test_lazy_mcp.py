@@ -11,9 +11,8 @@ Covers:
 """
 from __future__ import annotations
 
-import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -201,7 +200,7 @@ async def test_skill_mcp_spawn_at_first_turn() -> None:
         content="",
         mcp_servers=("tavily",),
     )
-    skillset = _StubSkillSet(auto_skills=(), command_skills=(skill,))
+    _StubSkillSet(auto_skills=(), command_skills=(skill,))  # construct for side effect / fixture symmetry
 
     mgr = _make_mcp_manager()
 

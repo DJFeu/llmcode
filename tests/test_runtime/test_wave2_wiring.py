@@ -8,7 +8,6 @@ from typing import Any
 
 import pytest
 
-from llm_code.runtime import builtin_hooks
 from llm_code.runtime.builtin_hooks import register_named
 from llm_code.runtime.hooks import HookRunner
 

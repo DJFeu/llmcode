@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
 
 from llm_code.cli.commands import COMMAND_REGISTRY, KNOWN_COMMANDS
 from llm_code.tui.app import LLMCodeTUI

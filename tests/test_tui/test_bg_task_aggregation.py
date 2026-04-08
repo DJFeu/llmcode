@@ -12,7 +12,6 @@ import pytest
 
 from llm_code.runtime.background_task_registry import AsyncTaskRegistry
 from llm_code.task.manager import TaskLifecycleManager
-from llm_code.task.types import TaskStatus
 from llm_code.tui.status_bar import StatusBar
 
 

@@ -8,7 +8,7 @@ from llm_code.runtime.frontmatter_hooks import (
     register_skill_hooks,
     register_skillset_hooks,
 )
-from llm_code.runtime.skills import Skill, SkillSet
+from llm_code.runtime.skills import Skill
 
 
 class _FakeHookRunner:

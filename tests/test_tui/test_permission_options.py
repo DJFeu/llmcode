@@ -1,7 +1,6 @@
 """Tests for the multi-option permission UX and in-runtime allowlist."""
 from __future__ import annotations
 
-from unittest.mock import MagicMock
 
 import pytest
 

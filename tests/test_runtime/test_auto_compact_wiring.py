@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import pytest
 
 from llm_code.api.types import StreamCompactionDone, StreamCompactionStart
 from llm_code.runtime.auto_compact import (
