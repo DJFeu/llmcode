@@ -690,11 +690,13 @@ class LLMCodeTUI(App):
             try:
                 from llm_code.lsp.manager import LspServerManager
                 from llm_code.lsp.tools import (
+                    LspCallHierarchyTool,
                     LspDiagnosticsTool,
                     LspDocumentSymbolTool,
                     LspFindReferencesTool,
                     LspGotoDefinitionTool,
                     LspHoverTool,
+                    LspImplementationTool,
                     LspWorkspaceSymbolTool,
                 )
                 self._lsp_manager = LspServerManager()
@@ -705,6 +707,8 @@ class LLMCodeTUI(App):
                     LspHoverTool(self._lsp_manager),
                     LspDocumentSymbolTool(self._lsp_manager),
                     LspWorkspaceSymbolTool(self._lsp_manager),
+                    LspImplementationTool(self._lsp_manager),
+                    LspCallHierarchyTool(self._lsp_manager),
                 ):
                     try:
                         self._tool_reg.register(tool)

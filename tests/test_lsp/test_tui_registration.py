@@ -15,5 +15,7 @@ def test_tui_app_imports_all_six_lsp_tools() -> None:
         "LspHoverTool",
         "LspDocumentSymbolTool",
         "LspWorkspaceSymbolTool",
+        "LspImplementationTool",
+        "LspCallHierarchyTool",
     ):
         assert cls in src, f"{cls} missing from tui.app LSP registration"
