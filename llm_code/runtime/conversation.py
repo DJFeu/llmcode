@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import json
 import time
@@ -35,7 +36,7 @@ from llm_code.runtime.compressor import ContextCompressor
 from llm_code.runtime.cost_tracker import BudgetExceededError
 from llm_code.runtime.permissions import PermissionOutcome
 from llm_code.runtime.streaming_executor import StreamingToolExecutor
-from llm_code.runtime.telemetry import Telemetry, get_noop_telemetry
+from llm_code.runtime.telemetry import Telemetry, _truncate_for_attribute, get_noop_telemetry
 from llm_code.tools.base import PermissionLevel, ToolResult
 from llm_code.tools.parsing import ParsedToolCall, parse_tool_calls
 
@@ -45,6 +46,29 @@ if TYPE_CHECKING:
     from llm_code.runtime.prompt import SystemPromptBuilder
     from llm_code.runtime.session import Session
     from llm_code.tools.registry import ToolRegistry
+
+
+def _build_prompt_preview(messages, max_chars: int = 2000) -> str:
+    """Build a short preview of the most recent user/assistant turns."""
+    if not messages:
+        return ""
+    tail = messages[-3:]
+    parts: list[str] = []
+    per_msg_cap = max(200, max_chars // max(1, len(tail)))
+    for msg in tail:
+        role = getattr(msg, "role", "?")
+        content = getattr(msg, "content", "")
+        if isinstance(content, (list, tuple)):
+            text_chunks = []
+            for block in content:
+                txt = getattr(block, "text", None)
+                if txt:
+                    text_chunks.append(txt)
+            content = " ".join(text_chunks)
+        text = str(content)[:per_msg_cap]
+        parts.append(f"[{role}] {text}")
+    out = "\n".join(parts)
+    return out[:max_chars]
 
 
 _THINKING_BOOST_MULTIPLIER = 2
@@ -625,6 +649,17 @@ class ConversationRuntime:
                 )
 
     async def run_turn(self, user_input: str, images: list | None = None, active_skill_content: str | None = None) -> AsyncIterator[StreamEvent]:
+        """Run one user turn wrapped in an agent.turn span for telemetry nesting."""
+        session_id = getattr(self.session, "session_id", "") or getattr(self.session, "id", "")
+        _turn_attrs = {
+            "session.id": session_id,
+            "model": getattr(self, "_active_model", "") or getattr(self._config, "model", ""),
+        }
+        with self._telemetry.span("agent.turn", **_turn_attrs):
+            async for event in self._run_turn_body(user_input, images, active_skill_content):
+                yield event
+
+    async def _run_turn_body(self, user_input: str, images: list | None = None, active_skill_content: str | None = None) -> AsyncIterator[StreamEvent]:
         """Run one user turn (may involve multiple LLM calls for tool use)."""
         logger.debug("Starting turn: %s", user_input[:80])
         # First-turn lazy spawn of skill-declared on-demand MCP servers.
@@ -856,6 +891,43 @@ class ConversationRuntime:
 
             # Error recovery: tool choice fallback + reactive compact
             self._fire_hook("http_request", {"model": self._active_model, "url": getattr(self._config, "provider_base_url", "")})
+            _prompt_preview = _build_prompt_preview(self.session.messages)
+            # Open the llm.completion span and KEEP IT OPEN across the entire
+            # stream-consume loop so output-side attributes (preview, output
+            # tokens, finish_reason) can be set just before the span closes.
+            # ExitStack lets us tie its lifetime to a finally block that
+            # survives the recovery branches below.
+            _llm_span_stack = contextlib.ExitStack()
+            _llm_span = _llm_span_stack.enter_context(
+                self._telemetry.trace_llm_completion(
+                    session_id=getattr(self.session, "session_id", "") or getattr(self.session, "id", ""),
+                    model=self._active_model,
+                    prompt_preview=_prompt_preview,
+                    provider=getattr(self._config, "provider", "") or "",
+                )
+            )
+            _llm_span_closed = False
+
+            def _close_llm_span_with_error(_e: BaseException) -> None:
+                nonlocal _llm_span_closed
+                if _llm_span_closed:
+                    return
+                _llm_span_closed = True
+                try:
+                    _llm_span_stack.__exit__(type(_e), _e, _e.__traceback__)
+                except Exception:
+                    pass
+
+            def _close_llm_span_ok() -> None:
+                nonlocal _llm_span_closed
+                if _llm_span_closed:
+                    return
+                _llm_span_closed = True
+                try:
+                    _llm_span_stack.close()
+                except Exception:
+                    pass
+
             try:
                 stream = await self._provider.stream_message(request)
             except Exception as exc:
@@ -893,7 +965,15 @@ class ConversationRuntime:
                             provider_supports_reasoning=self._provider.supports_reasoning(),
                         ),
                     )
-                    stream = await self._provider.stream_message(request)
+                    try:
+                        stream = await self._provider.stream_message(request)
+                    except Exception as retry_exc:
+                        # XML fallback retry itself failed — close the open
+                        # llm.completion span before propagating, otherwise
+                        # the span leaks (no try/finally on the outer block).
+                        logger.error("XML fallback retry failed: %s", retry_exc)
+                        _close_llm_span_with_error(retry_exc)
+                        raise
                 elif (
                     ("413" in _exc_str or "prompt too long" in _exc_str.lower())
                     and not self._has_attempted_reactive_compact
@@ -906,6 +986,7 @@ class ConversationRuntime:
                         self.session,
                         self._config.compact_after_tokens // 2,
                     )
+                    _close_llm_span_with_error(exc)
                     continue  # retry this iteration of the turn loop
                 else:
                     # Layer 3: model fallback — track consecutive provider errors
@@ -922,6 +1003,7 @@ class ConversationRuntime:
                                 self._consecutive_failures,
                                 exc,
                             )
+                            _close_llm_span_with_error(exc)
                             continue  # retry this iteration
                         # 3rd consecutive failure: switch to fallback model
                         self._fire_hook("http_fallback", {"reason": "consecutive_failures", "from": self._active_model, "to": _fallback})
@@ -931,8 +1013,10 @@ class ConversationRuntime:
                             _fallback,
                         )
                         self._active_model = _fallback
+                        _close_llm_span_with_error(exc)
                         continue  # retry with fallback model
                     logger.error("Provider stream error: %s", exc)
+                    _close_llm_span_with_error(exc)
                     raise
 
             # 4. Collect events and buffers
@@ -945,33 +1029,69 @@ class ConversationRuntime:
             _streaming_executor = StreamingToolExecutor(self._tool_registry, self._permissions)
             _current_streaming_tool_id: str | None = None
 
-            async for event in stream:
-                # Yield streaming events to caller
-                yield event
+            try:
+                async for event in stream:
+                    # Yield streaming events to caller
+                    yield event
 
-                if isinstance(event, StreamTextDelta):
-                    text_parts.append(event.text)
-                elif isinstance(event, StreamToolUseStart):
-                    # Finalize the previously streaming tool (if any) before starting new one
-                    if _current_streaming_tool_id is not None:
-                        _streaming_executor.finalize(_current_streaming_tool_id)
-                    _current_streaming_tool_id = event.id
-                    native_tool_calls[event.id] = {
-                        "id": event.id,
-                        "name": event.name,
-                        "json_parts": [],
-                    }
-                    _streaming_executor.start_tool(event.id, event.name)
-                elif isinstance(event, StreamToolUseInputDelta):
-                    if event.id in native_tool_calls:
-                        native_tool_calls[event.id]["json_parts"].append(event.partial_json)
-                    _streaming_executor.submit(event.id, event.partial_json)
-                elif isinstance(event, StreamMessageStop):
-                    # Finalize the last streaming tool
-                    if _current_streaming_tool_id is not None:
-                        _streaming_executor.finalize(_current_streaming_tool_id)
-                        _current_streaming_tool_id = None
-                    stop_event = event
+                    if isinstance(event, StreamTextDelta):
+                        text_parts.append(event.text)
+                    elif isinstance(event, StreamToolUseStart):
+                        # Finalize the previously streaming tool (if any) before starting new one
+                        if _current_streaming_tool_id is not None:
+                            _streaming_executor.finalize(_current_streaming_tool_id)
+                        _current_streaming_tool_id = event.id
+                        native_tool_calls[event.id] = {
+                            "id": event.id,
+                            "name": event.name,
+                            "json_parts": [],
+                        }
+                        _streaming_executor.start_tool(event.id, event.name)
+                    elif isinstance(event, StreamToolUseInputDelta):
+                        if event.id in native_tool_calls:
+                            native_tool_calls[event.id]["json_parts"].append(event.partial_json)
+                        _streaming_executor.submit(event.id, event.partial_json)
+                    elif isinstance(event, StreamMessageStop):
+                        # Finalize the last streaming tool
+                        if _current_streaming_tool_id is not None:
+                            _streaming_executor.finalize(_current_streaming_tool_id)
+                            _current_streaming_tool_id = None
+                        stop_event = event
+            except BaseException as _stream_exc:
+                _close_llm_span_with_error(_stream_exc)
+                raise
+            else:
+                # Enrich llm.completion span with output-side attributes
+                # before closing it. This is the Issue 1 fix: previously the
+                # span closed before any output was observed and Langfuse
+                # showed blank completion fields.
+                try:
+                    if _llm_span is not None and not _llm_span_closed:
+                        _completion_text = "".join(text_parts)
+                        _llm_span.set_attribute(
+                            "llm.completion.preview",
+                            _truncate_for_attribute(_completion_text),
+                        )
+                        if stop_event is not None:
+                            _llm_span.set_attribute(
+                                "llm.tokens.output",
+                                int(stop_event.usage.output_tokens),
+                            )
+                            _llm_span.set_attribute(
+                                "llm.tokens.input",
+                                int(stop_event.usage.input_tokens),
+                            )
+                            _llm_span.set_attribute(
+                                "llm.tokens.total",
+                                int(stop_event.usage.input_tokens + stop_event.usage.output_tokens),
+                            )
+                            _llm_span.set_attribute(
+                                "llm.finish_reason",
+                                str(stop_event.stop_reason or ""),
+                            )
+                except Exception:
+                    pass
+                _close_llm_span_ok()
 
             # Reset consecutive failure counter on successful stream
             self._consecutive_failures = 0
@@ -1273,13 +1393,9 @@ class ConversationRuntime:
             accumulated_usage.input_tokens,
             accumulated_usage.output_tokens,
         )
-        self._telemetry.trace_turn(
-            session_id=getattr(self.session, "session_id", ""),
-            model=self._active_model,
-            input_tokens=accumulated_usage.input_tokens,
-            output_tokens=accumulated_usage.output_tokens,
-            duration_ms=_turn_duration_ms,
-        )
+        # Telemetry: per-turn data now lives on the wrapping agent.turn span
+        # (enriched via trace_llm_completion children). Legacy trace_turn is
+        # kept on Telemetry for backwards compatibility but not called here.
 
         # Auto-checkpoint: persist session state after each turn completes
         if self._recovery_checkpoint is not None:

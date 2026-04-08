@@ -2,15 +2,6 @@
 
 ## Unreleased
 
-### Fixed
-- `LspClient._request` now uses an id-dispatch loop, correctly handling interleaved server notifications (`window/logMessage`, `$/progress`, etc.) and concurrent requests. Pre-existing latent bug exposed by the broader LSP coverage shipped in borrow-2/2.5.
-
-### Changed
-- `LspWorkspaceSymbolTool` rejects empty queries and caps results at 200 with a `(+N more)` tail.
-- `LspWorkspaceSymbolTool` fans out across all running language clients (`asyncio.gather` + dedupe) instead of querying just the first.
-- All LSP tools route inputs through a centralized `_validate_lsp_path` helper that returns clean `ToolResult(is_error=True)` for relative paths, missing files, or negative line/column.
-- Sync-bridge boilerplate extracted to `_run_async` helper, deduplicated across 8 LSP tools.
-
 ### Added
 - Three themed builtin hooks ported from oh-my-opencode:
   - `context_window_monitor` — warns once per session at 75% context usage
@@ -60,8 +51,25 @@
   - Two new tools: `lsp_implementation`, `lsp_call_hierarchy` (the latter
     accepts `direction: incoming | outgoing | both` and runs prepare →
     incoming/outgoing in one tool call)
+- Agent decision tracing:
+  - Telemetry.span(name, **attrs) — canonical context-manager primitive for
+    nested spans (replaces the previous flat-root design)
+  - Telemetry.trace_llm_completion(...) — opens an llm.completion span with
+    prompt + completion previews (truncated to 4 KB), provider, finish reason
+  - Optional Langfuse export: when LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY
+    are set (env or config), spans are also forwarded to Langfuse alongside
+    the OTLP exporter via langfuse.otel.LangfuseSpanProcessor
+  - Each conversation turn is now wrapped in an agent.turn parent span; the
+    LLM call and every tool call become children of that span, forming a
+    tree visible in Jaeger / Langfuse / any OTel-compatible UI
+  - langfuse>=3.0 added to the existing [telemetry] extra:
+    pip install 'llm-code[telemetry]'
 
 ### Changed
+- `LspWorkspaceSymbolTool` rejects empty queries and caps results at 200 with a `(+N more)` tail.
+- `LspWorkspaceSymbolTool` fans out across all running language clients (`asyncio.gather` + dedupe) instead of querying just the first.
+- All LSP tools route inputs through a centralized `_validate_lsp_path` helper that returns clean `ToolResult(is_error=True)` for relative paths, missing files, or negative line/column.
+- Sync-bridge boilerplate extracted to `_run_async` helper, deduplicated across 8 LSP tools.
 - Agent role sentinel refactor: `AgentRole.allowed_tools` is now
   `frozenset[str] | None`. `None` means unrestricted (full inheritance);
   empty `frozenset()` is the explicit deny-all sentinel; non-empty set is a
@@ -69,6 +77,9 @@
   `ToolRegistry.filtered(None)` clones the parent; `filtered(frozenset())`
   returns an empty registry. This eliminates the "empty set means
   unrestricted" foot-gun.
+- TelemetryConfig now has langfuse_public_key, langfuse_secret_key,
+  langfuse_host fields. The config parser falls back to environment variables
+  with the same names (uppercase) when the dict keys are absent.
 
 ### Fixed
 - `rules_injector` no longer reads `CLAUDE.md` / `AGENTS.md` from ancestor
@@ -99,6 +110,29 @@
 - `_CallHierarchyInput.direction` is now a `Literal["incoming","outgoing","both"]`
   so programmatic callers bypassing the JSON schema get Pydantic validation
   errors on bad values.
+- `LspClient._request` now uses an id-dispatch loop, correctly handling interleaved server notifications (`window/logMessage`, `$/progress`, etc.) and concurrent requests. Pre-existing latent bug exposed by the broader LSP coverage shipped in borrow-2/2.5.
+- Telemetry.span() outer guard restored: failures from the underlying OTel
+  context manager (start_as_current_span enter / exit) no longer propagate
+  to the caller, preserving the contract that "telemetry must never break
+  the caller". Caller exceptions raised inside the with-block still
+  propagate as before.
+- llm.completion span no longer leaks if the XML tool-call fallback retry
+  itself raises. The retry call site in Conversation._run_turn is now
+  wrapped so any exception triggers _close_llm_span_with_error before
+  propagating.
+
+### Refactored
+- _truncate_for_attribute is now imported at the top of conversation.py
+  instead of lazily inside the post-stream enrichment block. Removes
+  per-call import overhead and surfaces genuine import bugs.
+- TelemetryConfig is now declared in exactly one place
+  (llm_code/runtime/telemetry.py) and re-exported from
+  llm_code/runtime/config.py for backward compatibility. Eliminates a
+  duplicate dataclass that previously required manual field synchronization
+  between the two copies and a duck-typed bridging block in tui/app.py.
+- tui/app.py now passes RuntimeConfig.telemetry straight into Telemetry()
+  instead of reconstructing it field by field. Adding a new TelemetryConfig
+  field no longer requires three coordinated edits.
 
 ## v0.1.0 (2026-04-03) — Production Cleanup
 
