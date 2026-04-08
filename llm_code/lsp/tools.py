@@ -1,8 +1,10 @@
 """LSP tools: goto-definition, find-references, diagnostics, hover, symbols."""
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 from pathlib import Path
-from typing import Literal
+from typing import Any, Awaitable, Literal
 
 from pydantic import BaseModel
 
@@ -13,6 +15,21 @@ from llm_code.tools.base import PermissionLevel, Tool, ToolResult
 
 
 _WORKSPACE_SYMBOL_MAX_RESULTS = 200
+
+
+def _run_async(coro: Awaitable[Any]) -> Any:
+    """Run an async coroutine from a sync context.
+
+    If already inside a running event loop, offloads to a worker thread
+    that owns its own loop (avoids re-entering the current loop).
+    Otherwise runs directly via asyncio.run.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)  # type: ignore[arg-type]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()  # type: ignore[arg-type]
 
 
 def _validate_lsp_path(
@@ -109,16 +126,7 @@ class LspGotoDefinitionTool(Tool):
         return True
 
     def execute(self, args: dict) -> ToolResult:
-        import asyncio
-        import concurrent.futures
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, self.execute_async(args)).result()
-        return asyncio.run(self.execute_async(args))
+        return _run_async(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
         file_path = args.get("file", "")
@@ -192,16 +200,7 @@ class LspFindReferencesTool(Tool):
         return True
 
     def execute(self, args: dict) -> ToolResult:
-        import asyncio
-        import concurrent.futures
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, self.execute_async(args)).result()
-        return asyncio.run(self.execute_async(args))
+        return _run_async(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
         file_path = args.get("file", "")
@@ -270,16 +269,7 @@ class LspDiagnosticsTool(Tool):
         return True
 
     def execute(self, args: dict) -> ToolResult:
-        import asyncio
-        import concurrent.futures
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, self.execute_async(args)).result()
-        return asyncio.run(self.execute_async(args))
+        return _run_async(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
         file_path = args.get("file", "")
@@ -351,16 +341,7 @@ class LspHoverTool(Tool):
         return True
 
     def execute(self, args: dict) -> ToolResult:
-        import asyncio
-        import concurrent.futures
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, self.execute_async(args)).result()
-        return asyncio.run(self.execute_async(args))
+        return _run_async(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
         file_path = args.get("file", "")
@@ -427,16 +408,7 @@ class LspDocumentSymbolTool(Tool):
         return True
 
     def execute(self, args: dict) -> ToolResult:
-        import asyncio
-        import concurrent.futures
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, self.execute_async(args)).result()
-        return asyncio.run(self.execute_async(args))
+        return _run_async(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
         file_path = args.get("file", "")
@@ -503,16 +475,7 @@ class LspImplementationTool(Tool):
         return True
 
     def execute(self, args: dict) -> ToolResult:
-        import asyncio
-        import concurrent.futures
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, self.execute_async(args)).result()
-        return asyncio.run(self.execute_async(args))
+        return _run_async(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
         file_path = args.get("file", "")
@@ -585,16 +548,7 @@ class LspWorkspaceSymbolTool(Tool):
         return True
 
     def execute(self, args: dict) -> ToolResult:
-        import asyncio
-        import concurrent.futures
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, self.execute_async(args)).result()
-        return asyncio.run(self.execute_async(args))
+        return _run_async(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
         query = str(args.get("query", "")).strip()
@@ -700,16 +654,7 @@ class LspCallHierarchyTool(Tool):
         return True
 
     def execute(self, args: dict) -> ToolResult:
-        import asyncio
-        import concurrent.futures
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, self.execute_async(args)).result()
-        return asyncio.run(self.execute_async(args))
+        return _run_async(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
         file_path = args.get("file", "")
