@@ -222,7 +222,10 @@ async def _classify_with_llm_debug(
                 first_line = line
                 break
         answer = first_line.strip().lower().strip(" .,:;!?\"'`*[](){}\n\t")
-        if answer and answer != "none" and answer in skill_names:
+        if answer == "none":
+            # Authoritative no-match: do NOT fall through to substring fallback.
+            return None, raw
+        if answer and answer in skill_names:
             return skill_names[answer], raw
 
         # 2) Fallback: scan the FULL raw text (including thinking) for any
