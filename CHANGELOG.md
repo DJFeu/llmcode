@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- LSP coverage expansion ported from opencode:
+  - `llm_code/lsp/languages.py` — single source of truth for extension→language
+    mapping (~80 entries) and walk-up project root detection
+  - `LspClient.hover()`, `document_symbol()`, `workspace_symbol()` methods with
+    `Hover` and `SymbolInfo` dataclasses
+  - Three new tools: `lsp_hover`, `lsp_document_symbol`, `lsp_workspace_symbol`
+  - `detect_lsp_servers_for_file()` walks upward from any file to its project
+    root before resolving servers
+  - Expanded `SERVER_REGISTRY` covers 25+ language servers (up from 4)
+
 ## v0.1.0 (2026-04-03) — Production Cleanup
 
 ### Changed
