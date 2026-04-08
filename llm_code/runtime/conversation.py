@@ -36,7 +36,7 @@ from llm_code.runtime.compressor import ContextCompressor
 from llm_code.runtime.cost_tracker import BudgetExceededError
 from llm_code.runtime.permissions import PermissionOutcome
 from llm_code.runtime.streaming_executor import StreamingToolExecutor
-from llm_code.runtime.telemetry import Telemetry, get_noop_telemetry
+from llm_code.runtime.telemetry import Telemetry, _truncate_for_attribute, get_noop_telemetry
 from llm_code.tools.base import PermissionLevel, ToolResult
 from llm_code.tools.parsing import ParsedToolCall, parse_tool_calls
 
@@ -985,7 +985,6 @@ class ConversationRuntime:
                 try:
                     if _llm_span is not None and not _llm_span_closed:
                         _completion_text = "".join(text_parts)
-                        from llm_code.runtime.telemetry import _truncate_for_attribute
                         _llm_span.set_attribute(
                             "llm.completion.preview",
                             _truncate_for_attribute(_completion_text),
