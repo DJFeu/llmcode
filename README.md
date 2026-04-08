@@ -16,7 +16,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-4159%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-4554%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/cold%20start-~400ms-brightgreen" alt="Cold start">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
   <img src="https://img.shields.io/pypi/v/llmcode-cli" alt="PyPI">
@@ -204,7 +204,9 @@ See [docs/coordinator.md](docs/coordinator.md) for the full tutorial.
 |----------|-------|
 | **File I/O** | read_file, write_file, edit_file, multi_edit (with resolve_path workspace boundary check) |
 | **Search** | glob_search, grep_search, tool_search |
-| **Execution** | bash (21-point security), agent (sub-agents) |
+| **Web** | web_search (DuckDuckGo / Brave / Tavily / SearXNG backends), web_fetch |
+| **Execution** | bash (21-point security), agent (sub-agents with tier-based role routing: build / plan / explore / verify / general) |
+| **LSP** | lsp_hover, lsp_document_symbol, lsp_workspace_symbol, lsp_go_to_definition, lsp_find_references, lsp_go_to_implementation, lsp_call_hierarchy, lsp_diagnostics (auto-detects 25+ language servers via walk-up root finder) |
 | **Git** | git_status, git_diff, git_log, git_commit, git_push, git_stash, git_branch |
 | **Notebook** | notebook_read, notebook_edit |
 | **Computer Use** | screenshot, mouse_click, keyboard_type, key_press, scroll, mouse_drag |
@@ -261,6 +263,12 @@ See [docs/coordinator.md](docs/coordinator.md) for the full tutorial.
 ```
 
 Categories: tool, command, prompt, agent, session, http.
+
+**Builtin hooks** (opt-in via `config.builtin_hooks.enabled`):
+- `context_window_monitor` — warns once per session when input tokens exceed 75% of the model's context limit
+- `thinking_mode` — detects "ultrathink" / 深入思考 keywords in user prompts and boosts the next turn's thinking budget
+- `rules_injector` — auto-injects `CLAUDE.md` / `AGENTS.md` / `.cursorrules` content when reading files inside a project that has them
+- `auto_format` — format files after write/edit (existing)
 
 ### Marketplace
 

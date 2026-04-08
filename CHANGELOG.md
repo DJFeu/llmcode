@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## v1.11.0 (2026-04-08)
+
+**Highlights:**
+- 7 major features ported from oh-my-opencode (themed hooks, dynamic prompt delegation, agent tier routing, LSP coverage expansion, call hierarchy, telemetry tracing with Langfuse)
+- Hermes function-calling parser that handles all 3 variants emitted by vLLM-served Qwen3 and similar tool-fine-tuned local models
+- Tool-call resilience: fixture replay regression museum + idempotent retry loop detector
+- `web_search` and `web_fetch` tools (already existed but now properly advertised in system prompt)
 
 ### Added (resilience hardening from 2026-04-08 bug hunt)
 - `tests/test_tools/fixtures/hermes_captures/` — regression museum holding the verbatim model captures from PRs #14/#15/#16. `tests/test_tools/test_parsing_fixture_replay.py` parametrizes over the directory and asserts every capture parses; new captures land here as `.txt` files and are auto-discovered. Future parser refactors cannot silently break any of the three Hermes variants we've seen in production.
