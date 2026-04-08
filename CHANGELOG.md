@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased — Wave2-1a P4: Compressor atomicity + explicit outbound drop
+
+### Added
+- **`ContextCompressor._micro_compact` treats `(Thinking*, ToolUse)` as an atomic pair.** When a stale `ToolUseBlock` is dropped (because a later call to the same file made it redundant), any `ThinkingBlock` that immediately precedes it in the same assistant message is also dropped. The while-loop handles the Anthropic pattern where a long reasoning trace is split across multiple consecutive thinking blocks before a single tool_use. Without this, signed thinking would be orphaned — a future Anthropic-direct provider's signature verification would fail on the next request round-trip because thinking-without-its-paired-tool_use is invalid in the extended-thinking state machine. Unsigned thinking (Qwen, DeepSeek) is harmless to drop, but the pairing rule keeps the P1 ordering invariant trivially valid across compressions.
+- **Thinking-only leftover messages are dropped.** If pruning a message's sole tool_use + its preceding thinking leaves the message with nothing but more thinking blocks (no text, no other tool uses), the whole message is dropped — orphaned reasoning with no load-bearing connection to subsequent turns has no value. Messages with non-thinking siblings are preserved.
+- **`openai_compat._convert_message` explicitly counts and warns on dropped thinking.** Previously the drop was implicit (the has_multiple branch only handled TextBlock + ImageBlock and thinking fell through the unhandled gap). Now the branch has a named `elif isinstance(block, ThinkingBlock)` arm that increments a counter, and `_warn_thinking_dropped_once(count)` fires a warning exactly once per process the first time any request sends a reasoning-model assistant message through the outbound serializer. This is observability, not a behavior change — the drop itself is still the correct behavior for OpenAI-compat servers which reject unknown content types.
+
+### Decisions recorded
+- **Outbound default: strip, not round-trip.** The P4 plan floated a `strip_thinking_on_outbound` config flag defaulting to pass-through. We chose the opposite: strip by default, because:
+  1. The only current provider is `OpenAICompatProvider` and every known OpenAI-compat server (vLLM, DeepSeek, OpenAI, Qwen) would 400 on unknown content types.
+  2. A native `AnthropicProvider` will override `_convert_message` to emit structured thinking; the round-trip path lives in that override, not in a flag on the base class.
+  3. YAGNI: no real proxy wants round-tripped thinking today. Adding the flag would be a configuration surface with no consumer.
+- **Atomic pair window: immediately preceding only.** The fix pops ThinkingBlocks via a while-loop that only walks backward from the dropped ToolUseBlock within the same message. We do not attempt to preserve thinking that was emitted in a different message — Anthropic's extended-thinking state machine ties thinking to the tool_use in the same assistant message, not across turns.
+
+### Tests
+- **`tests/test_runtime/test_compressor_thinking_wave2_1a_p4.py`** — 6 new tests: single thinking+tool_use pair atomicity, multiple consecutive thinking blocks before a tool_use, kept tool_use preserves its thinking, thinking-only leftover message dropped, preceding TextBlock sibling preserved (only thinking gets popped), compressed session still satisfies the P1 order invariant.
+- **`tests/test_api/test_outbound_thinking_wave2_1a_p4.py`** — 5 new tests: warn-once on first drop, warn-once across 10 requests, warn count reflects multiple thinking blocks, no warning for pure-text messages, visible text content survives drop (observability-only guarantee).
+- Full `tests/test_runtime/` + `tests/test_api/` sweep: **1698 passed**, no regressions (1687 from P3 + 11 new).
+
+### Context
+P4 of the 5-phase thinking-blocks-first-class spec. Compressor atomicity was the main architectural risk in the spec — without it, signed thinking would silently break on future Anthropic-direct provider integration. Outbound explicit drop is the observability half: the drop is still the right behavior today, but now it's visible in the logs rather than a silent accident. P5 (conversation_db persistence + FTS5 thinking search) is next and final.
+
 ## Unreleased — Wave2-1a P3: ThinkingBlock assembly + session persistence
 
 ### Added

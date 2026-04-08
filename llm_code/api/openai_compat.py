@@ -3,9 +3,31 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import AsyncIterator
 
 import httpx
+
+_logger = logging.getLogger(__name__)
+# Wave2-1a P4: one-shot flag so we warn about dropped thinking exactly
+# once per process — the drop itself happens on every multi-turn
+# request to a reasoning model so spamming the log would drown real
+# warnings.
+_thinking_drop_warned = False
+
+
+def _warn_thinking_dropped_once(count: int) -> None:
+    global _thinking_drop_warned
+    if _thinking_drop_warned:
+        return
+    _thinking_drop_warned = True
+    _logger.warning(
+        "openai_compat: dropping %d thinking block(s) from outbound "
+        "assistant message — OpenAI-compat servers reject unknown "
+        "content types. A native AnthropicProvider will round-trip "
+        "signed thinking instead. This warning fires once per process.",
+        count,
+    )
 
 from llm_code.api.errors import (
     ProviderAuthError,
@@ -207,6 +229,7 @@ class OpenAICompatProvider(LLMProvider):
 
         if has_image or has_multiple:
             parts: list[dict] = []
+            thinking_dropped = 0
             for block in msg.content:
                 if isinstance(block, TextBlock):
                     parts.append({"type": "text", "text": block.text})
@@ -217,6 +240,17 @@ class OpenAICompatProvider(LLMProvider):
                             "url": f"data:{block.media_type};base64,{block.data}"
                         },
                     })
+                elif isinstance(block, ThinkingBlock):
+                    # Wave2-1a P4: OpenAI-compat servers reject unknown
+                    # content types, so thinking blocks from prior
+                    # assistant turns are dropped on the way out. The
+                    # model generates fresh reasoning next turn. A
+                    # future native AnthropicProvider overrides
+                    # _convert_message to round-trip signed thinking
+                    # for signature verification.
+                    thinking_dropped += 1
+            if thinking_dropped:
+                _warn_thinking_dropped_once(thinking_dropped)
             return {"role": msg.role, "content": parts}
 
         # Single text block — use string content for simplicity

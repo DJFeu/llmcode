@@ -5,7 +5,14 @@ import dataclasses
 import logging
 from typing import TYPE_CHECKING
 
-from llm_code.api.types import Message, MessageRequest, TextBlock, ToolResultBlock, ToolUseBlock
+from llm_code.api.types import (
+    Message,
+    MessageRequest,
+    TextBlock,
+    ThinkingBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+)
 from llm_code.runtime.session import Session
 
 if TYPE_CHECKING:
@@ -273,16 +280,39 @@ class ContextCompressor:
             return session
 
         # Pass 2: rebuild messages, dropping stale ToolResultBlocks (and their paired ToolUseBlocks)
+        # Wave2-1a P4: when we drop a ToolUseBlock, also pop any
+        # ThinkingBlock(s) immediately preceding it in the same
+        # message. Signed thinking (Anthropic extended thinking) must
+        # travel with its adjacent tool_use or the next request round-
+        # trip fails signature verification. Unsigned thinking is
+        # harmless to drop, but the pairing must be consistent so the
+        # order invariant from P1 continues to hold on the compressed
+        # session.
         new_messages: list[Message] = []
         for msg in session.messages:
-            new_blocks = []
+            new_blocks: list = []
             for block in msg.content:
                 if isinstance(block, ToolResultBlock) and block.tool_use_id in stale_ids:
                     continue  # drop stale result
                 if isinstance(block, ToolUseBlock) and block.id in stale_ids:
+                    # Retroactively pop any ThinkingBlock(s) that
+                    # immediately precede this dropped tool_use in the
+                    # same message. The while-loop handles the
+                    # "multiple consecutive thinking chunks before one
+                    # tool_use" case that Anthropic produces when a
+                    # long reasoning trace is split across blocks.
+                    while new_blocks and isinstance(new_blocks[-1], ThinkingBlock):
+                        new_blocks.pop()
                     continue  # drop stale use block too
                 new_blocks.append(block)
-            if new_blocks:
+            # Also drop a message that becomes thinking-only after the
+            # pairing fix — an orphaned thinking block at the end of a
+            # message whose entire tool-use chain was pruned carries
+            # no load-bearing information.
+            only_thinking = new_blocks and all(
+                isinstance(b, ThinkingBlock) for b in new_blocks
+            )
+            if new_blocks and not only_thinking:
                 new_messages.append(dataclasses.replace(msg, content=tuple(new_blocks)))
             # If a message becomes empty (all blocks dropped), skip it entirely
 
