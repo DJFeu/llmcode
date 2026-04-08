@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## v1.12.0 (2026-04-08)
+
+**Highlights:**
+- **Single source of truth refactor** (PR #21) — shared `ConversationRuntime` test fixture, canonical `StreamParser` replaces TUI + runtime duplicate parsers, system prompt ↔ ToolRegistry lint
+- **Hermes variant 4 parser** (PR #22) — handles `<tool_call>NAME{"args": {...}}</tool_call>` with no `>` separator; StreamParser now emits sentinel event on unparseable blocks so TUI diagnostic is accurate
+- **`-q` quick mode** now drives the real `ConversationRuntime` — no longer bypasses the code path it's supposed to smoke-test
+- **Hermes fixture regression museum** grew to 4 captured variants
 
 ### Fixed (Hermes variant 4 + StreamParser sentinel)
 - **`tools/parsing.py:_HERMES_FUNCTION_TRUNCATED_RE`** now handles Qwen3 variant 4, where the model emits `<tool_call>NAME{"args": {...}}</tool_call>` with no `>` separator between function name and JSON payload. Captured live from Qwen3.5-122B on 2026-04-08 as `tests/test_tools/fixtures/hermes_captures/2026-04-08-pr22-truncated-no-separator.txt`. 4 new unit tests + fixture replay coverage.
