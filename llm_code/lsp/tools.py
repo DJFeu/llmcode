@@ -343,3 +343,73 @@ class LspHoverTool(Tool):
         if not hover.contents:
             return ToolResult(output="No hover information at that position.")
         return ToolResult(output=hover.contents)
+
+
+class LspDocumentSymbolTool(Tool):
+    """List all symbols (classes, functions, variables) declared in a file."""
+
+    def __init__(self, manager: LspServerManager) -> None:
+        self._manager = manager
+
+    @property
+    def name(self) -> str:
+        return "lsp_document_symbol"
+
+    @property
+    def description(self) -> str:
+        return (
+            "List all top-level and nested symbols (classes, functions, variables) "
+            "declared in a file via the language server."
+        )
+
+    @property
+    def input_schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "file": {"type": "string", "description": "Absolute path to the file"},
+            },
+            "required": ["file"],
+        }
+
+    @property
+    def required_permission(self) -> PermissionLevel:
+        return PermissionLevel.READ_ONLY
+
+    @property
+    def input_model(self) -> type[_FileInput]:
+        return _FileInput
+
+    def is_read_only(self, args: dict) -> bool:
+        return True
+
+    def is_concurrency_safe(self, args: dict) -> bool:
+        return True
+
+    def execute(self, args: dict) -> ToolResult:
+        import asyncio
+        import concurrent.futures
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(asyncio.run, self.execute_async(args)).result()
+        return asyncio.run(self.execute_async(args))
+
+    async def execute_async(self, args: dict) -> ToolResult:
+        file_path = args["file"]
+        language = _language_for_file(file_path)
+        client = self._manager.get_client(language)
+        if client is None:
+            return ToolResult(
+                output=f"No LSP client available for language '{language}' (file: {file_path})",
+                is_error=True,
+            )
+        file_uri = Path(file_path).as_uri()
+        symbols = await client.document_symbol(file_uri)
+        if not symbols:
+            return ToolResult(output="No symbols found.")
+        lines = [f"{s.kind} {s.name}\t{s.line}:{s.column}" for s in symbols]
+        return ToolResult(output="\n".join(lines))

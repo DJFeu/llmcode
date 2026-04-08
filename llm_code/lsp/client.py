@@ -38,6 +38,26 @@ class Hover:
 
 
 @dataclass(frozen=True)
+class SymbolInfo:
+    name: str
+    kind: str
+    file: str
+    line: int
+    column: int
+
+
+# LSP SymbolKind enum -> human label
+_SYMBOL_KIND: dict[int, str] = {
+    1: "file", 2: "module", 3: "namespace", 4: "package", 5: "class",
+    6: "method", 7: "property", 8: "field", 9: "constructor", 10: "enum",
+    11: "interface", 12: "function", 13: "variable", 14: "constant",
+    15: "string", 16: "number", 17: "boolean", 18: "array", 19: "object",
+    20: "key", 21: "null", 22: "enum_member", 23: "struct", 24: "event",
+    25: "operator", 26: "type_parameter",
+}
+
+
+@dataclass(frozen=True)
 class LspServerConfig:
     command: str
     args: tuple[str, ...] = ()
@@ -239,6 +259,52 @@ class LspClient:
                     parts.append(item.get("value", "") or "")
             return "\n\n".join(p for p in parts if p)
         return ""
+
+    async def document_symbol(self, file_uri: str) -> list[SymbolInfo]:
+        result = await self._request(
+            "textDocument/documentSymbol",
+            {"textDocument": {"uri": file_uri}},
+        )
+        return self._parse_symbols(result, default_uri=file_uri)
+
+    def _parse_symbols(self, result: Any, default_uri: str) -> list[SymbolInfo]:
+        """Parse both DocumentSymbol[] and SymbolInformation[] shapes."""
+        if not result:
+            return []
+        out: list[SymbolInfo] = []
+        for item in result:
+            if "location" in item:
+                loc = item["location"]
+                start = loc.get("range", {}).get("start", {})
+                out.append(
+                    SymbolInfo(
+                        name=item.get("name", ""),
+                        kind=_SYMBOL_KIND.get(item.get("kind", 0), "unknown"),
+                        file=loc.get("uri", default_uri),
+                        line=start.get("line", 0),
+                        column=start.get("character", 0),
+                    )
+                )
+            else:
+                self._collect_document_symbol(item, default_uri, out)
+        return out
+
+    def _collect_document_symbol(
+        self, node: dict, default_uri: str, accum: list[SymbolInfo]
+    ) -> None:
+        sel = node.get("selectionRange") or node.get("range") or {}
+        start = sel.get("start", {})
+        accum.append(
+            SymbolInfo(
+                name=node.get("name", ""),
+                kind=_SYMBOL_KIND.get(node.get("kind", 0), "unknown"),
+                file=default_uri,
+                line=start.get("line", 0),
+                column=start.get("character", 0),
+            )
+        )
+        for child in node.get("children", []) or []:
+            self._collect_document_symbol(child, default_uri, accum)
 
     async def get_diagnostics(self, file_uri: str) -> list[Diagnostic]:
         result = await self._request(
