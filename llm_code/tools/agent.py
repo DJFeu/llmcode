@@ -59,8 +59,13 @@ class AgentTool(Tool):
                 },
                 "role": {
                     "type": "string",
-                    "enum": ["explore", "plan", "verify"],
-                    "description": "Built-in agent role with restricted tools",
+                    "enum": ["build", "plan", "explore", "verify", "general"],
+                    "description": (
+                        "Built-in agent role. 'build' (default) has unrestricted "
+                        "tool access; 'plan' and 'explore' are read-only for "
+                        "analysis; 'verify' runs tests/checks adversarially; "
+                        "'general' is a focused subagent without todowrite."
+                    ),
                 },
             },
             "required": ["task"],
