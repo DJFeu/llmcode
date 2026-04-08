@@ -13,6 +13,21 @@ from llm_code.lsp.tools import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _stub_path_exists(monkeypatch):
+    """Existing tests use synthetic absolute paths like /proj/main.py.
+    The new _validate_lsp_path helper rejects missing files, so stub
+    Path.exists to True for the module under test."""
+    from llm_code.lsp import tools as _tools_mod
+    real_path = _tools_mod.Path
+
+    class _AlwaysExists(real_path):  # type: ignore[misc,valid-type]
+        def exists(self) -> bool:  # type: ignore[override]
+            return True
+
+    monkeypatch.setattr(_tools_mod, "Path", _AlwaysExists)
+
+
 def make_mock_manager(client=None):
     manager = MagicMock()
     manager.get_client = MagicMock(return_value=client)

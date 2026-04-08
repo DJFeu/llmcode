@@ -1,8 +1,10 @@
 """LSP tools: goto-definition, find-references, diagnostics, hover, symbols."""
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 from pathlib import Path
-from typing import Literal
+from typing import Any, Awaitable, Literal
 
 from pydantic import BaseModel
 
@@ -10,6 +12,48 @@ from llm_code.lsp.client import Hover  # noqa: F401  (re-exported via tool tests
 from llm_code.lsp.languages import language_for_file as _language_for_file
 from llm_code.lsp.manager import LspServerManager
 from llm_code.tools.base import PermissionLevel, Tool, ToolResult
+
+
+_WORKSPACE_SYMBOL_MAX_RESULTS = 200
+
+
+def _run_async(coro: Awaitable[Any]) -> Any:
+    """Run an async coroutine from a sync context.
+
+    If already inside a running event loop, offloads to a worker thread
+    that owns its own loop (avoids re-entering the current loop).
+    Otherwise runs directly via asyncio.run.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)  # type: ignore[arg-type]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()  # type: ignore[arg-type]
+
+
+def _validate_lsp_path(
+    file_path: str,
+    *,
+    line: int | None = None,
+    column: int | None = None,
+) -> str | None:
+    """Validate inputs common to all LSP tools.
+
+    Returns an error message string if validation fails, or None if OK.
+    """
+    if not file_path:
+        return "file must be a non-empty absolute path"
+    p = Path(file_path)
+    if not p.is_absolute():
+        return f"file must be absolute: {file_path!r}"
+    if not p.exists():
+        return f"file does not exist: {file_path!r}"
+    if line is not None and line < 0:
+        return f"line must be non-negative, got {line}"
+    if column is not None and column < 0:
+        return f"column must be non-negative, got {column}"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -82,21 +126,15 @@ class LspGotoDefinitionTool(Tool):
         return True
 
     def execute(self, args: dict) -> ToolResult:
-        import asyncio
-        import concurrent.futures
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, self.execute_async(args)).result()
-        return asyncio.run(self.execute_async(args))
+        return _run_async(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
-        file_path = args["file"]
-        line = int(args["line"])
-        column = int(args["column"])
+        file_path = args.get("file", "")
+        line = int(args.get("line", 0))
+        column = int(args.get("column", 0))
+        err = _validate_lsp_path(file_path, line=line, column=column)
+        if err is not None:
+            return ToolResult(output=err, is_error=True)
 
         language = _language_for_file(file_path)
         client = self._manager.get_client(language)
@@ -162,21 +200,15 @@ class LspFindReferencesTool(Tool):
         return True
 
     def execute(self, args: dict) -> ToolResult:
-        import asyncio
-        import concurrent.futures
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, self.execute_async(args)).result()
-        return asyncio.run(self.execute_async(args))
+        return _run_async(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
-        file_path = args["file"]
-        line = int(args["line"])
-        column = int(args["column"])
+        file_path = args.get("file", "")
+        line = int(args.get("line", 0))
+        column = int(args.get("column", 0))
+        err = _validate_lsp_path(file_path, line=line, column=column)
+        if err is not None:
+            return ToolResult(output=err, is_error=True)
 
         language = _language_for_file(file_path)
         client = self._manager.get_client(language)
@@ -237,19 +269,13 @@ class LspDiagnosticsTool(Tool):
         return True
 
     def execute(self, args: dict) -> ToolResult:
-        import asyncio
-        import concurrent.futures
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, self.execute_async(args)).result()
-        return asyncio.run(self.execute_async(args))
+        return _run_async(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
-        file_path = args["file"]
+        file_path = args.get("file", "")
+        err = _validate_lsp_path(file_path)
+        if err is not None:
+            return ToolResult(output=err, is_error=True)
 
         language = _language_for_file(file_path)
         client = self._manager.get_client(language)
@@ -315,21 +341,15 @@ class LspHoverTool(Tool):
         return True
 
     def execute(self, args: dict) -> ToolResult:
-        import asyncio
-        import concurrent.futures
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, self.execute_async(args)).result()
-        return asyncio.run(self.execute_async(args))
+        return _run_async(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
-        file_path = args["file"]
-        line = int(args["line"])
-        column = int(args["column"])
+        file_path = args.get("file", "")
+        line = int(args.get("line", 0))
+        column = int(args.get("column", 0))
+        err = _validate_lsp_path(file_path, line=line, column=column)
+        if err is not None:
+            return ToolResult(output=err, is_error=True)
 
         language = _language_for_file(file_path)
         client = self._manager.get_client(language)
@@ -388,19 +408,13 @@ class LspDocumentSymbolTool(Tool):
         return True
 
     def execute(self, args: dict) -> ToolResult:
-        import asyncio
-        import concurrent.futures
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, self.execute_async(args)).result()
-        return asyncio.run(self.execute_async(args))
+        return _run_async(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
-        file_path = args["file"]
+        file_path = args.get("file", "")
+        err = _validate_lsp_path(file_path)
+        if err is not None:
+            return ToolResult(output=err, is_error=True)
         language = _language_for_file(file_path)
         client = self._manager.get_client(language)
         if client is None:
@@ -461,21 +475,15 @@ class LspImplementationTool(Tool):
         return True
 
     def execute(self, args: dict) -> ToolResult:
-        import asyncio
-        import concurrent.futures
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, self.execute_async(args)).result()
-        return asyncio.run(self.execute_async(args))
+        return _run_async(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
-        file_path = args["file"]
-        line = int(args["line"])
-        column = int(args["column"])
+        file_path = args.get("file", "")
+        line = int(args.get("line", 0))
+        column = int(args.get("column", 0))
+        err = _validate_lsp_path(file_path, line=line, column=column)
+        if err is not None:
+            return ToolResult(output=err, is_error=True)
         language = _language_for_file(file_path)
         client = self._manager.get_client(language)
         if client is None:
@@ -540,30 +548,48 @@ class LspWorkspaceSymbolTool(Tool):
         return True
 
     def execute(self, args: dict) -> ToolResult:
-        import asyncio
-        import concurrent.futures
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, self.execute_async(args)).result()
-        return asyncio.run(self.execute_async(args))
+        return _run_async(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
-        query = str(args["query"])
-        client = self._manager.any_client()
-        if client is None:
+        query = str(args.get("query", "")).strip()
+        if not query:
+            return ToolResult(
+                output="workspace_symbol requires a non-empty query",
+                is_error=True,
+            )
+        clients = self._manager.all_clients()
+        if not clients:
             return ToolResult(
                 output="No LSP server is currently running. Start a project with a known marker file.",
                 is_error=True,
             )
-        symbols = await client.workspace_symbol(query)
+        all_results = await asyncio.gather(
+            *(c.workspace_symbol(query) for c in clients),
+            return_exceptions=True,
+        )
+        merged: list = []
+        seen: set[tuple] = set()
+        for r in all_results:
+            if isinstance(r, BaseException):
+                continue
+            for s in (r or []):
+                key = (s.file, s.line, s.column, s.name, s.kind)
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(s)
+        symbols = merged
         if not symbols:
             return ToolResult(output=f"No symbols matching '{query}'.")
-        lines = [f"{s.kind} {s.name}\t{s.file}:{s.line}:{s.column}" for s in symbols]
-        return ToolResult(output="\n".join(lines))
+        total = len(symbols)
+        if total > _WORKSPACE_SYMBOL_MAX_RESULTS:
+            shown = symbols[:_WORKSPACE_SYMBOL_MAX_RESULTS]
+            tail = f"\n(+{total - _WORKSPACE_SYMBOL_MAX_RESULTS} more)"
+        else:
+            shown = symbols
+            tail = ""
+        lines = [f"{s.kind} {s.name}\t{s.file}:{s.line}:{s.column}" for s in shown]
+        return ToolResult(output="\n".join(lines) + tail)
 
 
 class _CallHierarchyInput(BaseModel):
@@ -627,22 +653,16 @@ class LspCallHierarchyTool(Tool):
         return True
 
     def execute(self, args: dict) -> ToolResult:
-        import asyncio
-        import concurrent.futures
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, self.execute_async(args)).result()
-        return asyncio.run(self.execute_async(args))
+        return _run_async(self.execute_async(args))
 
     async def execute_async(self, args: dict) -> ToolResult:
-        file_path = args["file"]
-        line = int(args["line"])
-        column = int(args["column"])
+        file_path = args.get("file", "")
+        line = int(args.get("line", 0))
+        column = int(args.get("column", 0))
         direction = str(args.get("direction", "both")).lower()
+        err = _validate_lsp_path(file_path, line=line, column=column)
+        if err is not None:
+            return ToolResult(output=err, is_error=True)
 
         if direction not in _VALID_DIRECTIONS:
             return ToolResult(
@@ -666,7 +686,6 @@ class LspCallHierarchyTool(Tool):
         target = items[0]
         sections: list[str] = [f"Symbol: {target.kind} {target.name} @ {target.file}:{target.line}:{target.column}"]
 
-        import asyncio as _asyncio
 
         want_in = direction in ("incoming", "both")
         want_out = direction in ("outgoing", "both")
@@ -675,7 +694,7 @@ class LspCallHierarchyTool(Tool):
             return []
 
         # Run both directions concurrently when both are requested.
-        callers, callees = await _asyncio.gather(
+        callers, callees = await asyncio.gather(
             client.incoming_calls(target) if want_in else _noop(),
             client.outgoing_calls(target) if want_out else _noop(),
         )

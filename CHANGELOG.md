@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Fixed
+- `LspClient._request` now uses an id-dispatch loop, correctly handling interleaved server notifications (`window/logMessage`, `$/progress`, etc.) and concurrent requests. Pre-existing latent bug exposed by the broader LSP coverage shipped in borrow-2/2.5.
+
+### Changed
+- `LspWorkspaceSymbolTool` rejects empty queries and caps results at 200 with a `(+N more)` tail.
+- `LspWorkspaceSymbolTool` fans out across all running language clients (`asyncio.gather` + dedupe) instead of querying just the first.
+- All LSP tools route inputs through a centralized `_validate_lsp_path` helper that returns clean `ToolResult(is_error=True)` for relative paths, missing files, or negative line/column.
+- Sync-bridge boilerplate extracted to `_run_async` helper, deduplicated across 8 LSP tools.
+
 ### Added
 - Three themed builtin hooks ported from oh-my-opencode:
   - `context_window_monitor` — warns once per session at 75% context usage
