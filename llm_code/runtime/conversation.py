@@ -94,12 +94,30 @@ def _apply_thinking_boost(
     return boosted
 
 
+def _apply_thinking_budget_cap(
+    budget: int,
+    *,
+    max_output_tokens: int | None,
+) -> int:
+    """Cap thinking_budget so it cannot eat the entire output token budget.
+
+    Reserves at least half of max_output_tokens for the visible response,
+    with a minimum floor of 1024 thinking tokens so reasoning still works
+    even on providers with very small output caps.
+    """
+    if not max_output_tokens:
+        return budget
+    cap = max(1024, max_output_tokens // 2)
+    return min(budget, cap)
+
+
 def build_thinking_extra_body(
     thinking_config,
     *,
     is_local: bool = False,
     provider_supports_reasoning: bool = False,
     runtime: Any = None,
+    max_output_tokens: int | None = None,
 ) -> dict | None:
     """Build extra_body dict for thinking mode configuration.
 
@@ -120,6 +138,7 @@ def build_thinking_extra_body(
             base_budget=budget,
             max_budget=131072 if is_local else None,
         )
+        budget = _apply_thinking_budget_cap(budget, max_output_tokens=max_output_tokens)
         return {
             "chat_template_kwargs": {
                 "enable_thinking": True,
@@ -138,6 +157,7 @@ def build_thinking_extra_body(
                 base_budget=budget,
                 max_budget=131072,
             )
+            budget = _apply_thinking_budget_cap(budget, max_output_tokens=max_output_tokens)
             return {
                 "chat_template_kwargs": {
                     "enable_thinking": True,
@@ -886,6 +906,10 @@ class ConversationRuntime:
                     is_local=_is_local,
                     provider_supports_reasoning=self._provider.supports_reasoning(),
                     runtime=self,
+                    max_output_tokens=(
+                        getattr(self._provider, "max_output_tokens", None)
+                        or getattr(self._config, "max_output_tokens", None)
+                    ),
                 ) if not use_native else None,
             )
 
