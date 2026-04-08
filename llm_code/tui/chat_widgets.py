@@ -527,10 +527,18 @@ class PermissionInline(Widget):
     }
     """
 
-    def __init__(self, tool_name: str, args_preview: str) -> None:
+    def __init__(
+        self,
+        tool_name: str,
+        args_preview: str,
+        diff_lines: tuple[str, ...] = (),
+        pending_files: tuple[str, ...] = (),
+    ) -> None:
         super().__init__()
         self._tool_name = tool_name
         self._args_preview = args_preview
+        self._diff_lines = tuple(diff_lines)
+        self._pending_files = tuple(pending_files)
 
     def _supports_edit_args(self) -> bool:
         return self._tool_name in ("bash", "edit_file", "write_file", "multi_edit")
@@ -563,6 +571,15 @@ class PermissionInline(Widget):
         text.append("  ")
         text.append(f" {self._args_preview[:100]} ", style="white on #2a2a3a")
         text.append("\n")
+        # Pending files (from speculative pre-execution)
+        if self._pending_files:
+            text.append("  Files to modify:\n", style="dim")
+            for fp in self._pending_files:
+                text.append(f"    {fp}\n", style="dim cyan")
+        # Diff preview (from speculative pre-execution)
+        if self._diff_lines:
+            text.append(render_diff_lines(list(self._diff_lines), max_lines=20))
+            text.append("\n")
         # Options
         options: list[tuple[str, str]] = [
             ("y", "Allow once"),

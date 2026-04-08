@@ -165,3 +165,5 @@ class StreamPermissionRequest(StreamEvent):
     """Emitted when a tool requires user permission before execution."""
     tool_name: str
     args_preview: str
+    diff_lines: tuple[str, ...] = ()
+    pending_files: tuple[str, ...] = ()

@@ -1303,10 +1303,44 @@ class ConversationRuntime:
                 except Exception:
                     spec_executor = None
 
+                # Extract diff preview + pending file list from speculative
+                # pre-execution so the permission widget can show the user the
+                # actual change before they approve.
+                spec_diff_lines: tuple[str, ...] = ()
+                spec_pending_files: tuple[str, ...] = ()
+                if spec_executor is not None:
+                    try:
+                        spec_pending_files = tuple(
+                            str(p) for p in spec_executor.list_pending_changes()
+                        )
+                    except Exception:
+                        spec_pending_files = ()
+                    try:
+                        result_obj = spec_executor._result
+                        if result_obj is not None and result_obj.metadata:
+                            hunks = result_obj.metadata.get("diff") or []
+                            collected: list[str] = []
+                            for hunk in hunks:
+                                old_start = hunk.get("old_start", 0)
+                                old_lines = hunk.get("old_lines", 0)
+                                new_start = hunk.get("new_start", 0)
+                                new_lines = hunk.get("new_lines", 0)
+                                collected.append(
+                                    f"@@ -{old_start},{old_lines} "
+                                    f"+{new_start},{new_lines} @@"
+                                )
+                                for line in hunk.get("lines", []):
+                                    collected.append(line)
+                            spec_diff_lines = tuple(collected)
+                    except Exception:
+                        spec_diff_lines = ()
+
                 # Yield permission request and wait for user response
                 yield StreamPermissionRequest(
                     tool_name=call.name,
                     args_preview=args_preview,
+                    diff_lines=spec_diff_lines,
+                    pending_files=spec_pending_files,
                 )
 
                 loop = asyncio.get_running_loop()

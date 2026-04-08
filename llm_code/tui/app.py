@@ -1409,7 +1409,10 @@ class LLMCodeTUI(App):
                 elif isinstance(event, StreamPermissionRequest):
                     await remove_spinner()
                     perm_widget = PermissionInline(
-                        event.tool_name, event.args_preview,
+                        event.tool_name,
+                        event.args_preview,
+                        diff_lines=event.diff_lines,
+                        pending_files=event.pending_files,
                     )
                     chat.add_entry(perm_widget)
                     self._permission_pending = True
