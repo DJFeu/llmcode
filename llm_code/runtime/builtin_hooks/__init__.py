@@ -16,7 +16,10 @@ from . import (
     auto_format,
     auto_lint,
     context_recovery,
+    context_window_monitor,
     intent_classifier,
+    rules_injector,
+    thinking_mode,
 )
 
 if TYPE_CHECKING:
@@ -28,6 +31,9 @@ BUILTIN_HOOKS = {
     "intent_classifier": intent_classifier,
     "context_recovery": context_recovery,
     "auto_commit_offer": auto_commit_offer,
+    "context_window_monitor": context_window_monitor,
+    "thinking_mode": thinking_mode,
+    "rules_injector": rules_injector,
 }
 
 

@@ -3,6 +3,17 @@
 ## Unreleased
 
 ### Added
+- Three themed builtin hooks ported from oh-my-opencode:
+  - `context_window_monitor` — warns once per session at 75% context usage
+  - `thinking_mode` — detects "ultrathink" / 深入思考 keywords and flags the turn
+  - `rules_injector` — auto-injects CLAUDE.md / AGENTS.md / .cursorrules content
+    when a project file is read
+- `HookOutcome.extra_output: str` — allows in-process hooks to append content to
+  the visible tool result (used by `rules_injector` and `context_window_monitor`).
+- `context_window_monitor` builtin hook now actually fires — `ConversationRuntime`
+  populates `_last_input_tokens` / `_max_input_tokens` after every LLM stream.
+- `thinking_mode` builtin hook is now consumed — `_thinking_boost_active` doubles
+  the next turn's `thinking_budget` (capped at provider max).
 - Dynamic delegation prompt section: when the conversation runner has live
   tools and routed skills, the system prompt now includes an `## Active
   Capabilities` section with three subsections — Tools by Capability (grouped
@@ -10,6 +21,10 @@
   and Skills by Category (grouped by skill's first tag). Pure module
   `llm_code/runtime/dynamic_prompt.py`. Byte-budget guard caps the section at
   8 KB by default to protect cache stability.
+
+### Fixed
+- `rules_injector` no longer reads `CLAUDE.md` / `AGENTS.md` from ancestor
+  directories outside the resolved project root (symlink edge case).
 
 ## v0.1.0 (2026-04-03) — Production Cleanup
 
