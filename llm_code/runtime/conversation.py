@@ -906,10 +906,7 @@ class ConversationRuntime:
                     is_local=_is_local,
                     provider_supports_reasoning=self._provider.supports_reasoning(),
                     runtime=self,
-                    max_output_tokens=(
-                        getattr(self._provider, "max_output_tokens", None)
-                        or getattr(self._config, "max_output_tokens", None)
-                    ),
+                    max_output_tokens=_current_max_tokens,
                 ) if not use_native else None,
             )
 
@@ -994,6 +991,8 @@ class ConversationRuntime:
                             self._config.thinking,
                             is_local=_is_local,
                             provider_supports_reasoning=self._provider.supports_reasoning(),
+                            runtime=self,
+                            max_output_tokens=_current_max_tokens,
                         ),
                     )
                     try:
