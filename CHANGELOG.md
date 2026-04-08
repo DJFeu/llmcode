@@ -16,9 +16,29 @@
     lazy closure factory instead of runtime_factory=None
   - AgentTool.input_schema.role enum extended to all five roles
 
+### Changed
+- Agent role sentinel refactor: `AgentRole.allowed_tools` is now
+  `frozenset[str] | None`. `None` means unrestricted (full inheritance);
+  empty `frozenset()` is the explicit deny-all sentinel; non-empty set is a
+  strict whitelist. `BUILD_ROLE.allowed_tools` is now `None`.
+  `ToolRegistry.filtered(None)` clones the parent; `filtered(frozenset())`
+  returns an empty registry. This eliminates the "empty set means
+  unrestricted" foot-gun.
+
 ### Fixed
 - AgentTool is no longer registered with a None runtime factory; calls now
   succeed instead of crashing on first dispatch.
+- AgentTool recursion-depth guard now actually trips for build-role
+  subagents. Previously, build-role children inherited the parent's
+  AgentTool instance by reference, so `_current_depth` stayed at 0
+  forever and `max_depth` was never enforced. `make_subagent_runtime`
+  now rebinds the child's `agent` tool to a fresh AgentTool with
+  `_current_depth = parent_depth + 1`.
+- Defense-in-depth: `ConversationRuntime._execute_tool_with_streaming`
+  now consults `is_tool_allowed_for_role` against the runtime's
+  `_subagent_role` before dispatch, so a future regression that leaks
+  a forbidden tool into a child registry still cannot bypass the role
+  whitelist.
 
 ## v0.1.0 (2026-04-03) — Production Cleanup
 
