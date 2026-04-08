@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased — Wave2-1a P1: ThinkingBlock as first-class ContentBlock
+
+### Added
+- **`llm_code/api/types.py` `ThinkingBlock`** — new frozen dataclass with `content: str` and `signature: str = ""`. Represents the model's reasoning / chain-of-thought content as a structured block instead of a stream-only event. The `signature` field is provider-opaque (Anthropic signs thinking blocks for verbatim round-trip; Qwen / DeepSeek / OpenAI o-series leave it empty).
+- **`ContentBlock` Union** now includes `ThinkingBlock` as the first member. Widening is additive: every existing `isinstance(block, ContentBlock)` check continues to work; any downstream consumer that doesn't yet know about thinking blocks simply won't match its branch (audit sweep for those is P3).
+- **`llm_code/api/content_order.py`** — pure `validate_assistant_content_order(blocks)` that raises `ThinkingOrderError` (with `.index`, `.offending_type`, `.preceding_type`) when any thinking block appears after a non-thinking block. Empty tuples and tuples without any thinking blocks pass trivially, so the entire existing codebase stays valid — P1 lands with zero runtime effect.
+
+### Context
+The original wave2-1a plan was a small "thinking block order validator" sub-PR. The audit verification pass discovered the real architectural gap: llm-code has no `ThinkingBlock` ContentBlock type at all. `openai_compat.py` has zero references to `reasoning_content`; DeepSeek-R1 / OpenAI o-series / Qwen QwQ thinking is silently discarded at the API parsing layer. The current "working" state only holds because of a single provider × single thinking-mode coincidence (OpenAI-compat + Qwen3 `<think>` tag mode). Any attempt to add a native AnthropicProvider with extended thinking + tool use would break immediately on multi-turn, because Anthropic requires signed thinking blocks to be echoed back in subsequent requests.
+
+This PR is **P1 of a 5-phase spec** (`docs/superpowers/specs/2026-04-09-llm-code-thinking-blocks-first-class-design.md`). P1 introduces the data model only — no producer, no consumer, no persistence. P2 adds the inbound parser; P3 assembles thinking into `Message.content`; P4 handles outbound serialization + compressor atomicity; P5 adds DB persistence.
+
+### Tests
+- **`tests/test_api/test_thinking_block.py`** — 16 new tests: frozen dataclass + signature default + signature byte-opaque preservation, `ContentBlock` Union membership (thinking first, all existing members intact), validator happy paths (empty, single, multiple consecutive thinking, thinking before text, thinking before tool_use, no-thinking-at-all), validator violations (text before thinking, tool_use before thinking, interleaved thinking mid-sequence), error message includes index + neighboring types.
+- Full `tests/test_runtime/` + `tests/test_api/` sweep: **1658 passed**, no regressions.
+
 ## Unreleased — Wave2-1d: CancelledError cleanup on interrupted tool (wave2-1 COMPLETE)
 
 ### Added

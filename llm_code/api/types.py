@@ -6,6 +6,28 @@ from typing import Union
 
 
 @dataclasses.dataclass(frozen=True)
+class ThinkingBlock:
+    """Structured reasoning/chain-of-thought content from the model.
+
+    Unlike ``TextBlock``, thinking is produced by the model's internal
+    reasoning pass before it commits to a user-visible response. Some
+    providers (notably Anthropic extended thinking) require these
+    blocks to be echoed back verbatim in subsequent requests and will
+    reject the request if any bytes of ``signature`` are altered.
+
+    Within an assistant ``Message.content`` tuple, all ThinkingBlocks
+    must appear before the first non-thinking block. See
+    ``llm_code.api.content_order.validate_assistant_content_order``.
+
+    Providers that do not sign thinking (Qwen, DeepSeek, OpenAI
+    o-series) leave ``signature`` as an empty string.
+    """
+
+    content: str
+    signature: str = ""
+
+
+@dataclasses.dataclass(frozen=True)
 class TextBlock:
     text: str
 
@@ -30,7 +52,7 @@ class ImageBlock:
     data: str
 
 
-ContentBlock = Union[TextBlock, ToolUseBlock, ToolResultBlock, ImageBlock]
+ContentBlock = Union[ThinkingBlock, TextBlock, ToolUseBlock, ToolResultBlock, ImageBlock]
 
 
 @dataclasses.dataclass(frozen=True)
