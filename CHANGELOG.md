@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+- `dynamic_prompt.build_delegation_section` no longer hangs under pathologically small `max_bytes` (added iteration cap + length-stable bailout)
+- `dynamic_prompt.build_delegation_section` now honors `max_bytes` strictly — if even the bare header+intro envelope exceeds the budget, returns `""` instead of a soft-violating string
+- `classify_tool` recognizes bare `Task` tool name as `agent` category (was falling through to `other`)
+
 ### Added
 - Three themed builtin hooks ported from oh-my-opencode:
   - `context_window_monitor` — warns once per session at 75% context usage

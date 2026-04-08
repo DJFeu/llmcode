@@ -48,6 +48,7 @@ _TOOL_RULES: tuple[tuple[str, str], ...] = (
     ("read", "read"),
     # Agent / task management (check before write rules so "task_create" doesn't hit "create")
     ("task_", "agent"),
+    ("task", "agent"),  # bare top-level Task tool
     ("subagent", "agent"),
     ("delegate", "agent"),
     ("agent", "agent"),
@@ -216,7 +217,16 @@ def build_delegation_section(
 
     if blocks and blocks[0][0] == "tools":
         tool_id, lines = blocks[0]
-        while len(lines) > 2 and len(rendered.encode("utf-8")) > max_bytes:
+        prev_len = -1
+        for _ in range(64):  # bounded: 2^64 body lines is unreachable
+            if len(rendered.encode("utf-8")) <= max_bytes:
+                break
+            if len(lines) <= 2:
+                break
+            if len(lines) == prev_len:
+                # Cannot shrink further (body already at floor) — give up.
+                break
+            prev_len = len(lines)
             head = lines[:1]
             body = lines[1:]
             body = body[: max(1, len(body) // 2)]
@@ -226,4 +236,8 @@ def build_delegation_section(
 
     if len(rendered.encode("utf-8")) > max_bytes:
         rendered = _assemble([])
+        if len(rendered.encode("utf-8")) > max_bytes:
+            # Even the bare header+intro envelope doesn't fit. Honor the
+            # declared budget strictly by returning nothing.
+            return ""
     return rendered

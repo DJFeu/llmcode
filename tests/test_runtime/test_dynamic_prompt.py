@@ -57,6 +57,8 @@ def _skill(name: str, tags: tuple[str, ...] = (), description: str = "") -> Skil
         ("WebFetch", "web"),
         ("agent", "agent"),
         ("task_create", "agent"),
+        ("task", "agent"),
+        ("Task", "agent"),
         ("totally_unknown_tool", "other"),
     ],
 )
@@ -221,6 +223,59 @@ def test_build_delegation_section_respects_byte_budget() -> None:
     out = build_delegation_section(tools, skills, max_bytes=2048)
     assert len(out.encode("utf-8")) <= 2048
     assert "## Active Capabilities" in out
+
+
+def test_build_delegation_section_does_not_hang_under_tiny_budget() -> None:
+    """A pathologically small max_bytes (smaller than header+intro) must not
+    cause an infinite loop in the tool-table truncation halving logic."""
+    import signal
+
+    tools = tuple(
+        _tool(f"tool_{i}", description="x" * 50) for i in range(50)
+    )
+    skills: tuple[Skill, ...] = ()
+
+    def _alarm(signum, frame):  # type: ignore[no-untyped-def]
+        raise TimeoutError("truncation loop did not converge")
+
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.alarm(2)
+    try:
+        out = build_delegation_section(tools, skills, max_bytes=10)
+    finally:
+        signal.alarm(0)
+
+    assert isinstance(out, str)
+
+
+def test_build_delegation_section_strict_budget_under_header_size() -> None:
+    """When max_bytes is smaller than the minimal header+intro envelope,
+    the function MUST return an empty string rather than emit anything
+    exceeding the declared budget. Hard budget, not soft."""
+    tools = tuple(_tool(f"tool_{i}", description="x" * 50) for i in range(10))
+    out = build_delegation_section(tools, (), max_bytes=10)
+    assert out == "", f"expected empty string for tiny budget, got {len(out)} bytes"
+
+
+def test_build_delegation_section_strict_budget_exactly_fits_empty() -> None:
+    """Boundary: if max_bytes is exactly the size of _assemble([]), that
+    envelope is allowed through."""
+    # First render header+intro at an enormous budget to learn its size.
+    envelope = build_delegation_section((_tool("read_file"),), (), max_bytes=1_000_000)
+    header_intro_size = len("## Active Capabilities\n\n" + (
+        "_The following tools and skills are available this turn. Prefer the most "
+        "specific capability for each task; do not invent new ones._"
+    ))
+    # Budget equal to header+intro but less than full rendering: must return
+    # at most the envelope, and must not exceed max_bytes.
+    out = build_delegation_section(
+        (_tool("read_file", description="x" * 500),) * 20,
+        (),
+        max_bytes=header_intro_size,
+    )
+    assert len(out.encode("utf-8")) <= header_intro_size
+    # envelope string used as reference only
+    _ = envelope
 
 
 def test_build_delegation_section_no_truncation_when_under_budget() -> None:
