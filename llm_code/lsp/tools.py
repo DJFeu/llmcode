@@ -561,13 +561,29 @@ class LspWorkspaceSymbolTool(Tool):
                 output="workspace_symbol requires a non-empty query",
                 is_error=True,
             )
-        client = self._manager.any_client()
-        if client is None:
+        clients = self._manager.all_clients()
+        if not clients:
             return ToolResult(
                 output="No LSP server is currently running. Start a project with a known marker file.",
                 is_error=True,
             )
-        symbols = await client.workspace_symbol(query)
+        import asyncio as _asyncio
+        all_results = await _asyncio.gather(
+            *(c.workspace_symbol(query) for c in clients),
+            return_exceptions=True,
+        )
+        merged: list = []
+        seen: set[tuple] = set()
+        for r in all_results:
+            if isinstance(r, BaseException):
+                continue
+            for s in (r or []):
+                key = (s.file, s.line, s.column, s.name, s.kind)
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(s)
+        symbols = merged
         if not symbols:
             return ToolResult(output=f"No symbols matching '{query}'.")
         total = len(symbols)

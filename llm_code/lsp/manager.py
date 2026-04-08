@@ -55,6 +55,10 @@ class LspServerManager:
         """Return the LspClient for *language*, or None if not running."""
         return self._clients.get(language)
 
+    def all_clients(self) -> list[LspClient]:
+        """Return every running client (deterministic order by language key)."""
+        return [self._clients[k] for k in sorted(self._clients.keys())]
+
     def any_client(self) -> LspClient | None:
         """Return any running client (used by workspace-wide LSP requests)."""
         for client in self._clients.values():
