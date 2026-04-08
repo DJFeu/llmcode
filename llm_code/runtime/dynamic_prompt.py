@@ -118,10 +118,7 @@ def _render_tool_table(tools: tuple[ToolDefinition, ...], max_tools: int) -> lis
         by_category.setdefault(classify_tool(tool.name), []).append(tool)
 
     lines: list[str] = ["### Tools by Capability"]
-    for category in TOOL_CATEGORIES:
-        bucket = by_category.get(category)
-        if not bucket:
-            continue
+    for category, bucket in by_category.items():
         lines.append(f"- **{category}**:")
         for tool in bucket:
             desc = _truncate(tool.description, _TOOL_DESC_CHARS)

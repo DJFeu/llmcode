@@ -186,3 +186,29 @@ def test_section_uses_skill_trigger_when_set() -> None:
     )
     out = build_delegation_section((), (s,))
     assert "when user says X" in out
+
+
+def test_build_delegation_section_is_deterministic() -> None:
+    """Same inputs => byte-identical output (cache-safe)."""
+    tools = (
+        _tool("read_file", "Read a file"),
+        _tool("write_file", "Write a file"),
+        _tool("bash", "Run a shell command"),
+    )
+    skills = (
+        _skill("debugging", tags=("debug",)),
+        _skill("brainstorming", tags=("planning",)),
+    )
+    a = build_delegation_section(tools, skills)
+    b = build_delegation_section(tools, skills)
+    assert a == b
+
+
+def test_build_delegation_section_is_order_sensitive() -> None:
+    a_tools = (_tool("read_file"), _tool("write_file"))
+    b_tools = (_tool("write_file"), _tool("read_file"))
+    a = build_delegation_section(a_tools, ())
+    b = build_delegation_section(b_tools, ())
+    assert a != b
+    assert "read_file" in a and "read_file" in b
+    assert "write_file" in a and "write_file" in b
