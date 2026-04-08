@@ -882,7 +882,15 @@ class ConversationRuntime:
                             provider_supports_reasoning=self._provider.supports_reasoning(),
                         ),
                     )
-                    stream = await self._provider.stream_message(request)
+                    try:
+                        stream = await self._provider.stream_message(request)
+                    except Exception as retry_exc:
+                        # XML fallback retry itself failed — close the open
+                        # llm.completion span before propagating, otherwise
+                        # the span leaks (no try/finally on the outer block).
+                        logger.error("XML fallback retry failed: %s", retry_exc)
+                        _close_llm_span_with_error(retry_exc)
+                        raise
                 elif (
                     ("413" in _exc_str or "prompt too long" in _exc_str.lower())
                     and not self._has_attempted_reactive_compact
