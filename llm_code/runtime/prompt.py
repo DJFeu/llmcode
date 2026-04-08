@@ -149,6 +149,7 @@ class SystemPromptBuilder:
         governance_rules: "tuple[GovernanceRule, ...] | None" = None,
         task_manager: "TaskLifecycleManager | None" = None,
         routed_skills: "tuple[Skill, ...] | None" = None,
+        routed_skills_low_confidence: bool = False,
         is_local_model: bool = False,
         model_name: str = "",
         personas: dict | None = None,
@@ -202,6 +203,7 @@ class SystemPromptBuilder:
         delegation = build_delegation_section(
             tools=tools,
             skills=routed_skills or (),
+            low_confidence=routed_skills_low_confidence,
         )
         if delegation:
             sections.append(PromptSection(content=delegation, scope="global", priority=25))

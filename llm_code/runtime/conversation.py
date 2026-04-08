@@ -94,12 +94,30 @@ def _apply_thinking_boost(
     return boosted
 
 
+def _apply_thinking_budget_cap(
+    budget: int,
+    *,
+    max_output_tokens: int | None,
+) -> int:
+    """Cap thinking_budget so it cannot eat the entire output token budget.
+
+    Reserves at least half of max_output_tokens for the visible response,
+    with a minimum floor of 1024 thinking tokens so reasoning still works
+    even on providers with very small output caps.
+    """
+    if not max_output_tokens:
+        return budget
+    cap = max(1024, max_output_tokens // 2)
+    return min(budget, cap)
+
+
 def build_thinking_extra_body(
     thinking_config,
     *,
     is_local: bool = False,
     provider_supports_reasoning: bool = False,
     runtime: Any = None,
+    max_output_tokens: int | None = None,
 ) -> dict | None:
     """Build extra_body dict for thinking mode configuration.
 
@@ -120,6 +138,7 @@ def build_thinking_extra_body(
             base_budget=budget,
             max_budget=131072 if is_local else None,
         )
+        budget = _apply_thinking_budget_cap(budget, max_output_tokens=max_output_tokens)
         return {
             "chat_template_kwargs": {
                 "enable_thinking": True,
@@ -138,6 +157,7 @@ def build_thinking_extra_body(
                 base_budget=budget,
                 max_budget=131072,
             )
+            budget = _apply_thinking_budget_cap(budget, max_output_tokens=max_output_tokens)
             return {
                 "chat_template_kwargs": {
                     "enable_thinking": True,
@@ -836,6 +856,11 @@ class ConversationRuntime:
             _routed: tuple = ()
             if self._skill_router is not None:
                 _routed = tuple(await self._skill_router.route_async(user_input))
+            # Low confidence when the match was produced by Tier C LLM classifier
+            _routed_low_confidence = (
+                self._skill_router is not None
+                and getattr(self._skill_router, "last_tier_used", "") == "c"
+            )
             # Track routed skills on runtime so TUI can show them in status
             self._last_routed_skills = tuple(s.name for s in _routed) if _routed else ()
             if _routed:
@@ -854,6 +879,7 @@ class ConversationRuntime:
                 task_manager=self._task_manager,
                 project_index=self._project_index,
                 routed_skills=_routed,
+                routed_skills_low_confidence=_routed_low_confidence,
                 is_local_model=_is_local,
                 model_name=self._active_model,
             )
@@ -880,6 +906,10 @@ class ConversationRuntime:
                     is_local=_is_local,
                     provider_supports_reasoning=self._provider.supports_reasoning(),
                     runtime=self,
+                    max_output_tokens=(
+                        getattr(self._provider, "max_output_tokens", None)
+                        or getattr(self._config, "max_output_tokens", None)
+                    ),
                 ) if not use_native else None,
             )
 
@@ -949,6 +979,7 @@ class ConversationRuntime:
                         task_manager=self._task_manager,
                         project_index=self._project_index,
                         routed_skills=_routed,
+                        routed_skills_low_confidence=_routed_low_confidence,
                         is_local_model=_is_local,
                         model_name=self._active_model,
                     )

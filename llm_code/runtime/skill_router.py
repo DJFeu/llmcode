@@ -222,23 +222,33 @@ async def _classify_with_llm_debug(
                 first_line = line
                 break
         answer = first_line.strip().lower().strip(" .,:;!?\"'`*[](){}\n\t")
-        if answer and answer != "none" and answer in skill_names:
+        if answer == "none":
+            # Authoritative no-match: do NOT fall through to substring fallback.
+            return None, raw
+        if answer and answer in skill_names:
             return skill_names[answer], raw
 
         # 2) Fallback: scan the FULL raw text (including thinking) for any
         # skill name as a substring. Reasoning models often discuss the
         # candidate skills by name in their thinking block — that's good
         # enough signal even if no clean answer line was emitted.
+        # Require >=2 occurrences AND margin >=2 over runner-up. A single
+        # mention is too weak because reasoning models mention all candidates
+        # while ruling them out.
+        _MIN_MENTIONS = 2
+        _MIN_MARGIN = 2
         raw_lower = raw.lower()
-        # Score by occurrence count to pick the dominant skill if multiple appear
         scores = {
             name: raw_lower.count(lname)
             for lname, name in skill_names.items()
         }
-        scores = {n: c for n, c in scores.items() if c > 0}
+        scores = {n: c for n, c in scores.items() if c >= _MIN_MENTIONS}
         if scores:
-            best = max(scores.items(), key=lambda kv: kv[1])
-            return best[0], raw
+            ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+            best_name, best_score = ranked[0]
+            runner_up = ranked[1][1] if len(ranked) > 1 else 0
+            if best_score - runner_up >= _MIN_MARGIN:
+                return best_name, raw
 
         return None, raw
     except Exception as e:
@@ -299,6 +309,8 @@ class SkillRouter:
         self._cache_max = 128
         # Debug: last Tier C trace (for TUI surfacing)
         self.last_tier_c_debug: str = ""
+        # Tracks which tier produced the most recent match: "a" | "b" | "c" | "".
+        self.last_tier_used: str = ""
 
     # ------------------------------------------------------------------
     # Public API
@@ -315,8 +327,14 @@ class SkillRouter:
             return self._cache[cache_key]
 
         result = self._tier_a(user_message)
-        if not result and self._config.tier_b:
+        if result:
+            self.last_tier_used = "a"
+        elif self._config.tier_b:
             result = self._tier_b(user_message)
+            if result:
+                self.last_tier_used = "b"
+        if not result:
+            self.last_tier_used = ""
 
         result = result[: self._config.max_skills_per_turn]
 
@@ -369,6 +387,7 @@ class SkillRouter:
                         # Cache the LLM result
                         cache_key = user_message[:200]
                         self._cache[cache_key] = result
+                        self.last_tier_used = "c"
                         return result
 
         return []
