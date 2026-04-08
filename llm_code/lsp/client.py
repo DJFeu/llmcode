@@ -228,6 +228,18 @@ class LspClient:
         )
         return self._parse_locations(result)
 
+    async def go_to_implementation(
+        self, file_uri: str, line: int, col: int
+    ) -> list[Location]:
+        result = await self._request(
+            "textDocument/implementation",
+            {
+                "textDocument": {"uri": file_uri},
+                "position": {"line": line, "character": col},
+            },
+        )
+        return self._parse_locations(result)
+
     async def hover(self, file_uri: str, line: int, col: int) -> Hover:
         result = await self._request(
             "textDocument/hover",
