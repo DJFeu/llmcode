@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased — Wave2-1a P3: ThinkingBlock assembly + session persistence
+
+### Added
+- **`conversation.py` assistant assembly prepends thinking blocks.** The stream loop accumulates `thinking_parts` from `StreamThinkingDelta` events. At assembly time, a single merged `ThinkingBlock(content="".join(parts))` is prepended to `assistant_blocks` before any `TextBlock` / `ToolUseBlock`. The P1 `validate_assistant_content_order` is called defensively so a future refactor that reorders blocks fails loudly at the broken call site.
+- **`Session` serializes thinking end-to-end.** `_block_to_dict` / `_dict_to_block` handle `{"type": "thinking", "thinking": "...", "signature": "..."}` (Anthropic-compatible shape; P5 reuses it). Pre-P5 rows missing the signature column rehydrate with `signature=""`.
+- **`Session.estimated_tokens()` counts thinking.** DeepSeek-R1 sessions with 10K tokens of reasoning no longer look empty to the proactive compactor.
+
+### Isinstance audit sweep
+Grep-based sweep found 22 `isinstance(block, TextBlock|ToolUseBlock)` chains. Verified behavior:
+
+- `session.py` serialization + estimated_tokens — **fixed here** (required).
+- `compressor.py` (5 chains) — silently drops thinking. **Safe for OpenAI-compat**; P4 fixes the Anthropic round-trip case.
+- `openai_compat.py` `_convert_message` (3 chains) — drops thinking from outbound parts list, solo-thinking falls through to empty content. **Does not crash**; correct for OpenAI-compat. P4 wires the Anthropic round-trip.
+- `swarm/coordinator.py`, `runtime/vision.py`, `utils/search.py`, `cli/oneshot.py` (6 chains) — read-only text extractors for display / search / summary. Silently skipping thinking is correct behavior.
+
+No chain raises on `ThinkingBlock`.
+
+### Tests
+- **`tests/test_runtime/test_thinking_assembly_wave2_1a_p3.py`** — 10 new tests: session serialization round-trip (5 inc. byte-opaque signature, P5-forward missing-column tolerance, full Session.to_dict/from_dict), estimated_tokens with + without thinking (2), outbound `_convert_message` with `(Thinking, Text)` and solo thinking (2), order validator defensive call (1).
+- Full `tests/test_runtime/` + `tests/test_api/` sweep: **1687 passed**, no regressions.
+
+### Context
+P3 of the 5-phase thinking-blocks-first-class spec. After P3, thinking content lands in `Session.messages` for the first time — previously it was stream-only and discarded on block_stop. P4 (outbound round-trip + compressor atomicity) and P5 (conversation_db + FTS5) follow.
+
 ## Unreleased — Wave2-1a P2: ThinkingBlock inbound parsing
 
 ### Added

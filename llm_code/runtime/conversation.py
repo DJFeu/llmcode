@@ -22,16 +22,19 @@ from llm_code.api.types import (
     StreamMessageStop,
     StreamPermissionRequest,
     StreamTextDelta,
+    StreamThinkingDelta,
     StreamToolExecResult,
     StreamToolExecStart,
     StreamToolProgress,
     StreamToolUseInputDelta,
     StreamToolUseStart,
     TextBlock,
+    ThinkingBlock,
     TokenUsage,
     ToolResultBlock,
     ToolUseBlock,
 )
+from llm_code.api.content_order import validate_assistant_content_order
 from llm_code.runtime.compressor import ContextCompressor
 from llm_code.runtime.cost_tracker import BudgetExceededError
 from llm_code.runtime._retry_tracker import RecentToolCallTracker
@@ -1189,6 +1192,15 @@ class ConversationRuntime:
 
             # 4. Collect events and buffers
             text_parts: list[str] = []
+            # Wave2-1a P3: accumulate provider thinking deltas so we
+            # can prepend them as a ThinkingBlock on the assembled
+            # assistant message. Streaming never carries a signature
+            # today (Anthropic signature arrives on block_stop events
+            # which llm-code doesn't yet surface), so the assembled
+            # block uses signature="". When P4 adds native Anthropic
+            # streaming support, replace the empty literal below with
+            # the captured value.
+            thinking_parts: list[str] = []
             native_tool_calls: dict[str, dict] = {}  # id -> {id, name, json_parts}
             native_tool_list: list[dict] = []
             stop_event: StreamMessageStop | None = None
@@ -1204,6 +1216,10 @@ class ConversationRuntime:
 
                     if isinstance(event, StreamTextDelta):
                         text_parts.append(event.text)
+                    elif isinstance(event, StreamThinkingDelta):
+                        # Wave2-1a P3: collect provider thinking so we
+                        # can store it on the assistant message.
+                        thinking_parts.append(event.text)
                     elif isinstance(event, StreamToolUseStart):
                         # Finalize the previously streaming tool (if any) before starting new one
                         if _current_streaming_tool_id is not None:
@@ -1397,7 +1413,22 @@ class ConversationRuntime:
             )
 
             # 6. Build assistant message content
+            # Wave2-1a P3: thinking blocks must come FIRST within an
+            # assistant message — this is enforced both by Anthropic's
+            # API contract (signed thinking must precede text/tool_use
+            # for the round-trip to validate) and by our own pure
+            # validator from P1. We merge all streamed thinking deltas
+            # into a single ThinkingBlock because consecutive same-type
+            # blocks are semantically equivalent and a single block is
+            # cheaper to persist.
             assistant_blocks: list = []
+            if thinking_parts:
+                assistant_blocks.append(
+                    ThinkingBlock(
+                        content="".join(thinking_parts),
+                        signature="",
+                    )
+                )
             if response_text:
                 assistant_blocks.append(TextBlock(text=response_text))
             for call in parsed_calls:
@@ -1411,6 +1442,11 @@ class ConversationRuntime:
                 # consecutive-empty counter. Even a lone ToolUseBlock
                 # counts as productive output.
                 self._consecutive_empty_responses = 0
+                # Wave2-1a P3: defence-in-depth — even though the
+                # prepend logic above makes the order trivially correct,
+                # running the validator here catches any future refactor
+                # that accidentally reorders the block list.
+                validate_assistant_content_order(tuple(assistant_blocks))
                 assistant_msg = Message(
                     role="assistant",
                     content=tuple(assistant_blocks),
