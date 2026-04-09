@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased — TUI stop_reason capture + truncation warning
+
+### Added
+- **`LLMCodeTUI._last_stop_reason`** now captured at every `StreamMessageStop`. Previous PR referenced it but nothing assigned it — the value was always `"unknown"`. Initialized in `__init__` for first-turn safety.
+- **Explicit truncation warning** rendered as a dedicated `AssistantText` entry when `stop_reason in ("length", "max_tokens")` AND some visible content was already shown (so the empty-response fallback didn't fire). Previously runtime's auto-upgrade path caught most cases but a provider that caps hard mid-stream let truncated turns through silently. New text:
+  - ZH: `(⚠ 回應被截斷 — 模型達到輸出上限 (length)。實際輸出 279 tokens。試試加長 max_tokens 或 context window,或重新提問。)`
+  - EN: `(⚠ Response truncated — the model hit its output token cap (length) after 279 tokens. Try increasing max_tokens / context window or rephrasing.)`
+- **`_truncation_warning_message()`** pure helper. Reuses `_session_is_cjk`; testable without mounting the TUI.
+- **Unconditional turn-end debug log** captures `out_tokens`, `thinking_len`, `assistant_added`, `saw_tool_call`, `stop_reason` on EVERY turn — not just empty-response path. `-v` runs now have full state for every turn, not just fallback paths.
+
+### Context
+Found by investigating a second Qwen3.5-122B screenshot: TUI showed 3 `web_search` dots + "根據搜尋結果,以下是今日三則熱門新聞:" intro but NO list items, despite model reporting 279 output tokens. Oneshot `-q` produced the full 3-item list for the same query. Isolated to TUI observability gap — the runtime already auto-upgrades on `finish_reason=length` (conversation.py:L1400-1409), but when that path doesn't catch it (e.g. partial-stream truncation), the TUI had no way to surface the cause.
+
+### Tests
+- **6 new tests** in `test_empty_response_i18n.py`: EN + ZH truncation warnings with token count, `max_tokens` stop_reason variant, zero-token edge case, CJK language detection from session history, ⚠ marker in both locales
+- Existing 32 tests still pass — **38 total**
+- Full `tests/test_tui/` sweep: **378 passed**, no regressions
+
+### Not changed
+- Runtime layer — purely TUI observability
+- Runtime auto-upgrade on `finish_reason=length` — still fires first
+- Empty-response fallback (PR #36) — still fires when no visible content
+
 ## Unreleased — Empty-response diagnostics: debug log + unclassified variant
 
 ### Added
