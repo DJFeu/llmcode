@@ -438,6 +438,44 @@ class SkillRouter:
             )
             return cached
 
+        # Persistent cross-session cache lookup. Same query after
+        # a TUI restart returns instantly instead of re-running
+        # the 14s Tier C LLM classifier.
+        try:
+            from llm_code.runtime import skill_router_cache as _src
+            _cached_match = _src.load_cached_match(
+                user_message=user_message,
+                skill_names=[s.name for s in self._skills],
+            )
+            if _cached_match is not _src.NOT_CACHED:
+                if _cached_match is None:
+                    result_from_disk: list[Any] = []
+                    _populate = True
+                else:
+                    result_from_disk = [
+                        s for s in self._skills if s.name == _cached_match
+                    ]
+                    # If the cached skill name no longer exists
+                    # (e.g. user deleted it between sessions), fall
+                    # through to live lookup. The hash guard usually
+                    # prevents this but belt-and-braces.
+                    _populate = bool(result_from_disk)
+
+                if _populate:
+                    # Populate in-memory cache so subsequent same-
+                    # session calls skip the disk read.
+                    self._cache[cache_key] = result_from_disk
+                    logger.debug(
+                        "skill_router persistent cache hit: %d skills "
+                        "in %.3fs (matched=%r)",
+                        len(result_from_disk),
+                        time.monotonic() - _t0,
+                        _cached_match,
+                    )
+                    return result_from_disk
+        except Exception as exc:
+            logger.debug("skill_router_cache read failed: %s", exc)
+
         result = self.route(user_message)
         if result:
             logger.debug(
@@ -483,6 +521,10 @@ class SkillRouter:
                         result = [skill]
                         self._cache[cache_key] = result
                         self.last_tier_used = "c"
+                        # Also persist to disk so the next TUI
+                        # session gets this answer for free
+                        # instead of re-running the 14s classifier.
+                        self._persist_tier_c_result(user_message, name)
                         logger.debug(
                             "skill_router tier_c hit: %d skills total %.3fs",
                             len(result), time.monotonic() - _t0,
@@ -490,8 +532,10 @@ class SkillRouter:
                         return result
             # Cache the NEGATIVE Tier C result. Without this the
             # second route_async call in the same turn re-runs the
-            # expensive LLM classifier.
+            # expensive LLM classifier. Also persist to disk so
+            # the next TUI session skips this query's Tier C run.
             self._cache[cache_key] = []
+            self._persist_tier_c_result(user_message, None)
             logger.debug(
                 "skill_router tier_c miss (negative cached): %.3fs total",
                 time.monotonic() - _t0,
@@ -506,6 +550,24 @@ class SkillRouter:
             time.monotonic() - _t0,
         )
         return []
+
+    def _persist_tier_c_result(
+        self, user_message: str, matched_skill: str | None,
+    ) -> None:
+        """Best-effort write to persistent cross-session cache.
+
+        Failures are swallowed (logged at DEBUG) — this is a pure
+        optimization, not correctness-critical.
+        """
+        try:
+            from llm_code.runtime import skill_router_cache as _src
+            _src.save_match(
+                user_message=user_message,
+                skill_names=[s.name for s in self._skills],
+                matched_skill=matched_skill,
+            )
+        except Exception as exc:
+            logger.debug("skill_router_cache write failed: %s", exc)
 
     # ------------------------------------------------------------------
     # Tier A: Keyword matching
