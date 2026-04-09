@@ -16,10 +16,13 @@ Handles:
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 
 from llm_code.tools.parsing import ParsedToolCall, parse_tool_calls
+
+_log = logging.getLogger(__name__)
 
 # Longest tag string we need to reserve at a chunk tail so we don't
 # accidentally emit the start of a tag as plain text.
@@ -63,21 +66,63 @@ class StreamParser:
 
     def flush(self) -> list[StreamEvent]:
         """Emit any residual buffered content. Call at end-of-stream so
-        trailing text that doesn't include a tag still reaches the caller."""
+        trailing text that doesn't include a tag still reaches the caller.
+
+        Bug fix — unterminated tool_call salvage: previously an
+        unterminated ``<tool_call>...`` block at end-of-stream was
+        **silently dropped**, which caused the TUI to lose any
+        content the model had generated inside that tag. This is
+        observable when a provider truncates mid-tag (for example,
+        ``max_tokens`` hit inside a partial ``<tool_call>{...``) or
+        when a model emits a spurious opening tag that it then
+        fails to close. The symptom seen in the field: user asks
+        for "今日新聞三則", model generates the intro line, opens a
+        stray ``<tool_call>`` (or has an existing one that never
+        closes), then either truncates or continues with the news
+        items inside the never-closed tag. Everything inside was
+        thrown away by ``flush()`` with zero diagnostic.
+
+        Now we salvage the buffered content as a TEXT event so the
+        user at least sees what the model was actually generating.
+        The leading ``<tool_call>`` marker is stripped so the text
+        reads naturally. A warning is logged at the same time so
+        a ``-v`` run captures the event.
+        """
         events: list[StreamEvent] = []
         if not self._buffer:
             return events
         if self._in_think:
             # Unterminated thinking at end-of-stream — emit what we have.
-            if self._buffer:
-                events.append(
-                    StreamEvent(kind=StreamEventKind.THINKING, text=self._buffer)
-                )
-                self._buffer = ""
+            events.append(
+                StreamEvent(kind=StreamEventKind.THINKING, text=self._buffer)
+            )
+            _log.warning(
+                "StreamParser.flush: unterminated <think> block, "
+                "emitting %d chars as THINKING",
+                len(self._buffer),
+            )
+            self._buffer = ""
             self._in_think = False
             return events
         if self._in_tool_call:
-            # Unterminated tool_call — drop it (parser can't recover).
+            # Unterminated tool_call — salvage the body as TEXT so
+            # the user at least sees what the model was generating.
+            # Strip the opening ``<tool_call>`` marker if it's still
+            # at the head of the buffer (the buffer keeps it there
+            # so ``parse_tool_calls`` can see the full block when
+            # the closer arrives; here we strip it for display).
+            salvaged = self._buffer
+            if salvaged.startswith("<tool_call>"):
+                salvaged = salvaged[len("<tool_call>") :]
+            if salvaged:
+                events.append(
+                    StreamEvent(kind=StreamEventKind.TEXT, text=salvaged)
+                )
+            _log.warning(
+                "StreamParser.flush: unterminated <tool_call> block, "
+                "salvaging %d chars as TEXT (was: silently dropped)",
+                len(salvaged),
+            )
             self._buffer = ""
             self._in_tool_call = False
             return events

@@ -199,3 +199,115 @@ class TestStreamParserInterleaving:
         assert tc[0].tool_call is not None
         assert tc[0].tool_call.name == "web_search"
         assert tc[0].tool_call.args == {"max_results": 5, "query": "x"}
+
+
+# ----- Unterminated tag salvage (flush behavior fix) -----
+
+def test_flush_salvages_unterminated_tool_call_as_text() -> None:
+    """Critical bug fix: an unterminated ``<tool_call>`` block at
+    end of stream used to be silently dropped by flush(), which
+    caused the TUI to lose any content the model had generated
+    inside that tag. Reproduces the field report where the user
+    asked for news and saw only the intro line — the items were
+    inside a never-closed <tool_call> tag and vanished.
+    """
+    p = StreamParser()
+    p.feed("<tool_call>")
+    p.feed("1. **Item one** details\n")
+    p.feed("2. **Item two**\n")
+    # Stream ends without </tool_call>
+    events = p.flush()
+    text_events = [e for e in events if e.kind == StreamEventKind.TEXT]
+    assert len(text_events) == 1
+    assert "Item one" in text_events[0].text
+    assert "Item two" in text_events[0].text
+    # The opening <tool_call> marker must be stripped so the text
+    # reads naturally in the chat widget
+    assert "<tool_call>" not in text_events[0].text
+
+
+def test_flush_salvage_preserves_intro_before_unclosed_tool_call() -> None:
+    """The user scenario exactly: visible intro rendered cleanly,
+    then an unclosed <tool_call> swallows the real answer content.
+    Both the intro AND the salvaged body must reach the user."""
+    p = StreamParser()
+    events: list[StreamEvent] = []
+    for chunk in (
+        "根據搜尋結果,以下是今日三則熱門新聞:\n\n",
+        "<tool_call>",
+        "1. **美伊達成停火協議** — 詳細內容\n",
+        "2. **鄭麗文訪中**\n",
+        "3. **79 歲阿公擁資產堅決不給兒孫**\n",
+    ):
+        events.extend(p.feed(chunk))
+    events.extend(p.flush())
+
+    visible_text = "".join(e.text for e in events if e.kind == StreamEventKind.TEXT)
+    # Intro MUST be present (rendered during streaming)
+    assert "根據搜尋結果" in visible_text
+    # All three news items MUST be recoverable (via flush salvage)
+    assert "美伊達成停火協議" in visible_text
+    assert "鄭麗文訪中" in visible_text
+    assert "79 歲阿公" in visible_text
+
+
+def test_flush_unterminated_think_preserved_as_thinking() -> None:
+    """Complementary: unterminated <think> already preserved content
+    before the fix, but only as THINKING events. Pin that behavior
+    so a future refactor doesn't accidentally break it."""
+    p = StreamParser()
+    p.feed("<think>reasoning in progress")
+    events = p.flush()
+    thinking_events = [e for e in events if e.kind == StreamEventKind.THINKING]
+    assert len(thinking_events) == 1
+    assert "reasoning in progress" in thinking_events[0].text
+
+
+def test_flush_empty_unterminated_tool_call_does_not_emit_empty_text() -> None:
+    """Edge case: the parser entered tool_call state but the buffer
+    contains only the opening marker (no body). Salvage should not
+    emit an empty TEXT event."""
+    p = StreamParser()
+    p.feed("<tool_call>")
+    events = p.flush()
+    text_events = [e for e in events if e.kind == StreamEventKind.TEXT]
+    assert text_events == []
+
+
+def test_flush_state_cleared_after_salvage() -> None:
+    """After flush, in_tool_call must be False and buffer empty
+    so the same parser instance can be reused for another stream."""
+    p = StreamParser()
+    p.feed("<tool_call>leaked content")
+    p.flush()
+    assert p._in_tool_call is False
+    assert p._buffer == ""
+    # Reusable: next feed starts clean
+    events = p.feed("fresh text")
+    p.flush()
+    # The 'fresh text' eventually emerges as TEXT (either from feed
+    # or the trailing flush — both are acceptable).
+
+
+def test_flush_salvage_emits_warning_log(caplog) -> None:
+    """The salvage fires a warning log so ``-v`` runs capture the
+    event. Silent data loss is worse than loud data loss."""
+    import logging
+    p = StreamParser()
+    p.feed("<tool_call>data that would have been lost")
+    with caplog.at_level(logging.WARNING, logger="llm_code.streaming.stream_parser"):
+        p.flush()
+    assert any(
+        "unterminated <tool_call>" in r.message for r in caplog.records
+    )
+
+
+def test_flush_unterminated_think_also_emits_warning(caplog) -> None:
+    import logging
+    p = StreamParser()
+    p.feed("<think>never closed")
+    with caplog.at_level(logging.WARNING, logger="llm_code.streaming.stream_parser"):
+        p.flush()
+    assert any(
+        "unterminated <think>" in r.message for r in caplog.records
+    )
