@@ -1,5 +1,48 @@
 # Changelog
 
+## v1.15.0 — Profile System Phase 2, Prompt Caching, Mouse Scroll, 11 TODO Resolutions
+
+### Profile System Deep Wiring
+- **StreamParser reads `implicit_thinking` from model profile** instead of probing config.thinking.mode
+- **`build_thinking_extra_body()` branches on profile format** — `anthropic_native` (Anthropic) vs `chat_template_kwargs` (vLLM/OpenAI-compat)
+- **Local model detection reads `profile.is_local`** with URL-pattern fallback for unknown models
+- **SkillRouter tier-C model reads from profile** → config → active model (3-level fallback)
+- **`/model` displays profile info** — capabilities, provider type, pricing, context window
+- **Profile auto-discovery** — probes `/v1/models` at runtime to match better profiles for unknown model names
+- **TOML example profiles** in `examples/model_profiles/` (qwen3.5-122b, claude-sonnet, custom-local)
+
+### Anthropic Provider Enhancements
+- **Prompt caching** — automatic `cache_control: ephemeral` on system prompt, last tool definition, and last user message content block. Adds `anthropic-beta: prompt-caching-2024-07-31` header.
+- **Signature delta accumulation** — `StreamThinkingSignature` event carries the complete cryptographic signature from streaming `signature_delta` events, wired through to `ThinkingBlock` for round-trip.
+- **Server tool use blocks** — new `ServerToolUseBlock` / `ServerToolResultBlock` types with signature round-trip. Streaming parser assembles them from `content_block_start/stop` events.
+
+### Streaming & Parsing Fixes
+- **Accept mismatched XML closing tags** — Qwen3.5 sometimes emits `<web_search>JSON</search>` (truncated closer). Variant 5 regex now accepts any `</identifier>` as closer.
+- **Strip trailing XML tags from JSON body** — the Hermes args parser now removes any trailing `</tag>` before JSON parsing, fixing empty-args bug.
+- **StreamParser bare tool detection** — accepts `known_tool_names` and classifies `<tool_name>JSON</tag>` as TOOL_CALL during streaming, preventing raw XML from appearing in chat.
+
+### TUI Improvements
+- **Mouse wheel scrolling** — scroll up pauses auto-scroll so you can browse history during streaming; scroll to bottom resumes. Fixed `resume_auto_scroll()` being called on every text chunk.
+- **Permission prompt → TextualDialogs modal** — replaced inline y/n/a key handler with `select()` dialog
+- **MCP approval → TextualDialogs modal** — replaced inline key handler with async modal dialog
+- **Edit args** — new "Edit args" option in permission dialog; opens text editor for JSON, sends modified args to runtime
+- **`/set` command** — live config write-back (`/set temperature 0.5`, `/set max_tokens 8192`, `/set model ...`)
+- **Removed dead `PermissionInline` import**
+
+### Plugin System
+- **Fixed `_tool_registry` → `_tool_reg` bug** — plugin tools were never actually loading due to wrong attribute name
+- **Plugin unload wiring** — `_unload_plugin_tools()` called on disable/remove, handles stored in `_loaded_plugins` dict
+- **`env` added to dangerous permissions** — blocks plugins requesting environment variable access unless `--force`
+- **Skill file loading from manifests** — executor now loads SKILL.md files from `manifest.skills` into SkillRouter
+
+### Runtime
+- **Memory distillation at startup** — `distill_daily()` runs at TUI init (today-\*.md → recent.md → archive.md)
+- **Subagent per-role model routing** — `model` parameter in `make_subagent_runtime()` now creates a config override
+- **Settings write-back** — `apply_setting()` validates and applies changes via `dataclasses.replace`
+
+### TODO Cleanup
+- Updated 6 stale TODO/follow-up comments to reflect completed wiring (MCP agent_approval, MCP server_registered, memory distillation cron, plugin permissions)
+
 ## Unreleased — perf: SkillRouter negative cache + timing log (cuts Tier C overhead in half)
 
 ### Fixed

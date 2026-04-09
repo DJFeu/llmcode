@@ -16,7 +16,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-4580%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-4944%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/cold%20start-~400ms-brightgreen" alt="Cold start">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
   <img src="https://img.shields.io/pypi/v/llmcode-cli" alt="PyPI">
@@ -220,6 +220,27 @@ See [docs/coordinator.md](docs/coordinator.md) for the full tutorial.
 
 **Path resolution**: `resolve_path()` auto-corrects wrong absolute paths from LLM (e.g. `llm-code` vs `llm_code` confusion) with workspace boundary check to prevent path traversal.
 
+### Model Profile System
+
+Declarative per-model profiles replace scattered hardcoded model adaptations. Profiles control:
+
+- **Provider capabilities** — native tools, image support, reasoning mode
+- **Streaming behavior** — implicit thinking, reasoning field names, thinking budget format (`chat_template_kwargs` vs `anthropic_native`)
+- **Deployment** — local model detection (unlimited token upgrades), auto-discovery via `/v1/models` probe
+- **Routing** — per-model tier-C skill router model override
+- **Pricing** — per-1M-token input/output costs for cost tracking
+
+Built-in profiles for Qwen3/3.5, Claude, GPT-4o, DeepSeek-R1, o3/o4-mini. User overrides via `~/.llmcode/model_profiles/*.toml`. See [`examples/model_profiles/`](examples/model_profiles/) for templates.
+
+### Anthropic Provider
+
+Native httpx-based provider for Anthropic's Messages API:
+
+- **Prompt caching** — automatic `cache_control` on system prompt, tools, and last user message
+- **Signed thinking** — signature delta accumulation for extended thinking round-trip
+- **Server tool use** — `server_tool_use` / `server_tool_result` blocks with signature round-trip (web search, etc.)
+- **Overload backoff** — progressive 30s → 60s → 120s retry on 529
+
 ### Security
 
 - **21-point bash security** — injection detection, network access control, credential paths, recursive operation warnings, etc.
@@ -234,6 +255,7 @@ See [docs/coordinator.md](docs/coordinator.md) for the full tutorial.
 - **Native text selection** — uses `mouse=False` + plain Text rendering so terminal native selection works (handles CJK correctly)
 - **Cmd+V auto-detect** — text via bracketed paste, image via clipboard fallback
 - **Shift+Tab cycles agents** — BUILD → PLAN → SUGGEST → BUILD
+- **Mouse wheel scrolling** — scroll up to browse history (auto-scroll pauses), scroll back down to resume
 - **PageUp/Down + Shift+↑/↓** — scrollback navigation
 - **`/yolo`** — toggle auto-accept
 - **`/init`** — generate `AGENTS.md` from repo analysis
@@ -242,7 +264,9 @@ See [docs/coordinator.md](docs/coordinator.md) for the full tutorial.
 - **`/personas`** — list specialist agents (Sisyphus refactor / Oracle deep-analysis / Atlas orchestrator / Librarian / Explore / Metis / Momus / Multimodal-Looker / WebResearcher)
 - **`/orchestrate <task>`** — category-routed persona dispatch with retry-on-failure
 - **`/profile`** — per-model token/cost breakdown for the current session
-- **`/settings`** — tabbed read-only settings panel
+- **`/settings`** — settings panel
+- **`/set <key> <value>`** — live config write-back (temperature, max_tokens, model)
+- **`/model`** — switch model with profile info display (capabilities, pricing, provider)
 - **`/export <path>`** — chunked markdown export of the conversation
 - **`/compact`** — manually compact conversation history
 - **Ctrl+P** — Quick Open fuzzy file finder
