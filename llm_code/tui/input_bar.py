@@ -188,7 +188,16 @@ class InputBar(Widget):
         """Return value with image markers stripped (for display in chat)."""
         return self.value.replace(self._IMAGE_MARKER, "").strip()
 
+    # Keys that should always bubble to the App for global actions
+    _PASSTHROUGH_KEYS = frozenset({
+        "shift+up", "shift+down", "pageup", "pagedown",
+        "ctrl+p", "ctrl+v",
+    })
+
     def on_key(self, event: events.Key) -> None:
+        # Let scroll and global keys pass through to App bindings
+        if event.key in self._PASSTHROUGH_KEYS:
+            return
         if self.disabled:
             if event.key == "escape":
                 self.post_message(self.Cancelled())

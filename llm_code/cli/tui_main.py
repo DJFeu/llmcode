@@ -194,11 +194,9 @@ def main(
     # Textual fullscreen TUI (default and only UI mode)
     from llm_code.tui.app import LLMCodeTUI
     app = LLMCodeTUI(config=config, cwd=cwd, budget=budget, initial_mode=cli_mode)
-    # Mouse mode: True enables scroll wheel + scrollbar click, but disables
-    # native terminal text selection. Most terminals support Shift+drag to
-    # select text even with mouse capture on. Configurable via config.mouse.
-    _mouse = getattr(config, "mouse", True)
-    app.run(mouse=_mouse)
+    # mouse=False preserves native terminal text selection (copy/paste).
+    # Scrolling is via Shift+Up/Down, PageUp/PageDown, or /scroll command.
+    app.run(mouse=False)
 
 
 _OLLAMA_DEFAULT_URL = "http://localhost:11434"
