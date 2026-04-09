@@ -34,6 +34,13 @@ _EVENT_GROUP: dict[str, str] = {
     "post_tool_use": "tool.post_tool_use",
     "tool_error": "tool.tool_error",
     "tool_denied": "tool.tool_denied",
+    # Wave2-1d: fired when a tool execution is interrupted by an
+    # asyncio.CancelledError mid-flight (user ctrl+c, parent task
+    # timeout, etc.). The background worker thread cannot actually
+    # be interrupted by cancel, but the runtime records the event
+    # and yields an error ToolResultBlock so the next turn does not
+    # think the call is still pending.
+    "tool_cancelled": "tool.tool_cancelled",
     # command
     "pre_command": "command.pre_command",
     "post_command": "command.post_command",

@@ -1894,17 +1894,49 @@ class ConversationRuntime:
 
         future = loop.run_in_executor(_TOOL_EXECUTOR, run_tool)
 
-        while True:
-            progress = await queue.get()
-            if progress is None:
-                break
-            yield StreamToolProgress(
-                tool_name=progress.tool_name,
-                message=progress.message,
-                percent=progress.percent,
-            )
+        # Wave2-1d: catch asyncio.CancelledError around the progress
+        # drain + future wait. The ThreadPoolExecutor cannot actually
+        # interrupt the worker thread — tool.execute_with_progress()
+        # continues running to completion in the background — but we
+        # must:
+        #   1. Fire tool_cancelled so observers see the interruption.
+        #   2. Yield an error ToolResultBlock so the session has a
+        #      terminal record for this tool_use_id (otherwise the
+        #      next turn would see an orphan ToolUseBlock with no
+        #      matching ToolResultBlock, which breaks the conversation
+        #      round-trip invariant).
+        #   3. Re-raise so the cancellation propagates up to the turn
+        #      loop which is the thing that actually handles shutdown
+        #      or parent-task cancel.
+        try:
+            while True:
+                progress = await queue.get()
+                if progress is None:
+                    break
+                yield StreamToolProgress(
+                    tool_name=progress.tool_name,
+                    message=progress.message,
+                    percent=progress.percent,
+                )
 
-        tool_result = await future
+            tool_result = await future
+        except asyncio.CancelledError:
+            self._fire_hook(
+                "tool_cancelled",
+                {"tool_name": call.name, "tool_id": call.id},
+            )
+            logger.warning(
+                "tool %s (id=%s) cancelled mid-execution; background "
+                "thread will continue but runtime records an error "
+                "ToolResultBlock so the session stays consistent",
+                call.name, call.id,
+            )
+            yield ToolResultBlock(
+                tool_use_id=call.id,
+                content=f"Tool '{call.name}' execution was cancelled.",
+                is_error=True,
+            )
+            raise
         tool_result = self._budget_tool_result(tool_result, call.id)
         _tool_duration_ms = (time.monotonic() - _tool_start) * 1000
         self._telemetry.trace_tool(
