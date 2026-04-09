@@ -59,3 +59,37 @@ def test_xml_fallback_branch_still_sets_the_attribute() -> None:
     src = _get_run_turn_body_source()
     assert "self._force_xml_mode = True" in src
     assert "tool-call-parser" in src
+
+
+def test_fallback_branch_runs_before_is_retryable_short_circuit() -> None:
+    """Regression guard for the field report after PR #41:
+    tool-call-parser errors are now marked ``is_retryable=False``
+    (to skip the retry loop), but the XML fallback branch MUST
+    still check for the known error strings BEFORE the
+    ``is_retryable`` short-circuit. Otherwise the recoverable error
+    surfaces as visible assistant text instead of triggering the
+    fallback, which is the exact bug the user reported.
+    """
+    src = _get_run_turn_body_source()
+    # Find positions of the two relevant branches
+    idx_fallback = src.find('"tool-call-parser" in _exc_str')
+    idx_is_retryable = src.find('is_retryable", None) is False')
+    assert idx_fallback != -1, "XML fallback branch disappeared"
+    assert idx_is_retryable != -1, "is_retryable short-circuit disappeared"
+    # Fallback check MUST appear before the short-circuit
+    assert idx_fallback < idx_is_retryable, (
+        "XML fallback check must precede is_retryable short-circuit — "
+        "otherwise tool-call-parser errors bypass recovery and "
+        "surface to the user as visible text"
+    )
+
+
+def test_is_retryable_short_circuit_still_present() -> None:
+    """Wave2-3 behavior for 401/404/model-not-found must still work:
+    a non-retryable error that ISN'T a tool-call-parser issue must
+    still propagate immediately without wasting the retry budget."""
+    src = _get_run_turn_body_source()
+    # The short-circuit should still exist (just moved, not removed)
+    assert 'is_retryable", None) is False' in src
+    # Non-retryable hook still fired so observers can count them
+    assert '"http_non_retryable"' in src
