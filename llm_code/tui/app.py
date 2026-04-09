@@ -566,6 +566,41 @@ class LLMCodeTUI(App):  # noqa: E302
             f"  Press Ctrl+C again to quit immediately."
         ))
 
+    def _load_plugin_tools(self, plugin_dir: Path, chat: "ChatScrollView") -> None:
+        """Wave2-5 wiring: load Python tools from a plugin's manifest.
+
+        Uses the ``marketplace.executor.load_plugin`` path added in
+        wave2-5. If the plugin doesn't declare ``provides_tools`` in
+        its manifest, this is a no-op. Failures are reported in the
+        chat as a non-blocking warning.
+        """
+        try:
+            from llm_code.marketplace.plugin import PluginManifest
+            from llm_code.marketplace.executor import load_plugin, PluginConflictError, PluginLoadError
+            manifest = PluginManifest.from_path(plugin_dir)
+            if not manifest.provides_tools:
+                return  # no Python tools to load
+            if self._tool_registry is None:
+                return
+            handle = load_plugin(
+                manifest,
+                plugin_dir,
+                tool_registry=self._tool_registry,
+                skill_router=getattr(self._runtime, "_skill_router", None),
+                known_tool_names={t.name for t in self._tool_registry.all_tools()},
+            )
+            if handle.tool_names:
+                chat.add_entry(AssistantText(
+                    f"Loaded {len(handle.tool_names)} tool(s) from plugin: "
+                    f"{', '.join(handle.tool_names)}"
+                ))
+        except FileNotFoundError:
+            pass  # no manifest → pure skill plugin, not a Python tool plugin
+        except (PluginConflictError, PluginLoadError) as exc:
+            chat.add_entry(AssistantText(f"⚠ Plugin tool load warning: {exc}"))
+        except Exception as exc:
+            logger.debug("Plugin tool load failed for %s: %s", plugin_dir, exc)
+
     def _reload_skills(self) -> None:
         """(Re)load skills from all configured directories."""
         import logging
@@ -3555,6 +3590,9 @@ class LLMCodeTUI(App):  # noqa: E302
                 if result.returncode == 0:
                     installer.enable(name)
                     self._reload_skills()
+                    # Wave2-5 wiring: load any Python tools the
+                    # plugin declares via provides_tools manifest
+                    self._load_plugin_tools(dest, chat)
                     chat.add_entry(AssistantText(f"Installed {name}. Activated."))
                 else:
                     logger.warning("Plugin clone failed for %s: %s", repo, result.stderr[:200])
@@ -3568,6 +3606,8 @@ class LLMCodeTUI(App):  # noqa: E302
             try:
                 installer.enable(subargs)
                 self._reload_skills()
+                dest = Path.home() / ".llmcode" / "plugins" / subargs
+                self._load_plugin_tools(dest, chat)
                 chat.add_entry(AssistantText(f"Enabled {subargs}"))
             except Exception as exc:
                 chat.add_entry(AssistantText(f"Enable failed: {exc}"))
