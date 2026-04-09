@@ -26,9 +26,11 @@ from llm_code.api.types import (
     StreamEvent,
     StreamMessageStop,
     StreamTextDelta,
+    StreamThinkingDelta,
     StreamToolUseInputDelta,
     StreamToolUseStart,
     TextBlock,
+    ThinkingBlock,
     TokenUsage,
     ToolDefinition,
     ToolResultBlock,
@@ -42,15 +44,15 @@ from llm_code.api.types import (
 _MAX_RETRY_AFTER_SECONDS = 60.0
 
 
-def _parse_retry_after_header(raw: str | None) -> float | None:
-    """Parse an HTTP Retry-After value into a seconds float.
+# Wave2-1a P2: provider reasoning fields we know how to extract.
+_REASONING_FIELD_CANDIDATES: tuple[str, ...] = (
+    "reasoning_content",  # DeepSeek-R1 / DeepSeek-reasoner / Qwen QwQ / vLLM
+    "reasoning",          # OpenAI o-series (newer SDK)
+)
 
-    Returns None on missing, empty, or unparseable input. Negative
-    or absurdly large values are clamped to the max cap. The HTTP
-    spec allows either a delta-seconds integer or an HTTP-date;
-    this helper only handles the delta-seconds form which is what
-    every real LLM provider actually sends on 429.
-    """
+
+def _parse_retry_after_header(raw: str | None) -> float | None:
+    """Parse an HTTP Retry-After value into a seconds float (wave2-1b)."""
     if not raw:
         return None
     try:
@@ -63,18 +65,7 @@ def _parse_retry_after_header(raw: str | None) -> float | None:
 
 
 def _token_usage_from_dict(usage_data: dict) -> "TokenUsage":
-    """Build TokenUsage from a raw provider usage dict (wave2-2).
-
-    Handles both payload shapes:
-
-    * OpenAI-compat (``prompt_tokens`` / ``completion_tokens`` +
-      ``prompt_tokens_details.cached_tokens`` for cache reads).
-    * Anthropic-style (``cache_read_input_tokens`` /
-      ``cache_creation_input_tokens`` top-level).
-
-    Falls back to 0 for any missing field so upstream code can assume
-    a fully-populated object.
-    """
+    """Build TokenUsage from a raw provider usage dict (wave2-2)."""
     input_tokens = int(usage_data.get("prompt_tokens") or usage_data.get("input_tokens") or 0)
     output_tokens = int(usage_data.get("completion_tokens") or usage_data.get("output_tokens") or 0)
 
@@ -91,6 +82,40 @@ def _token_usage_from_dict(usage_data: dict) -> "TokenUsage":
         cache_read_tokens=cache_read,
         cache_creation_tokens=cache_creation,
     )
+
+
+def _extract_reasoning_text(source: dict) -> str:
+    """Pull reasoning/thinking text from a provider dict (wave2-1a P2)."""
+    for field in _REASONING_FIELD_CANDIDATES:
+        value = source.get(field)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def _extract_anthropic_thinking(
+    content: object,
+) -> tuple["ThinkingBlock", ...]:
+    """Extract ThinkingBlocks from an Anthropic-style content list (wave2-1a P2)."""
+    if not isinstance(content, list):
+        return ()
+    blocks: list[ThinkingBlock] = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") != "thinking":
+            continue
+        text = item.get("thinking")
+        if not isinstance(text, str):
+            continue
+        signature = item.get("signature")
+        blocks.append(
+            ThinkingBlock(
+                content=text,
+                signature=signature if isinstance(signature, str) else "",
+            )
+        )
+    return tuple(blocks)
 
 
 class OpenAICompatProvider(LLMProvider):
@@ -343,6 +368,19 @@ class OpenAICompatProvider(LLMProvider):
 
         content_blocks: list[ContentBlock] = []
 
+        # Wave2-1a P2: extract thinking from the message payload before
+        # anything else. Two shapes are supported:
+        #   1. OpenAI-compat scalar field: message["reasoning_content"]
+        #      or message["reasoning"] is a plain string.
+        #   2. Anthropic-style structured: message["content"] is a list
+        #      of blocks, one of which may be {"type": "thinking", ...}.
+        # Both may appear on proxy servers; we accept either or both.
+        thinking_blocks: list[ThinkingBlock] = []
+        reasoning_text = _extract_reasoning_text(message)
+        if reasoning_text:
+            thinking_blocks.append(ThinkingBlock(content=reasoning_text))
+        thinking_blocks.extend(_extract_anthropic_thinking(message.get("content")))
+
         tool_calls = message.get("tool_calls")
         if tool_calls:
             for tc in tool_calls:
@@ -355,8 +393,15 @@ class OpenAICompatProvider(LLMProvider):
                     ToolUseBlock(id=tc["id"], name=fn["name"], input=args)
                 )
         else:
-            text = message.get("content") or ""
-            content_blocks.append(TextBlock(text=text))
+            raw_content = message.get("content")
+            # Anthropic-style structured content: pick text blocks out
+            # of the list. Thinking was already harvested above.
+            if isinstance(raw_content, list):
+                for item in raw_content:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        content_blocks.append(TextBlock(text=item.get("text") or ""))
+            else:
+                content_blocks.append(TextBlock(text=raw_content or ""))
 
         usage_data = data.get("usage", {})
         usage = _token_usage_from_dict(usage_data)
@@ -365,6 +410,7 @@ class OpenAICompatProvider(LLMProvider):
             content=tuple(content_blocks),
             usage=usage,
             stop_reason=finish_reason,
+            thinking=tuple(thinking_blocks),
         )
 
     def _iter_stream_events(self, raw: str) -> _StreamIterator:
@@ -401,9 +447,19 @@ class _StreamIterator:
                 delta = choice.get("delta", {})
                 finish_reason = choice.get("finish_reason")
 
+                # Wave2-1a P2: thinking delta from provider-side reasoning
+                # field. DeepSeek-R1, DeepSeek-reasoner, Qwen QwQ (vLLM),
+                # and OpenAI o-series all emit this as a sibling to
+                # ``content``. Emit a StreamThinkingDelta so the TUI's
+                # existing thinking-buffer flush logic picks it up and
+                # P3 assembly can accumulate it into a ThinkingBlock.
+                reasoning_chunk = _extract_reasoning_text(delta)
+                if reasoning_chunk:
+                    events.append(StreamThinkingDelta(text=reasoning_chunk))
+
                 # Text content delta
                 text = delta.get("content")
-                if text:
+                if text and isinstance(text, str):
                     events.append(StreamTextDelta(text=text))
 
                 # Tool call deltas
