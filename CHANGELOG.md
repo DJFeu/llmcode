@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased — Wave2-1a P5: conversation_db thinking persistence + FTS5 (wave2-1a COMPLETE)
+
+### Added
+- **`messages` table gains `content_type` + `signature` columns.** Idempotent schema: fresh DBs get both via the new `CREATE TABLE`; pre-P5 DBs get them via `ALTER TABLE ADD COLUMN` gated on `PRAGMA table_info` so re-runs are no-ops. Legacy rows with NULL content_type are still matched by the text-only search filter via `COALESCE(m.content_type, 'text')`.
+- **`ConversationDB.log_message`** accepts `content_type` and `signature` kwargs defaulted to pre-P5 values. `log_thinking(conv_id, content, signature, created_at)` convenience wrapper pins role=assistant, content_type=thinking.
+- **`ConversationDB.search(query, content_type=None)`** optional filter: "text" only, "thinking" only, or both. `SearchResult.content_type` field exposed so UI can render thinking matches differently.
+- **`ConversationRuntime._db_log_thinking(content, signature)`** called from the assembly path so every assistant turn that produced reasoning lands in FTS5 alongside the visible text log.
+
+### Migration notes
+- Pre-P5 DB files auto-upgrade on first open. PRAGMA-gated, idempotent, logs INFO per column added.
+- Signature bytes round-trip byte-for-byte through SQLite.
+- Rows written before P5 (NULL content_type) still searchable — COALESCE maps them to 'text'.
+
+### Tests
+- **`tests/test_runtime/test_conversation_db_thinking_wave2_1a_p5.py`** — 11 new tests: 3 migration (fresh / legacy / idempotent), 1 log_message back-compat, 2 log_thinking (role+type+content, signature byte-opacity), 5 search (no-filter, thinking-only, text-only, SearchResult.content_type field, legacy NULL → text)
+- Full sweep: **1709 passed**, no regressions (1698 P4 + 11 new)
+
+### Wave2-1a spec status: COMPLETE ✅
+
+| Phase | PR | Scope | Tests | Sweep |
+|---|---|---|---|---|
+| P1 | #26 | `ThinkingBlock` dataclass + order validator | 16 | 1658 |
+| P2 | #27 | `openai_compat` parses 5 provider shapes | 19 | 1677 |
+| P3 | #28 | Assembly + Session serialization + isinstance sweep | 10 | 1687 |
+| P4 | #29 | Compressor atomicity + outbound drop warning | 11 | 1698 |
+| **P5** | **this** | `conversation_db` migration + FTS5 thinking search | **11** | **1709** |
+
+**Total delta: 67 new tests, +51 test sweep (1658 → 1709), 5 merge-ready stacked PRs.**
+
+Thinking is now a first-class ContentBlock end-to-end: parsed from 5 provider shapes (P2), stored in `Message.content` (P3), serialized to session JSON (P3), counted by `estimated_tokens()` (P3), preserved as atomic pair with adjacent tool_use during compression (P4), dropped-with-warn on outbound for OpenAI-compat (P4), indexed in `conversation_db` FTS5 with content_type filter (P5). A future native `AnthropicProvider` now has a clean path to plug in extended-thinking + tool-use multi-turn without touching the data model.
+
 ## Unreleased — Wave2-1a P4: Compressor atomicity + explicit outbound drop
 
 ### Added
