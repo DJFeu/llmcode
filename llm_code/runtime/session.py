@@ -12,6 +12,7 @@ from llm_code.api.types import (
     ImageBlock,
     Message,
     TextBlock,
+    ThinkingBlock,
     TokenUsage,
     ToolResultBlock,
     ToolUseBlock,
@@ -37,6 +38,15 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 def _block_to_dict(block: ContentBlock) -> dict:
+    # Wave2-1a P3: ThinkingBlock is serialized first so existing
+    # deserialization logic for text/tool_use/etc. is unreachable when
+    # the block is a thinking block.
+    if isinstance(block, ThinkingBlock):
+        return {
+            "type": "thinking",
+            "thinking": block.content,
+            "signature": block.signature,
+        }
     if isinstance(block, TextBlock):
         return {"type": "text", "text": block.text}
     if isinstance(block, ToolUseBlock):
@@ -55,6 +65,15 @@ def _block_to_dict(block: ContentBlock) -> dict:
 
 def _dict_to_block(d: dict) -> ContentBlock:
     t = d["type"]
+    if t == "thinking":
+        # Wave2-1a P3: defensive defaults so a corrupted row (missing
+        # signature column before the P5 migration) still rehydrates
+        # without crashing. The signature may be stored under the
+        # legacy Anthropic field name or the flat column.
+        return ThinkingBlock(
+            content=d.get("thinking") or d.get("content") or "",
+            signature=d.get("signature") or "",
+        )
     if t == "text":
         return TextBlock(text=d["text"])
     if t == "tool_use":
@@ -155,7 +174,13 @@ class Session:
         parts: list[str] = []
         for msg in self.messages:
             for block in msg.content:
-                if isinstance(block, TextBlock):
+                # Wave2-1a P3: thinking blocks occupy real tokens when
+                # the provider requires round-tripping them (Anthropic
+                # extended thinking). Counting them here ensures the
+                # proactive-compaction trigger fires early enough.
+                if isinstance(block, ThinkingBlock):
+                    parts.append(block.content)
+                elif isinstance(block, TextBlock):
                     parts.append(block.text)
                 elif isinstance(block, ToolResultBlock):
                     parts.append(block.content)
