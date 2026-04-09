@@ -156,6 +156,10 @@ class OpenAICompatProvider(LLMProvider):
         self._timeout = timeout
         self._native_tools = native_tools
 
+        # Resolve model profile for capability overrides
+        from llm_code.runtime.model_profile import get_profile
+        self._profile = get_profile(model_name)
+
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
@@ -183,7 +187,10 @@ class OpenAICompatProvider(LLMProvider):
         return self._native_tools
 
     def supports_images(self) -> bool:
-        return False
+        return self._profile.supports_images
+
+    def supports_reasoning(self) -> bool:
+        return self._profile.supports_reasoning
 
     async def close(self) -> None:
         await self._client.aclose()

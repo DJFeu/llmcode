@@ -71,22 +71,17 @@ class TestFromModelOpenAICompat:
 
 
 class TestFromModelAnthropic:
-    def test_from_model_anthropic_without_sdk(self):
-        """When anthropic SDK is not installed, ImportError with helpful message."""
-        from llm_code.api.client import ProviderClient
+    def test_from_model_claude_returns_anthropic_provider(self):
+        """Models starting with 'claude-' route to AnthropicProvider."""
+        from llm_code.api.anthropic_provider import AnthropicProvider
+        provider = _from_model("claude-sonnet-4-6", api_key="test-key")
+        assert isinstance(provider, AnthropicProvider)
 
-        with patch.dict("sys.modules", {"anthropic": None}):
-            with pytest.raises(ImportError, match="anthropic"):
-                ProviderClient.from_model("claude-3-5-sonnet-20241022")
-
-    def test_from_model_claude_prefix_triggers_anthropic_path(self):
-        """Models starting with 'claude-' attempt to use AnthropicProvider."""
-        from llm_code.api.client import ProviderClient
-
-        # Patch so AnthropicProvider import fails gracefully
-        with patch.dict("sys.modules", {"anthropic": None}):
-            with pytest.raises(ImportError):
-                ProviderClient.from_model("claude-opus-4-5")
+    def test_from_model_claude_opus_returns_anthropic_provider(self):
+        """Claude opus variant also routes to AnthropicProvider."""
+        from llm_code.api.anthropic_provider import AnthropicProvider
+        provider = _from_model("claude-opus-4-6", api_key="test-key")
+        assert isinstance(provider, AnthropicProvider)
 
     def test_from_model_non_claude_does_not_trigger_anthropic(self):
         """Non-claude models never attempt AnthropicProvider import."""
@@ -111,6 +106,12 @@ class TestFromModelDefaults:
         provider = _from_model("qwen3")
         assert provider._api_key == ""
 
-    def test_default_native_tools_true(self):
+    def test_default_native_tools_from_profile(self):
+        """Qwen3 profile declares native_tools=False (XML fallback)."""
         provider = _from_model("qwen3")
+        assert provider._native_tools is False
+
+    def test_default_native_tools_true_for_gpt(self):
+        """GPT-4o profile declares native_tools=True."""
+        provider = _from_model("gpt-4o", base_url="https://api.openai.com/v1")
         assert provider._native_tools is True

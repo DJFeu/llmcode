@@ -8,8 +8,8 @@ satisfy the protocol with different latency / interactivity trade-offs:
   Used by tests to replace ad-hoc input mocks with a typed queue.
 * ``HeadlessDialogs`` — stdin/stdout line-based prompts for CI, pipe
   mode, ``--yes`` runs, and SSH sessions without a real terminal.
-* ``TextualDialogs`` (follow-up PR) — modal screens inside the Textual
-  app. Will be wired during the call-site migration sweep.
+* ``TextualDialogs`` — modal screens inside the Textual app, pushed
+  via ``push_screen_wait()`` for async confirm / select / text / checklist.
 
 Import the Protocol from here; import concrete backends from their
 submodules. Callers should depend on the Protocol so swapping
@@ -23,6 +23,7 @@ from llm_code.tui.dialogs.api import (
 )
 from llm_code.tui.dialogs.headless import HeadlessDialogs
 from llm_code.tui.dialogs.scripted import ScriptedDialogs
+from llm_code.tui.dialogs.textual_backend import TextualDialogs
 
 __all__ = [
     "Choice",
@@ -31,4 +32,5 @@ __all__ = [
     "Dialogs",
     "HeadlessDialogs",
     "ScriptedDialogs",
+    "TextualDialogs",
 ]

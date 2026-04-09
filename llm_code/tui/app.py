@@ -1007,6 +1007,10 @@ class LLMCodeTUI(App):  # noqa: E302
         except Exception:
             pass
 
+        # Create TextualDialogs for modal screen prompts
+        from llm_code.tui.dialogs.textual_backend import TextualDialogs
+        self._dialogs = TextualDialogs(self)
+
         # Create runtime with all subsystem references
         self._runtime = ConversationRuntime(
             provider=provider,
@@ -1029,6 +1033,7 @@ class LLMCodeTUI(App):  # noqa: E302
             task_manager=self._task_manager,
             project_index=self._project_index,
             lsp_manager=self._lsp_manager,
+            dialogs=self._dialogs,
         )
         # Install MCP event sink so non-root server spawns surface an
         # inline approval widget.

@@ -20,13 +20,17 @@ class ProviderClient:
     ) -> LLMProvider:
         """Return the appropriate LLMProvider for the given model name.
 
-        Routing rules:
-        - Models starting with "claude-" → AnthropicProvider (requires
-          the ``anthropic`` SDK to be installed).
-        - Everything else → OpenAICompatProvider.
+        Routing uses the model profile system: the profile's
+        ``provider_type`` field determines which provider class to
+        instantiate, and ``native_tools`` overrides the caller's
+        default when the profile declares it.
         """
         model = resolve_model(model, custom_aliases)
-        if model.startswith("claude-"):
+
+        from llm_code.runtime.model_profile import get_profile
+        profile = get_profile(model)
+
+        if profile.provider_type == "anthropic":
             return ProviderClient._make_anthropic(
                 model=model,
                 api_key=api_key,
@@ -34,13 +38,18 @@ class ProviderClient:
                 max_retries=max_retries,
             )
 
+        # Profile overrides native_tools when explicitly declared.
+        # Built-in Qwen profiles set native_tools=False so the
+        # caller's default (True) doesn't override the profile.
+        effective_native_tools = profile.native_tools if profile.name else native_tools
+
         return ProviderClient._make_openai_compat(
             model=model,
             base_url=base_url,
             api_key=api_key,
             timeout=timeout,
             max_retries=max_retries,
-            native_tools=native_tools,
+            native_tools=effective_native_tools,
         )
 
     # ------------------------------------------------------------------
@@ -74,13 +83,7 @@ class ProviderClient:
         timeout: float,
         max_retries: int,
     ) -> LLMProvider:
-        try:
-            from llm_code.api.anthropic_provider import AnthropicProvider  # type: ignore[import]
-        except ImportError:
-            raise ImportError(
-                "The 'anthropic' SDK is required to use Claude models. "
-                "Install it with: pip install anthropic"
-            )
+        from llm_code.api.anthropic_provider import AnthropicProvider
 
         return AnthropicProvider(
             api_key=api_key,

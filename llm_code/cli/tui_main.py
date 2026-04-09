@@ -233,19 +233,31 @@ def _run_ollama_setup(
 
             vram_gb = detect_vram_gb()
             sorted_models = sort_models_for_selection(models, vram_gb)
-            output = _format_model_list(sorted_models, vram_gb)
-            click.echo(output)
 
-            choice = click.prompt("Select model", default="1")
+            from llm_code.tui.dialogs import Choice, DialogCancelled, HeadlessDialogs
+
+            dialogs = HeadlessDialogs()
+            choices = [
+                Choice(
+                    value=m.name,
+                    label=m.name,
+                    hint=getattr(m, "size_label", None),
+                )
+                for m in sorted_models
+            ]
             try:
-                idx = int(choice) - 1
-                if 0 <= idx < len(sorted_models):
-                    selected = sorted_models[idx]
-                else:
-                    selected = sorted_models[0]
-            except ValueError:
-                selected = sorted_models[0]
+                selected_name = await dialogs.select(
+                    "Select model",
+                    choices,
+                    default=sorted_models[0].name,
+                )
+            except DialogCancelled:
+                selected_name = sorted_models[0].name
 
+            selected = next(
+                (m for m in sorted_models if m.name == selected_name),
+                sorted_models[0],
+            )
             click.echo(f"Using: {selected.name}")
             return (selected.name, f"{base_url}/v1")
         finally:

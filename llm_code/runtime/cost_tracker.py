@@ -118,6 +118,16 @@ class CostTracker:
             if key in model_lower:
                 return pricing
 
+        # 3.5. Model profile pricing — covers models like Qwen that
+        # have no entry in BUILTIN_PRICING but do have a profile.
+        try:
+            from llm_code.runtime.model_profile import get_profile
+            profile = get_profile(self.model)
+            if profile.price_input > 0 or profile.price_output > 0:
+                return (profile.price_input, profile.price_output)
+        except Exception:
+            pass
+
         # 4. Unknown model = free. Warn once per model so self-hosted
         # setups (Qwen on GX10 etc.) stay silent but truly-unknown names
         # surface in the log the first time they're seen.

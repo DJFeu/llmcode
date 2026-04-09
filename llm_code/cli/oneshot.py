@@ -16,6 +16,8 @@ from llm_code.api.types import (
 )
 from llm_code.runtime.config import RuntimeConfig
 from llm_code.runtime.model_aliases import resolve_model
+from llm_code.tui.dialogs import Choice, DialogCancelled
+from llm_code.tui.dialogs.headless import HeadlessDialogs
 
 
 def _extract_text(response: MessageResponse) -> str:
@@ -81,27 +83,40 @@ def run_execute_mode(prompt: str, config: RuntimeConfig) -> None:
 
     command = _send_sync(config, prompt, system=system_msg)
 
-    # Display and confirm
+    # Display and confirm via Dialogs Protocol
     print(f"\033[1;36m→\033[0m {command}")
 
+    dialogs = HeadlessDialogs()
+
     try:
-        choice = input("Execute? [y/n/e(dit)] ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
+        action = asyncio.run(dialogs.select(
+            "Execute?",
+            [
+                Choice("y", "Yes — run the command"),
+                Choice("n", "No — cancel"),
+                Choice("e", "Edit — modify before running"),
+            ],
+            default="n",
+        ))
+    except (DialogCancelled, EOFError, KeyboardInterrupt):
         print("\nCancelled.")
         return
 
-    if choice == "e":
+    if action == "e":
         try:
-            command = input("Command: ").strip()
-            if not command:
+            command = asyncio.run(dialogs.text(
+                "Command",
+                default=command,
+            ))
+            if not command.strip():
                 print("Cancelled.")
                 return
-        except (EOFError, KeyboardInterrupt):
+        except (DialogCancelled, EOFError, KeyboardInterrupt):
             print("\nCancelled.")
             return
-        choice = "y"
+        action = "y"
 
-    if choice == "y":
+    if action == "y":
         result = subprocess.run(command, shell=True, cwd=Path.cwd())
         sys.exit(result.returncode)
     else:

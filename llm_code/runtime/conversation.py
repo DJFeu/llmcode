@@ -255,6 +255,7 @@ class ConversationRuntime:
         project_index: Any = None,
         lsp_manager: Any = None,
         typed_memory_store: Any = None,
+        dialogs: Any = None,
     ) -> None:
         self._provider = provider
         self._last_input_tokens: int = 0
@@ -339,6 +340,7 @@ class ConversationRuntime:
         self._project_index = project_index
         self._lsp_manager = lsp_manager
         self._typed_memory = typed_memory_store
+        self._dialogs = dialogs
         # Conversation DB for cross-session FTS5 search
         self._conv_db = None
         try:
@@ -389,6 +391,10 @@ class ConversationRuntime:
         self._consecutive_failures: int = 0
         self._compressor = ContextCompressor()
         self._active_model: str = getattr(config, "model", "")
+        # Resolve the model profile — declarative capability + behaviour
+        # spec that replaces scattered hardcoded model adaptations.
+        from llm_code.runtime.model_profile import get_profile
+        self._model_profile = get_profile(self._active_model)
         # Wave2-1c: consecutive empty assistant responses. We fire the
         # empty_assistant_response hook every time, inject a nudge
         # user-message after 2 (to prod the model into actually
@@ -433,6 +439,21 @@ class ConversationRuntime:
     @analysis_context.setter
     def analysis_context(self, value: str | None) -> None:
         self._harness.analysis_context = value
+
+    @property
+    def dialogs(self) -> Any:
+        """The ``Dialogs`` backend for this runtime.
+
+        Returns the backend set at construction time (TextualDialogs in
+        the TUI, HeadlessDialogs in CLI/pipe mode, ScriptedDialogs in
+        tests). Falls back to a default HeadlessDialogs if none was
+        provided, so callers never need to None-check.
+        """
+        if self._dialogs is not None:
+            return self._dialogs
+        from llm_code.tui.dialogs.headless import HeadlessDialogs
+        self._dialogs = HeadlessDialogs()
+        return self._dialogs
 
     def _db_log(self, role: str, content: str, input_tokens: int = 0, output_tokens: int = 0) -> None:
         """Log a message to ConversationDB for cross-session FTS5 search."""
@@ -837,30 +858,37 @@ class ConversationRuntime:
         # cache so the 14s native-rejection round-trip is paid ONCE
         # per server+model combo, EVER).
         if not hasattr(self, "_force_xml_mode"):
-            self._force_xml_mode = False
-            # Seed from the on-disk cache. Any failure is swallowed
-            # inside the cache module (logs at DEBUG) — a missing or
-            # corrupted cache just means this session's first turn
-            # pays the fallback cost one more time.
-            try:
-                from llm_code.runtime.server_capabilities import (
-                    load_native_tools_support,
+            # The model profile is the primary source of truth: if the
+            # profile says force_xml_tools, we skip native tool calling
+            # entirely (no 14s error-retry on first request).
+            self._force_xml_mode = self._model_profile.force_xml_tools
+            if self._force_xml_mode:
+                logger.debug(
+                    "model profile %r: force_xml_tools=True, skipping "
+                    "native tool calling",
+                    self._model_profile.name,
                 )
-                _cached = load_native_tools_support(
-                    base_url=getattr(self._config, "provider_base_url", "") or "",
-                    model=self._active_model,
-                )
-                if _cached is False:
-                    self._force_xml_mode = True
-                    logger.debug(
-                        "server_capabilities cache: %s (%s) marked "
-                        "as not supporting native tool calling; "
-                        "skipping native mode for this session",
-                        getattr(self._config, "provider_base_url", ""),
-                        self._active_model,
+            else:
+                # Fall back to the on-disk server capabilities cache
+                # for models without a profile declaration.
+                try:
+                    from llm_code.runtime.server_capabilities import (
+                        load_native_tools_support,
                     )
-            except Exception:
-                pass
+                    _cached = load_native_tools_support(
+                        base_url=getattr(self._config, "provider_base_url", "") or "",
+                        model=self._active_model,
+                    )
+                    if _cached is False:
+                        self._force_xml_mode = True
+                        logger.debug(
+                            "server_capabilities cache: %s (%s) marked "
+                            "as not supporting native tool calling",
+                            getattr(self._config, "provider_base_url", ""),
+                            self._active_model,
+                        )
+                except Exception:
+                    pass
         # Token limit auto-upgrade state: reset each turn, doubles on max_tokens stop
         _current_max_tokens: int = self._config.max_tokens
         # Local models (localhost/private network) have no cost concern — no cap

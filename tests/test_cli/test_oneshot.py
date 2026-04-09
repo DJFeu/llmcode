@@ -7,6 +7,7 @@ import pytest
 
 from llm_code.api.types import MessageResponse, TextBlock, TokenUsage
 from llm_code.cli.oneshot import run_execute_mode, run_quick_mode
+from llm_code.tui.dialogs import DialogCancelled, ScriptedDialogs
 
 
 def _make_config(**overrides):
@@ -44,7 +45,11 @@ class TestRunExecuteMode:
 
         config = _make_config()
 
-        with patch("builtins.input", return_value="y"), \
+        # Mock HeadlessDialogs: select "y" (execute), then it runs
+        dialogs = ScriptedDialogs()
+        dialogs.push_select("y")
+
+        with patch("llm_code.cli.oneshot.HeadlessDialogs", return_value=dialogs), \
              patch("subprocess.run") as mock_run, \
              pytest.raises(SystemExit) as exc_info:
             mock_run.return_value = MagicMock(returncode=0)
@@ -65,7 +70,10 @@ class TestRunExecuteMode:
 
         config = _make_config()
 
-        with patch("builtins.input", return_value="n"):
+        dialogs = ScriptedDialogs()
+        dialogs.push_select("n")
+
+        with patch("llm_code.cli.oneshot.HeadlessDialogs", return_value=dialogs):
             run_execute_mode("delete everything", config)
 
         captured = capsys.readouterr()
@@ -78,9 +86,12 @@ class TestRunExecuteMode:
         mock_create.return_value = provider
 
         config = _make_config()
-        inputs = iter(["e", "echo hello"])
 
-        with patch("builtins.input", side_effect=inputs), \
+        dialogs = ScriptedDialogs()
+        dialogs.push_select("e")  # Choose edit
+        dialogs.push_text("echo hello")  # Provide edited command
+
+        with patch("llm_code.cli.oneshot.HeadlessDialogs", return_value=dialogs), \
              patch("subprocess.run") as mock_run, \
              pytest.raises(SystemExit):
             mock_run.return_value = MagicMock(returncode=0)
@@ -96,7 +107,11 @@ class TestRunExecuteMode:
 
         config = _make_config()
 
-        with patch("builtins.input", side_effect=EOFError):
+        # Simulate DialogCancelled (EOF)
+        dialogs = ScriptedDialogs()
+        dialogs.push_cancel("select")
+
+        with patch("llm_code.cli.oneshot.HeadlessDialogs", return_value=dialogs):
             run_execute_mode("list", config)
 
         captured = capsys.readouterr()
