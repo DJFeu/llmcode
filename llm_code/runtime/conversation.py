@@ -831,7 +831,18 @@ class ConversationRuntime:
 
         accumulated_usage = TokenUsage(input_tokens=0, output_tokens=0)
         self._has_attempted_reactive_compact = False
-        force_xml = getattr(self, "_force_xml_mode", False)
+        # ``self._force_xml_mode`` is the sticky "this server rejected
+        # native tool calls, always use XML" flag. We read it as an
+        # attribute inside the iteration loop below (NOT as a local
+        # variable captured here) so an auto-fallback triggered in
+        # iteration 1 is honored by iteration 2 within the SAME turn.
+        # Previously a stale local meant iteration 2 retried native
+        # mode and burned ~19s on the same error before hitting the
+        # same fallback branch again. Observed in a Qwen3.5 field
+        # report: 65s total turn with ~53s of wasted native-tool-call
+        # retry storm.
+        if not hasattr(self, "_force_xml_mode"):
+            self._force_xml_mode = False
         # Token limit auto-upgrade state: reset each turn, doubles on max_tokens stop
         _current_max_tokens: int = self._config.max_tokens
         # Local models (localhost/private network) have no cost concern — no cap
@@ -946,7 +957,13 @@ class ConversationRuntime:
                     allowed_tool_names = self._hida_engine.filter_tools(hida_profile, all_tool_names)
 
             # 2. Build system prompt
-            use_native = getattr(self._provider, "supports_native_tools", lambda: True)() and not force_xml
+            # Read self._force_xml_mode fresh each iteration — the
+            # auto-fallback at the except block below sets it, and
+            # subsequent iterations in the same turn must honor it.
+            use_native = (
+                getattr(self._provider, "supports_native_tools", lambda: True)()
+                and not self._force_xml_mode
+            )
 
             # Deferred tool loading: when a manager is present, split tools into
             # visible and deferred; inject a hint into the system prompt.

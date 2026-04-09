@@ -32,6 +32,7 @@ def _warn_thinking_dropped_once(count: int) -> None:
 from llm_code.api.errors import (
     ProviderAuthError,
     ProviderConnectionError,
+    ProviderError,
     ProviderModelNotFoundError,
     ProviderOverloadError,
     ProviderRateLimitError,
@@ -384,6 +385,23 @@ class OpenAICompatProvider(LLMProvider):
             raise ProviderRateLimitError(msg, retry_after=retry_after)
         if response.status_code == 529:
             raise ProviderOverloadError(msg)
+        # Native tool calling not supported by this server: don't
+        # retry. Without this fast-fail, the 3-strike retry loop
+        # in _post_with_retry burns ~30s on exponential backoff
+        # before the outer fallback sees the error and switches to
+        # XML tag mode. With the fast-fail, the outer fallback fires
+        # on the first attempt. Detected by string match on the two
+        # known error messages vLLM and OpenAI-compat servers emit
+        # when tools=[...] is sent but not supported.
+        # Observed 2026-04-09 in a Qwen3.5 field report: first
+        # iteration burned 34s on this retry storm before the
+        # fallback fired. Raised as ProviderError(is_retryable=False)
+        # so the outer try/except in conversation.py's stream_message
+        # caller still pattern-matches the message and switches to
+        # XML mode, but _post_with_retry doesn't re-attempt.
+        _msg_lower = msg.lower() if isinstance(msg, str) else ""
+        if "tool-call-parser" in _msg_lower or "tool choice" in _msg_lower:
+            raise ProviderError(msg, is_retryable=False)
         if response.status_code >= 500:
             raise ProviderConnectionError(msg)
         # Other 4xx — treat as connection error
