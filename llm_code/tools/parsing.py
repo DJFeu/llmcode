@@ -51,6 +51,44 @@ _HERMES_PARAMETER_RE = re.compile(
     re.DOTALL,
 )
 
+# Variant 5 — bare name-as-tag form, emitted by Qwen3.5-122B on some
+# vLLM chat template configurations where NEITHER ``<tool_call>`` NOR
+# ``<function=NAME>`` appears in the stream. The on-wire shape is:
+#
+#     <web_search>{"query": "今日熱門新聞", "max_results": 3}</web_search>
+#
+# That is: the function name IS the XML tag itself, and the body is
+# a JSON object of args. Captured 2026-04-09 from a Qwen3.5 TUI run
+# where the turn produced a raw tool_call as visible text because no
+# parser variant matched. The leading ``<`` may also be missing in
+# terminal renderings (and possibly in the actual stream when the
+# chat template prefix-injected it as a prompt prefix), so the regex
+# makes the opening ``<`` optional.
+#
+# Name capture is a conservative Python-identifier regex so this
+# variant only triggers when the tag name looks like a real function
+# name (no dashes, no dots, no numbers at the start). Combined with
+# the "only try when no <tool_call> matches were found" guard in
+# ``_parse_xml`` and the JSON-must-parse-as-dict check in
+# ``_parse_bare_name_tag``, false positives on legitimate XML-ish
+# content are effectively impossible.
+_HERMES_BARE_NAME_TAG_RE = re.compile(
+    r"<?([a-zA-Z_][a-zA-Z0-9_]*)>\s*(\{.*?\})\s*</\1>",
+    re.DOTALL,
+)
+
+# Tag names variant 5 must NEVER interpret as a tool call, even when
+# the body is valid JSON. These are reserved by the protocol and
+# already handled by earlier parser stages — matching them here
+# would double-count or re-interpret a malformed wrapper as its own
+# tool named "tool_call".
+_VARIANT_5_RESERVED_NAMES: frozenset[str] = frozenset({
+    "tool_call",
+    "think",
+    "function",
+    "parameter",
+})
+
 
 @dataclasses.dataclass(frozen=True)
 class ParsedToolCall:
@@ -63,6 +101,7 @@ class ParsedToolCall:
 def parse_tool_calls(
     response_text: str,
     native_tool_calls: list[dict] | None,
+    known_tool_names: set[str] | frozenset[str] | None = None,
 ) -> list[ParsedToolCall]:
     """Parse tool calls from either native API format or XML tags in text.
 
@@ -70,10 +109,17 @@ def parse_tool_calls(
     Otherwise, fall back to scanning response_text for ``<tool_call>``
     tags. Both JSON-payload and Hermes-function formats are accepted; we
     try JSON first (cheaper) and fall back to Hermes if that fails.
+
+    ``known_tool_names`` restricts the bare ``<NAME>JSON</NAME>`` variant
+    5 fallback to tags whose name matches a registered tool. Callers
+    without a tool registry (e.g. tests) can pass ``None`` and the
+    variant runs unrestricted — keep in mind that permissive mode can
+    match ``<p>{"a":1}</p>`` and similar HTML-ish content as a false
+    positive, so production callers should always pass the set.
     """
     if native_tool_calls:
         return _parse_native(native_tool_calls)
-    return _parse_xml(response_text)
+    return _parse_xml(response_text, known_tool_names)
 
 
 def _parse_native(native: list[dict]) -> list[ParsedToolCall]:
@@ -88,9 +134,14 @@ def _parse_native(native: list[dict]) -> list[ParsedToolCall]:
     return result
 
 
-def _parse_xml(text: str) -> list[ParsedToolCall]:
-    """Scan the response text for tool calls, accepting both JSON-payload
-    and Hermes function-calling formats inside ``<tool_call>`` blocks."""
+def _parse_xml(
+    text: str,
+    known_tool_names: set[str] | frozenset[str] | None = None,
+) -> list[ParsedToolCall]:
+    """Scan the response text for tool calls, accepting the JSON-payload
+    and Hermes function-calling formats inside ``<tool_call>`` blocks,
+    plus the bare ``<NAME>JSON</NAME>`` variant from Qwen3.5 vLLM chat
+    templates that omit the ``<tool_call>`` wrapping entirely."""
     result: list[ParsedToolCall] = []
     for match in _XML_TOOL_CALL_RE.finditer(text):
         raw = match.group(1).strip()
@@ -101,6 +152,71 @@ def _parse_xml(text: str) -> list[ParsedToolCall]:
             parsed = _parse_hermes_block(raw)
         if parsed is not None:
             result.append(parsed)
+
+    # Variant 5 fallback: if no ``<tool_call>`` wrapper was found, try
+    # the bare ``<NAME>JSON</NAME>`` variant. Only triggered when the
+    # standard wrappers return nothing, so existing cases stay on the
+    # fast path and the false-positive risk from random XML-ish
+    # content is minimized.
+    if not result:
+        result.extend(_parse_bare_name_tag(text, known_tool_names))
+    return result
+
+
+def _parse_bare_name_tag(
+    text: str,
+    known_tool_names: set[str] | frozenset[str] | None = None,
+) -> list[ParsedToolCall]:
+    """Variant 5 — parse bare ``<NAME>JSON</NAME>`` tool calls.
+
+    Only called from ``_parse_xml`` when no ``<tool_call>`` wrapper
+    match was found, so the fast path for well-formed emissions is
+    untouched. Each match must contain a JSON object body; scalars,
+    lists, and invalid JSON are rejected as false-positive guards.
+
+    When ``known_tool_names`` is provided, tag names not in the set
+    are rejected — this is the production guard against false
+    positives like ``<p>{"a":1}</p>`` that the identifier-only regex
+    would otherwise capture. Callers without a registry (e.g. tests)
+    can pass ``None`` for permissive matching.
+
+    Also handles common arg-nesting shapes the same way the existing
+    Hermes truncated-JSON variant does:
+
+    1. ``{"key": "value", ...}``          — args at top level
+    2. ``{"args": {"key": "value"}}``     — args nested under "args"
+    3. ``{"arguments": {"key": "value"}}`` — args nested under "arguments"
+    """
+    result: list[ParsedToolCall] = []
+    for match in _HERMES_BARE_NAME_TAG_RE.finditer(text):
+        name = match.group(1)
+        if name in _VARIANT_5_RESERVED_NAMES:
+            continue
+        if known_tool_names is not None and name not in known_tool_names:
+            continue
+        body = match.group(2).strip()
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        # Unwrap common nesting shapes. If the body is already flat
+        # args, pass it through.
+        if isinstance(data.get("args"), dict):
+            args = data["args"]
+        elif isinstance(data.get("arguments"), dict):
+            args = data["arguments"]
+        else:
+            args = data
+        result.append(
+            ParsedToolCall(
+                id=str(uuid.uuid4()),
+                name=name,
+                args=args,
+                source="xml_tag",
+            )
+        )
     return result
 
 

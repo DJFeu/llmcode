@@ -1,5 +1,43 @@
 # Changelog
 
+## Unreleased — parser: recognize bare ``<NAME>JSON</NAME>`` tool call variant (Hermes variant 5)
+
+### Fixed
+- **Third Qwen3.5 field report fix**: user asked "今日新聞三則" and the TUI showed the raw text `<web_search>{"query": "今日熱門新聞", "max_results": 3}</web_search>` as the assistant's visible response. The tool never executed; iteration 2 never happened. Root cause: vLLM's chat template was producing a **bare `<NAME>JSON</NAME>`** tool-call format (tool name IS the XML tag, no `<tool_call>` wrapping) that none of the four existing Hermes variants in `parse_tool_calls` could match. With the parser returning empty, `runtime/conversation.py:L1564` broke out of the turn loop on `if not parsed_calls: break`, and the 22 output tokens of raw tool_call syntax became the visible reply.
+- **New Hermes variant 5** — `_HERMES_BARE_NAME_TAG_RE` matches `<?([a-zA-Z_]\w*)>\s*(\{.*?\})\s*</\1>` with the leading `<` optional (some terminal renderings and prompt-prefix injections drop it). Only tried when no `<tool_call>` wrapper matched in `_parse_xml`, so the fast path for well-formed emissions is untouched. Handles three arg-nesting shapes: flat `{...}`, nested `{"args": {...}}`, nested `{"arguments": {...}}`.
+- **False-positive guards**:
+  1. **JSON validation**: the body must parse as a JSON object (scalars / lists / invalid JSON rejected).
+  2. **Reserved names blocklist**: `tool_call`, `think`, `function`, `parameter` are never interpreted as variant 5 even when the body is valid JSON — prevents double-parsing of malformed `<tool_call>{"args": {}}</tool_call>` as a tool named `tool_call`.
+  3. **`known_tool_names` registry gate**: `parse_tool_calls` now accepts an optional set of registered tool names; variant 5 only matches when the tag name is in the set. `runtime/conversation.py` passes `{t.name for t in self._tool_registry.all_tools()}` so production mode is strict. Tests without a registry pass `None` for permissive matching (documented caveat: `<p>{"a":1}</p>` would otherwise match in permissive mode).
+- **`runtime/conversation.py:L1431`** now threads `known_tool_names` through to `parse_tool_calls` so the bare variant only fires on real tool names.
+
+### Tests
+- **`tests/test_tools/test_parsing.py::TestBareNameTagVariant`** — 13 new tests covering:
+  - Exact field-report text parsed correctly
+  - Missing leading `<` handled (terminal artifact / prefix injection)
+  - Variant inside mixed prose
+  - Multi-line body with newlines before/after JSON
+  - Nested `"args"` key unwrapped to flat args
+  - Nested `"arguments"` key unwrapped to flat args
+  - `known_tool_names` blocks `<p>{"a":1}</p>` false positive
+  - Invalid JSON rejected
+  - Mismatched close tag rejected
+  - Scalar / list body rejected
+  - Reserved `tool_call` name NOT reinterpreted (regression guard for `test_missing_tool_key_skipped`)
+  - Reserved `think` name NOT reinterpreted
+  - Variant 5 does NOT fire when a valid `<tool_call>` wrapper is already present (no duplicate parses)
+  - Multiple bare tool calls in one text each parse separately
+- Existing 42 parsing tests still pass — **55 total** in that file
+- Full sweep `test_tools/` + `test_runtime/` + `test_tui/` + `test_streaming/` + `test_api/`: **3239 passed**, no regressions
+
+### Investigation chain
+Field-report progression:
+1. **Screenshot 1** (24 out tokens, empty response) → PR #36 added empty-response counter + unclassified variant message
+2. **Screenshot 2** (279 out tokens, items vanished after intro) → PR #37 added stop_reason capture + truncation warning; PR #38 fixed `StreamParser.flush()` silently dropping unterminated `<tool_call>` content
+3. **Screenshot 3** (22 out tokens, raw tool_call syntax as visible text) → **this PR**: the earlier PRs surfaced enough context to identify a third, distinct bug — the parser didn't recognize Qwen3.5's `<NAME>JSON</NAME>` variant at all
+
+Each fix addressed a distinct root cause; none of them overlap.
+
 ## Unreleased — StreamParser flush: salvage unterminated tool_call instead of silent drop
 
 ### Fixed
