@@ -8,27 +8,6 @@ from typing import AsyncIterator
 
 import httpx
 
-_logger = logging.getLogger(__name__)
-# Wave2-1a P4: one-shot flag so we warn about dropped thinking exactly
-# once per process — the drop itself happens on every multi-turn
-# request to a reasoning model so spamming the log would drown real
-# warnings.
-_thinking_drop_warned = False
-
-
-def _warn_thinking_dropped_once(count: int) -> None:
-    global _thinking_drop_warned
-    if _thinking_drop_warned:
-        return
-    _thinking_drop_warned = True
-    _logger.warning(
-        "openai_compat: dropping %d thinking block(s) from outbound "
-        "assistant message — OpenAI-compat servers reject unknown "
-        "content types. A native AnthropicProvider will round-trip "
-        "signed thinking instead. This warning fires once per process.",
-        count,
-    )
-
 from llm_code.api.errors import (
     ProviderAuthError,
     ProviderConnectionError,
@@ -64,6 +43,23 @@ from llm_code.api.types import (
 # Wave2-1b: hard cap on provider-reported Retry-After so a misbehaving
 # proxy that returns "Retry-After: 86400" does not wedge the runtime
 # for a day. Real providers use small values (30s typical on 429).
+_logger = logging.getLogger(__name__)
+_thinking_drop_warned = False
+
+
+def _warn_thinking_dropped_once(count: int) -> None:
+    global _thinking_drop_warned
+    if _thinking_drop_warned:
+        return
+    _thinking_drop_warned = True
+    _logger.warning(
+        "openai_compat: dropping %d thinking block(s) from outbound "
+        "assistant message — OpenAI-compat servers reject unknown "
+        "content types.",
+        count,
+    )
+
+
 _MAX_RETRY_AFTER_SECONDS = 60.0
 
 

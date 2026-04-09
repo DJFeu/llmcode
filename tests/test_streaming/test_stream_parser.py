@@ -231,7 +231,7 @@ def test_flush_salvage_preserves_intro_before_unclosed_tool_call() -> None:
     then an unclosed <tool_call> swallows the real answer content.
     Both the intro AND the salvaged body must reach the user."""
     p = StreamParser()
-    events: list[StreamEvent] = []
+    events = []
     for chunk in (
         "根據搜尋結果,以下是今日三則熱門新聞:\n\n",
         "<tool_call>",
@@ -283,7 +283,7 @@ def test_flush_state_cleared_after_salvage() -> None:
     assert p._in_tool_call is False
     assert p._buffer == ""
     # Reusable: next feed starts clean
-    events = p.feed("fresh text")
+    _ = p.feed("fresh text")
     p.flush()
     # The 'fresh text' eventually emerges as TEXT (either from feed
     # or the trailing flush — both are acceptable).

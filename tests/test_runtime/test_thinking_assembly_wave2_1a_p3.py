@@ -37,7 +37,6 @@ from llm_code.api.types import (
     Message,
     TextBlock,
     ThinkingBlock,
-    TokenUsage,
     ToolUseBlock,
 )
 from llm_code.runtime.session import (

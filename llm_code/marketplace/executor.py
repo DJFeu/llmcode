@@ -32,7 +32,7 @@ import logging
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from llm_code.marketplace.plugin import PluginManifest
 

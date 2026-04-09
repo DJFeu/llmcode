@@ -170,9 +170,9 @@ async def test_sync_tier_a_hit_still_cached_for_async_reuse() -> None:
     )
 
     # First call — tier A should match via the 新聞 keyword
-    result1 = await router.route_async("今日新聞三則")
+    await router.route_async("今日新聞三則")
     # Second call — must hit cache, NOT invoke Tier C provider
-    result2 = await router.route_async("今日新聞三則")
+    await router.route_async("今日新聞三則")
     assert provider.call_count == 0  # Tier A won, Tier C never fired
 
 

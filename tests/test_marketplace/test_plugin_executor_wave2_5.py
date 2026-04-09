@@ -27,14 +27,12 @@ from pathlib import Path
 import pytest
 
 from llm_code.marketplace.executor import (
-    LoadedPlugin,
     PluginConflictError,
     PluginLoadError,
     load_plugin,
     unload_plugin,
 )
 from llm_code.marketplace.plugin import PluginManifest
-from llm_code.tools.base import Tool, ToolResult
 from llm_code.tools.registry import ToolRegistry
 
 
