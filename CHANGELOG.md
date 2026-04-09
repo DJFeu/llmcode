@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased — Wave2-1b: Retry-After header + ProviderTimeoutError
+
+### Added
+- **`ProviderRateLimitError.retry_after: float | None`** field carries the provider's `Retry-After` header value (in seconds) when the 429 response included one. Downstream `_post_with_retry` now honors this hint instead of always using `2 ** attempt`, so the retry respects the provider's own rate-limit reset window.
+- **`ProviderTimeoutError`** — new retryable `ProviderError` subclass wrapping `httpx.ReadTimeout` / `ConnectTimeout` / `WriteTimeout` / `PoolTimeout`. Previously all four flavors fell through `_post_with_retry` uncaught and became generic `Exception` in the conversation loop, skipping the retry budget entirely. Now they get the standard exponential backoff path just like `ProviderConnectionError`.
+- **`_parse_retry_after_header(raw)`** helper in `openai_compat.py` — defensive parser that accepts the delta-seconds form (every real LLM provider's 429 response), returns `None` on missing / empty / unparseable / non-positive / HTTP-date input, and **clamps positive values to `_MAX_RETRY_AFTER_SECONDS = 60.0`** so a misbehaving proxy returning `Retry-After: 86400` cannot wedge the runtime for a day.
+
+### Fixed
+- **`_post_with_retry` split `ProviderRateLimitError` off from `ProviderConnectionError`.** The combined handler used `2 ** attempt` for both; now rate-limit specifically checks `exc.retry_after` and falls back to exponential only when absent. Connection errors are unchanged.
+- **`_raise_for_status` reads `Retry-After` from the 429 response** and passes it to the new `ProviderRateLimitError(msg, retry_after=...)` constructor.
+
+### Tests
+- **`tests/test_api/test_rate_timeout_backoff_wave2_1b.py`** — 13 new tests:
+  - 5 unit tests for `_parse_retry_after_header`: None/empty, delta-seconds (int + float + whitespace), unparseable (garbage + HTTP-date form), non-positive rejection, 60s cap clamp
+  - 4 rate-limit retry tests: honors `Retry-After: 3.5`, falls back to `2 ** attempt` without header, clamps hostile `999999` to 60s, exhausted budget re-raises with `retry_after` attribute preserved
+  - 3 timeout tests: `httpx.ReadTimeout` → retry, `ConnectTimeout` → retry, all 4 flavors exhausted → `ProviderTimeoutError(is_retryable=True)`
+  - 1 sanity test: 401 auth error still not retried (verifies wave2-3 `is_retryable` path is untouched)
+- Full `tests/test_runtime/` + `tests/test_api/` sweep: **1655 passed**, no regressions.
+
+### Context
+Part of the wave2-1 session recovery follow-through (see `docs/superpowers/specs/2026-04-08-llm-code-borrow-wave2-audit.md`). The audit found:
+- RateLimited ⚠️: no exponential backoff respected header, no Retry-After parsing — **fixed**
+- ProviderTimeout ⚠️: no special handling, timeouts fell through generic Exception catch — **fixed**
+
+Remaining wave2-1 items: **1c** (EmptyAssistantResponse counter + ContextWindow pre-warning), **1d** (CancelledError cleanup on interrupted tool execution).
+
 ## Unreleased — Wave2-2: Cost tracker cache tokens + unknown-model warning
 
 ### Fixed
