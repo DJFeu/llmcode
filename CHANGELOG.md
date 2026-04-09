@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased — perf: SkillRouter negative cache + timing log (cuts Tier C overhead in half)
+
+### Fixed
+- **`SkillRouter.route_async` ran Tier C twice per turn** on CJK queries. The method is called from two places: `tui/app.py:1426` (for display) and `runtime/conversation.py:1036` (for prompt injection). Negative Tier C results (LLM classifier returned "no match") were never cached, so both call sites ran the full 5-15s LLM classifier round-trip. Observed in a 2026-04-09 field report as "Routing Skill 花了不少時間".
+- **Fix**: `route_async` now checks the cache at the very top (BEFORE calling the sync `route()` helper) and caches the Tier C negative result explicitly. Second call within the same turn is a cache hit → instant return.
+- **Additional fix**: the sync `route()` already cached empty results from Tier A/B misses, but `route_async`'s old code called `self.route()` (which returned `[]` from the cache), saw `if result:` as False, and **re-entered the Tier C path instead of honoring the cache**. The new top-level cache check covers this edge case too.
+
+### Added
+- **Debug logging for all tier decisions** so the user can see which tier matched and how long it took:
+  - `skill_router cache hit: N skills in 0.000s` — cache hit short-circuit
+  - `skill_router tier_a: N skills in 0.001s` — keyword match
+  - `skill_router tier_b: N skills in 0.012s` — TF-IDF match
+  - `skill_router tier_c starting: model=X cjk=True` — LLM classifier fire
+  - `skill_router tier_c complete: matched='alpha' in 4.23s` — classifier result
+  - `skill_router tier_c miss (negative cached): 4.23s total` — negative cached
+- **`last_tier_c_debug`** now includes the elapsed time so `/skill debug` shows exact classifier cost.
+
+### Impact
+Same turn with a CJK query that triggers Tier C:
+- **Before**: Tier C fires twice per turn (once for TUI display, once for prompt). If classifier takes 5s, that's **10s of overhead per turn**.
+- **After**: Tier C fires once, cached. Second call is a map lookup (~µs). **Saves 5-10s per CJK turn**.
+
+Combined with PRs #41/#42/#43/#44, a Qwen3.5 CJK turn's wall-clock now looks like:
+- ~0-14s native fallback (only on first-ever session, cached after)
+- ~4s XML iteration 1 (tool_call)
+- ~5-10s Tier C (reduced from 10-20s)
+- ~19s web_search execution
+- ~21s iteration 2 (synthesis)
+- **Total: ~50-55s first session, ~35-45s every session after**
+
+### Tests
+- **`tests/test_runtime/test_skill_router_negative_cache.py`** — 6 new tests:
+  - Tier C negative result cached: second call doesn't re-invoke provider (core fix)
+  - Tier C positive result cached (regression guard for pre-existing behavior)
+  - Different queries get independent cache entries
+  - No provider configured → Tier C skipped, empty cached, second call instant
+  - Tier A hit → cached for async reuse (Tier C never fires)
+  - Edge case: sync `route()` cached empty from Tier A/B miss is honored by `route_async`
+- Existing 7 `test_skill_router_add_remove_wave2_5.py` tests + `test_skill_router_cjk_fallback.py` tests still pass
+- Full sweep: **3272 passed**, no regressions
+
 ## Unreleased — perf: persistent native-tools capability cache (14s/turn → 0s after first)
 
 ### Added

@@ -411,10 +411,39 @@ class SkillRouter:
         The CJK auto-fallback exists because skill descriptions are typically
         English; keyword/TF-IDF matching can't bridge the language gap, but an
         LLM classifier can judge intent semantically.
+
+        Caches BOTH positive AND negative results. The negative cache
+        is critical because ``route_async`` is called twice per turn
+        (once from the TUI for display at ``app.py:1426``, once from
+        the conversation runtime for prompt injection at
+        ``conversation.py:1036``). Without negative caching, the
+        5-15s Tier C LLM round-trip runs TWICE per CJK turn.
         """
+        import time
+        _t0 = time.monotonic()
+
         self.last_tier_c_debug = ""
+
+        # Check cache FIRST including negative results. The sync
+        # ``route`` below also checks the cache but its own fast
+        # path assumes a hit means "tier A/B matched positively"
+        # — our negative-hit shortcut here returns the cached []
+        # and skips the Tier C decision tree entirely.
+        cache_key = user_message[:200]
+        if cache_key in self._cache:
+            cached = self._cache[cache_key]
+            logger.debug(
+                "skill_router cache hit: %d skills in %.3fs",
+                len(cached), time.monotonic() - _t0,
+            )
+            return cached
+
         result = self.route(user_message)
         if result:
+            logger.debug(
+                "skill_router tier_%s: %d skills in %.3fs",
+                self.last_tier_used, len(result), time.monotonic() - _t0,
+            )
             return result
 
         # Decide whether Tier C should fire
@@ -430,21 +459,52 @@ class SkillRouter:
 
         # Tier C fallback
         if tier_c_enabled and self._provider:
+            _tc_start = time.monotonic()
             model = self._config.tier_c_model or self._model
+            logger.debug(
+                "skill_router tier C starting: model=%s cjk=%s",
+                model, has_cjk,
+            )
             name, raw = await _classify_with_llm_debug(
                 user_message, self._skills, self._provider, model,
             )
-            self.last_tier_c_debug += f" model={model!r} raw={raw!r} matched={name!r}"
+            _tc_elapsed = time.monotonic() - _tc_start
+            self.last_tier_c_debug += (
+                f" model={model!r} raw={raw!r} matched={name!r} "
+                f"elapsed={_tc_elapsed:.2f}s"
+            )
+            logger.debug(
+                "skill_router tier_c complete: matched=%r in %.2fs",
+                name, _tc_elapsed,
+            )
             if name:
                 for skill in self._skills:
                     if skill.name == name:
                         result = [skill]
-                        # Cache the LLM result
-                        cache_key = user_message[:200]
                         self._cache[cache_key] = result
                         self.last_tier_used = "c"
+                        logger.debug(
+                            "skill_router tier_c hit: %d skills total %.3fs",
+                            len(result), time.monotonic() - _t0,
+                        )
                         return result
+            # Cache the NEGATIVE Tier C result. Without this the
+            # second route_async call in the same turn re-runs the
+            # expensive LLM classifier.
+            self._cache[cache_key] = []
+            logger.debug(
+                "skill_router tier_c miss (negative cached): %.3fs total",
+                time.monotonic() - _t0,
+            )
+            return []
 
+        # No Tier C path available — cache the empty result anyway
+        # so the second call skips the AB-miss decision tree.
+        self._cache[cache_key] = []
+        logger.debug(
+            "skill_router no-tier (negative cached): %.3fs total",
+            time.monotonic() - _t0,
+        )
         return []
 
     # ------------------------------------------------------------------
