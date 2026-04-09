@@ -464,3 +464,111 @@ class TestHermesTruncatedNoSeparatorFormat:
         assert len(result) == 1
         assert result[0].name == "web_fetch"
         assert result[0].args == {"url": "https://example.com"}
+
+
+class TestBareNameTagVariant:
+    """Variant 5: bare ``<NAME>JSON</NAME>`` from Qwen3.5 vLLM chat
+    templates that omit the ``<tool_call>`` wrapping entirely.
+    Captured 2026-04-09 from a field report."""
+
+    def test_bare_web_search_parsed(self):
+        text = '<web_search>{"query": "今日熱門新聞", "max_results": 3}</web_search>'
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "web_search"
+        assert result[0].args == {"query": "今日熱門新聞", "max_results": 3}
+
+    def test_missing_leading_angle_still_matches(self):
+        """Terminal rendering or prompt-prefix injection can drop the
+        leading ``<`` — the regex has it optional for resilience."""
+        text = 'web_search>{"query": "x"}</web_search>'
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "web_search"
+
+    def test_bare_variant_in_mixed_prose(self):
+        text = '根據查詢 <web_search>{"query": "x"}</web_search> 進行搜尋'
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "web_search"
+
+    def test_bare_variant_multiline_body(self):
+        text = '<web_search>\n{"query": "今日新聞", "max_results": 3}\n</web_search>'
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].args == {"query": "今日新聞", "max_results": 3}
+
+    def test_nested_args_key_unwrapped(self):
+        text = '<read_file>{"args": {"path": "foo.py"}}</read_file>'
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].args == {"path": "foo.py"}
+
+    def test_nested_arguments_key_unwrapped(self):
+        text = '<run_cmd>{"arguments": {"cmd": "ls"}}</run_cmd>'
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].args == {"cmd": "ls"}
+
+    def test_known_tool_names_filters_false_positive_p_tag(self):
+        """Without the guard, ``<p>{"a":1}</p>`` would match the bare
+        variant because 'p' is a valid identifier and the body is
+        valid JSON. The ``known_tool_names`` set blocks it."""
+        text = '<p>{"a": 1}</p>'
+        # Permissive mode matches (documented caveat)
+        assert len(parse_tool_calls(text, None)) == 1
+        # Production mode with the registry set blocks it
+        assert len(parse_tool_calls(
+            text, None, known_tool_names={"web_search", "read_file"}
+        )) == 0
+
+    def test_invalid_json_rejected(self):
+        text = '<web_search>{not valid json}</web_search>'
+        assert parse_tool_calls(text, None) == []
+
+    def test_mismatched_close_tag_rejected(self):
+        text = '<web_search>{"q": "x"}</other>'
+        assert parse_tool_calls(text, None) == []
+
+    def test_scalar_json_rejected(self):
+        """Only object bodies are valid tool args. A scalar / list
+        body in the bare variant is treated as not-a-tool-call."""
+        assert parse_tool_calls('<web_search>"string"</web_search>', None) == []
+        assert parse_tool_calls('<web_search>[1,2,3]</web_search>', None) == []
+
+    def test_reserved_tool_call_name_not_reinterpreted(self):
+        """A malformed ``<tool_call>{"args": {}}</tool_call>`` (no
+        "tool" key in JSON) used to return zero calls. After adding
+        variant 5, this regex could double-match it as a tool named
+        "tool_call" — the ``_VARIANT_5_RESERVED_NAMES`` guard prevents
+        that. This is a regression guard for
+        ``test_missing_tool_key_skipped``."""
+        text = '<tool_call>{"args": {"command": "ls"}}</tool_call>'
+        result = parse_tool_calls(text, None)
+        assert len(result) == 0
+
+    def test_reserved_think_name_not_reinterpreted(self):
+        """A ``<think>{"a": 1}</think>`` is thinking content, not a
+        tool call named 'think'. The reserved-names guard blocks it."""
+        text = '<think>{"a": 1}</think>'
+        assert parse_tool_calls(text, None) == []
+
+    def test_variant5_only_fires_when_tool_call_wrapper_absent(self):
+        """A well-formed ``<tool_call>`` block MUST go through the
+        fast path and variant 5 must not double-parse the same
+        content. Pinned so a future refactor doesn't introduce
+        duplicate tool calls."""
+        text = '<tool_call>{"tool": "web_search", "args": {"q": "x"}}</tool_call>'
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1  # exactly one, not two
+        assert result[0].name == "web_search"
+
+    def test_multiple_bare_tool_calls_in_one_text(self):
+        text = (
+            '<web_search>{"query": "A"}</web_search>\n'
+            '後續 <web_search>{"query": "B"}</web_search>'
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 2
+        assert result[0].args == {"query": "A"}
+        assert result[1].args == {"query": "B"}

@@ -1428,9 +1428,16 @@ class ConversationRuntime:
 
             # 5. Parse tool calls (dual-track)
             response_text = "".join(text_parts)
+            # Pass the registry's known tool names so the bare
+            # ``<NAME>JSON</NAME>`` variant (Qwen3.5 vLLM on some
+            # chat templates) only matches real tools — without
+            # this guard, an HTML-ish fragment like ``<p>{"a":1}</p>``
+            # would be misclassified as a tool call.
+            _known_tool_names = {t.name for t in self._tool_registry.all_tools()}
             parsed_calls = parse_tool_calls(
                 response_text=response_text,
                 native_tool_calls=native_tool_list if native_tool_list else None,
+                known_tool_names=_known_tool_names,
             )
 
             # 6. Build assistant message content
