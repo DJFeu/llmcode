@@ -347,6 +347,7 @@ class RuntimeConfig:
     bash_rules: BashRulesConfig = field(default_factory=BashRulesConfig)
     sandbox: object = field(default_factory=lambda: _default_sandbox_config())
     enterprise: EnterpriseConfig = field(default_factory=EnterpriseConfig)
+    mouse: bool = True  # enable mouse scroll/click; Shift+drag for text selection
     output_compression: bool = True
     auto_commit: bool = False
     lsp_auto_diagnose: bool = True
