@@ -165,3 +165,88 @@ def test_session_handles_non_iterable_gracefully() -> None:
     )
     # Should fall through to English (no CJK detected, no session walk)
     assert "tried to invoke a tool" in msg.lower()
+
+
+# ----- Unclassified variant (empty-response-diagnostics) -----
+
+
+def test_unclassified_variant_english_with_token_count() -> None:
+    """When tokens came back but nothing landed in thinking or visible
+    buffers, the message should name the token count so the user can
+    sanity-check their max_tokens cap."""
+    msg = _empty_response_message(
+        saw_tool_call=False,
+        user_input="what is 2+2",
+        turn_output_tokens=24,
+        thinking_buffer_len=0,
+    )
+    assert "24" in msg
+    assert "visible text" in msg or "thinking" in msg
+    assert "max_tokens" in msg or "budget" in msg
+
+
+def test_unclassified_variant_chinese_with_token_count() -> None:
+    msg = _empty_response_message(
+        saw_tool_call=False,
+        user_input="今日熱門新聞三則",
+        turn_output_tokens=24,
+        thinking_buffer_len=0,
+    )
+    assert "24" in msg
+    assert "max_tokens" in msg or "thinking_budget" in msg
+    # Must NOT be the classic thinking-exhausted message
+    assert "模型沒有產生任何回應" not in msg
+
+
+def test_thinking_exhausted_variant_fires_when_buffer_has_content() -> None:
+    """If thinking buffer has any content, we're in the classic
+    'exhausted' case, not unclassified — even if token count is positive."""
+    msg = _empty_response_message(
+        saw_tool_call=False,
+        user_input="今日熱門新聞三則",
+        turn_output_tokens=100,
+        thinking_buffer_len=250,
+    )
+    assert "thinking 用光" in msg or "thinking may have exhausted" in msg
+    # Must NOT be the unclassified variant
+    assert "24" not in msg  # no token count in this variant
+
+
+def test_thinking_exhausted_variant_fires_when_zero_tokens() -> None:
+    """Zero output tokens + empty thinking = classic 'empty response'
+    diagnostic. This is the pre-wave2 default behavior preserved for
+    sessions where the turn really produced nothing."""
+    msg = _empty_response_message(
+        saw_tool_call=False,
+        user_input="hello",
+        turn_output_tokens=0,
+        thinking_buffer_len=0,
+    )
+    # Falls through to the thinking-exhausted message (default)
+    assert "thinking" in msg.lower()
+
+
+def test_tool_call_variant_takes_precedence_over_unclassified() -> None:
+    """Even if tokens came back with no classification, a dispatched
+    tool call wins — that's the more actionable diagnostic."""
+    msg = _empty_response_message(
+        saw_tool_call=True,
+        user_input="what is 2+2",
+        turn_output_tokens=24,
+        thinking_buffer_len=0,
+    )
+    assert "tool" in msg.lower()
+    # The unclassified variant's token count shouldn't leak through
+    assert "emitted 24 output" not in msg
+
+
+def test_unclassified_variant_defaults_preserve_legacy_behavior() -> None:
+    """Callers that don't pass the new kwargs (e.g. an old test) must
+    still get the classic thinking-exhausted message."""
+    msg = _empty_response_message(
+        saw_tool_call=False,
+        user_input="hello",
+    )
+    assert "thinking" in msg.lower()
+    # Legacy callers don't know about token counts, so no number
+    assert "emitted" not in msg.lower()
