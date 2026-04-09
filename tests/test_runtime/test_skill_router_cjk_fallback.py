@@ -7,12 +7,20 @@ automatically without requiring the user to enable ``tier_c`` manually.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 
+from llm_code.runtime import skill_router_cache as _src
 from llm_code.runtime.config import SkillRouterConfig
 from llm_code.runtime.skill_router import SkillRouter
+
+
+@pytest.fixture(autouse=True)
+def _isolated_persistent_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Prevent persistent cache cross-contamination between tests."""
+    monkeypatch.setattr(_src, "_CACHE_PATH", tmp_path / "skill_router_cache.json")
 
 
 @dataclass(frozen=True)
