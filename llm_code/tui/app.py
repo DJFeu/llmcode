@@ -1505,7 +1505,15 @@ class LLMCodeTUI(App):  # noqa: E302
         # instead of probing config.thinking.mode.
         _profile = getattr(self._runtime, "_model_profile", None)
         _implicit_thinking = _profile.implicit_thinking if _profile else False
-        _stream_parser = StreamParser(implicit_thinking=_implicit_thinking)
+        # Pass known tool names so the parser detects bare <tool_name>
+        # tags (variant 5) and classifies them as TOOL_CALL, not TEXT.
+        _tool_names = frozenset()
+        if self._tool_reg:
+            _tool_names = frozenset(t.name for t in self._tool_reg.all_tools())
+        _stream_parser = StreamParser(
+            implicit_thinking=_implicit_thinking,
+            known_tool_names=_tool_names,
+        )
         _saw_tool_call_this_turn = False  # For empty-response diagnosis
 
         async def remove_spinner() -> None:

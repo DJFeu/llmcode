@@ -51,24 +51,29 @@ class StreamParser:
     ``flush()``.
     """
 
-    def __init__(self, *, implicit_thinking: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        implicit_thinking: bool = False,
+        known_tool_names: frozenset[str] | None = None,
+    ) -> None:
         """Create a new parser.
 
         When ``implicit_thinking=True``, the parser starts in
         ``_in_think`` state — content at the beginning of the
         stream is classified as THINKING until a ``</think>``
-        closes it. This is for vLLM chat templates that inject
-        ``<think>\\n`` into the assistant prompt prefix: the opening
-        tag is NOT in the stream, only the closing tag appears.
+        closes it.
 
-        Without this flag, the parser would eagerly emit early
-        content as TEXT and by the time ``</think>`` arrives the
-        content has already been rendered as visible text, which
-        can't be retroactively reclassified as thinking.
+        When ``known_tool_names`` is provided, the parser also
+        detects bare ``<tool_name>JSON</...>`` patterns (variant 5)
+        and classifies them as TOOL_CALL instead of TEXT.
         """
         self._buffer: str = ""
         self._in_think: bool = implicit_thinking
         self._in_tool_call: bool = False
+        self._in_bare_tool: bool = False  # inside a <known_tool_name> block
+        self._bare_tool_tag: str = ""     # the opening tag name
+        self._known_tool_names = known_tool_names or frozenset()
 
     def feed(self, chunk: str) -> list[StreamEvent]:
         self._buffer += chunk
@@ -118,6 +123,18 @@ class StreamParser:
             self._buffer = ""
             self._in_think = False
             return events
+        if self._in_bare_tool:
+            # Unterminated bare tool — try to parse what we have
+            block_text = f"<{self._bare_tool_tag}>{self._buffer}</{self._bare_tool_tag}>"
+            parsed = parse_tool_calls(block_text, None, known_tool_names=self._known_tool_names)
+            if parsed:
+                for p in parsed:
+                    events.append(StreamEvent(kind=StreamEventKind.TOOL_CALL, tool_call=p))
+            elif self._buffer:
+                events.append(StreamEvent(kind=StreamEventKind.TEXT, text=self._buffer))
+            self._buffer = ""
+            self._in_bare_tool = False
+            return events
         if self._in_tool_call:
             # Unterminated tool_call — salvage the body as TEXT so
             # the user at least sees what the model was generating.
@@ -165,15 +182,27 @@ class StreamParser:
                         StreamEvent(kind=StreamEventKind.TOOL_CALL, tool_call=p)
                     )
             else:
-                # We consumed a <tool_call>...</tool_call> block but the
-                # parser returned zero calls (unknown format variant).
-                # Emit a sentinel TOOL_CALL event with tool_call=None so
-                # the TUI can still set its saw_tool_call diagnostic flag
-                # and show the "model tried to call a tool" message
-                # instead of the misleading "thinking ate output" one.
                 events.append(
                     StreamEvent(kind=StreamEventKind.TOOL_CALL, tool_call=None)
                 )
+            return True
+
+        if self._in_bare_tool:
+            # Inside a <known_tool_name> block — scan for any </tag>
+            import re as _re
+            close_match = _re.search(r"</[a-zA-Z_][a-zA-Z0-9_]*>", buf)
+            if close_match is None:
+                return False  # wait for more data
+            # Extract the full block and parse it
+            block_text = f"<{self._bare_tool_tag}>{buf[:close_match.start()]}</{self._bare_tool_tag}>"
+            self._buffer = buf[close_match.end():]
+            self._in_bare_tool = False
+            parsed = parse_tool_calls(block_text, None, known_tool_names=self._known_tool_names)
+            if parsed:
+                for p in parsed:
+                    events.append(StreamEvent(kind=StreamEventKind.TOOL_CALL, tool_call=p))
+            else:
+                events.append(StreamEvent(kind=StreamEventKind.TOOL_CALL, tool_call=None))
             return True
 
         if self._in_think:
@@ -204,6 +233,15 @@ class StreamParser:
             candidates.append((think_close, "</think>", "implicit_think_end"))
         if tc_open != -1:
             candidates.append((tc_open, "<tool_call>", "tool_call"))
+
+        # Detect bare <tool_name> tags (variant 5) for known tools
+        if self._known_tool_names:
+            import re as _re
+            for m in _re.finditer(r"<([a-zA-Z_][a-zA-Z0-9_]*)>", buf):
+                tag_name = m.group(1)
+                if tag_name in self._known_tool_names:
+                    candidates.append((m.start(), m.group(0), f"bare_tool:{tag_name}"))
+                    break  # only need the first match
 
         if not candidates:
             # No tag visible yet. Emit as much text as we can, holding
@@ -242,6 +280,11 @@ class StreamParser:
             # Leave the opening ``<tool_call>`` in the buffer so
             # parse_tool_calls sees the full block when we find the close.
             self._in_tool_call = True
+        elif kind.startswith("bare_tool:"):
+            tool_name = kind.split(":", 1)[1]
+            self._buffer = buf[len(tag) :]
+            self._in_bare_tool = True
+            self._bare_tool_tag = tool_name
         return True
 
     @staticmethod
