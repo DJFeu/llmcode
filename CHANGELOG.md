@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased — fix: idempotent-retry detector actually aborts the turn (was: continue → burn 91s)
+
+### Fixed
+- **The `"Aborting turn: idempotent retry loop detected"` log message was a lie.** The code at `conversation.py:L1641` used `continue` inside the inner dispatch loop, which only skipped the offending call. The outer iteration loop kept running; the model got another turn, saw the `"Aborted"` error block, and re-emitted the same failing tool call on iteration N+1. Repeated until `max_turn_iterations` exhausted.
+- **Field report 2026-04-09**: user's query burned **91 seconds** with the log line firing 3 times and input tokens bloating to **45,732** as the model re-emitted the same web_search call across iterations. The "abort" was purely cosmetic.
+- **Fix**: replace the `continue` with `break` (exit the inner dispatch loop) AND set a new `_turn_aborted_by_retry_loop` flag checked at the end of each outer iteration. When the flag is set, the outer loop `break`s, the error `tool_result_block` is appended to the session for message history consistency, and a visible `StreamTextDelta` explains WHY the turn ended so the user isn't left wondering.
+
+### Visible user message
+Previously: silent loop burning turn budget, no explanation in the chat.
+
+Now:
+```
+⚠ Aborted: the model asked to call 'web_search' again with the same
+arguments as the previous call, which indicates a retry loop. Try
+rephrasing your request, or check whether the tool result was useful.
+```
+
+### Tests
+- **`tests/test_runtime/test_idempotent_retry_abort.py`** — 4 new source-level regression guards:
+  - `test_idempotent_retry_uses_break_not_continue` — scans the retry-detected branch for `break` keyword (the exact 91s bug)
+  - `test_turn_loop_breaks_on_idempotent_retry_flag` — `_turn_aborted_by_retry_loop` flag is checked in the outer iteration loop
+  - `test_idempotent_retry_emits_visible_explanation` — user sees a ⚠ warning, not a silent abort
+  - `test_retry_tracker_still_created_per_turn` — lifecycle unchanged (per-turn, not per-iteration)
+- Existing `test_conversation_retry_loop_abort.py` (2 tests pinning the tracker unit) + force_xml + fallback tests all still pass
+- Full sweep: **3252 passed**, no regressions
+
+### Context
+This is the 7th fix in a row chasing the Qwen3.5-122B TUI field report thread:
+1. #36 — empty response diagnostics
+2. #37 — truncation warning + stop_reason
+3. #38 — flush() silent drop
+4. #39 — parser variant 5
+5. #40 — log-file flag (enabled clean log capture for further debugging)
+6. #41 — force_xml sticky + retry storm (broke fallback ordering)
+7. #42 — fallback ordering fix
+8. **this** — idempotent retry actually aborts
+
+Each one was a distinct root cause discovered by logs from the previous fix. The diagnostic-first discipline from #36/#37/#40 paid off repeatedly.
+
 ## Unreleased — fix: tool-call-parser fallback must run BEFORE is_retryable short-circuit
 
 ### Fixed
