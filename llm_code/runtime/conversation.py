@@ -543,6 +543,60 @@ class ConversationRuntime:
         if hasattr(self._hooks, "fire"):
             self._hooks.fire(event, context or {})
 
+    def _compact_with_todo_preserve(
+        self,
+        max_tokens: int,
+        *,
+        reason: str,
+        max_result_chars: int | None = None,
+    ) -> None:
+        """Wave2-4: Run ContextCompressor with phase-split hooks + todo snapshot.
+
+        Fires ``pre_compact`` (with the incomplete-task snapshot and
+        estimated before-token count), runs the compressor, then fires
+        ``post_compact`` with the after-token count. ``session_compact``
+        still fires alongside ``pre_compact`` so existing hook
+        configurations keep working unchanged.
+
+        All four in-tree compact call sites route through this helper so
+        observers get uniform visibility regardless of which trigger
+        (prompt_too_long / proactive / api_reported / post_tool) fired
+        the compaction.
+        """
+        # Local import to avoid module-level cycles in runtime package.
+        from llm_code.runtime.todo_preserver import snapshot_incomplete_tasks
+
+        snapshot = snapshot_incomplete_tasks(self._task_manager)
+        before_tokens = self.session.estimated_tokens()
+        payload = {
+            "reason": reason,
+            "before_tokens": before_tokens,
+            "target_tokens": max_tokens,
+            "preserved_todos": tuple(
+                {"id": s.task_id, "status": s.status, "title": s.title} for s in snapshot
+            ),
+        }
+        self._fire_hook("pre_compact", payload)
+        # Back-compat: existing hook configs still listen for this event.
+        self._fire_hook("session_compact", {"reason": reason})
+
+        compressor = (
+            ContextCompressor(max_result_chars=max_result_chars)
+            if max_result_chars is not None
+            else ContextCompressor()
+        )
+        self.session = compressor.compress(self.session, max_tokens)
+
+        self._fire_hook(
+            "post_compact",
+            {
+                "reason": reason,
+                "before_tokens": before_tokens,
+                "after_tokens": self.session.estimated_tokens(),
+                "preserved_todos": payload["preserved_todos"],
+            },
+        )
+
     def is_session_allowed(
         self, tool_name: str, args_preview: str, validated_args: dict | None = None,
     ) -> bool:
@@ -788,9 +842,8 @@ class ConversationRuntime:
                     "Proactive compaction: %d tokens > %d limit",
                     est_tokens, _context_limit,
                 )
-                _compressor = ContextCompressor()
-                self.session = _compressor.compress(
-                    self.session, int(_context_limit * 0.6),
+                self._compact_with_todo_preserve(
+                    int(_context_limit * 0.6), reason="proactive",
                 )
 
             # Budget enforcement: check before each LLM call
@@ -1030,12 +1083,11 @@ class ConversationRuntime:
                     and not self._has_attempted_reactive_compact
                 ):
                     logger.warning("Prompt too long; compacting context and retrying")
-                    self._fire_hook("session_compact", {"reason": "prompt_too_long"})
                     self._has_attempted_reactive_compact = True
-                    _compressor = ContextCompressor()
-                    self.session = _compressor.compress(
-                        self.session,
+                    # helper fires pre_compact + session_compact + post_compact
+                    self._compact_with_todo_preserve(
                         self._config.compact_after_tokens // 2,
+                        reason="prompt_too_long",
                     )
                     _close_llm_span_with_error(exc)
                     continue  # retry this iteration of the turn loop
@@ -1235,9 +1287,10 @@ class ConversationRuntime:
                         "API-reported compaction: %d actual tokens > %d limit",
                         actual_input, _context_limit,
                     )
-                    _compressor = ContextCompressor(max_result_chars=1000)
-                    self.session = _compressor.compress(
-                        self.session, int(_context_limit * 0.5),
+                    self._compact_with_todo_preserve(
+                        int(_context_limit * 0.5),
+                        reason="api_reported",
+                        max_result_chars=1000,
                     )
 
             # Layer 2: Token limit auto-upgrade
@@ -1448,9 +1501,8 @@ class ConversationRuntime:
                         "Post-tool compaction: %d tokens > %d limit",
                         est, _context_limit,
                     )
-                    _compressor = ContextCompressor()
-                    self.session = _compressor.compress(
-                        self.session, int(_context_limit * 0.6),
+                    self._compact_with_todo_preserve(
+                        int(_context_limit * 0.6), reason="post_tool",
                     )
 
             # 10. Loop back for LLM to process results
