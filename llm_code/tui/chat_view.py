@@ -250,18 +250,20 @@ class ChatScrollView(VerticalScroll):
         if self._auto_scroll:
             self.scroll_end(animate=False)
 
-    def on_scroll_up(self) -> None:
-        self._auto_scroll = False
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        """React to ANY scroll position change (keyboard, mouse, programmatic).
 
-    def on_mouse_scroll_up(self, event) -> None:
-        """Mouse wheel scroll up — pause auto-scroll so the user can read history."""
-        self._auto_scroll = False
-
-    def on_mouse_scroll_down(self, event) -> None:
-        """Mouse wheel scroll down — resume auto-scroll if at bottom."""
-        # Check if we've scrolled to the very bottom
-        if self.scroll_offset.y >= self.max_scroll_y - 2:
+        If the user scrolls away from the bottom, pause auto-scroll.
+        If they scroll back to the bottom, resume it.
+        """
+        if self.max_scroll_y <= 0:
+            return
+        at_bottom = new_value >= self.max_scroll_y - 3
+        if at_bottom:
             self._auto_scroll = True
+        elif new_value < old_value:
+            # Scrolled up — pause
+            self._auto_scroll = False
 
     def pause_auto_scroll(self) -> None:
         """Disable auto-scroll (e.g. when user pages up to read history)."""

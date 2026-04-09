@@ -11,25 +11,11 @@ from llm_code.tui.chat_view import ChatScrollView
 
 
 class TestAutoScrollPause:
-    """Auto-scroll should pause on mouse scroll up, resume at bottom."""
+    """Auto-scroll should pause when away from bottom, resume at bottom."""
 
     def test_auto_scroll_enabled_by_default(self) -> None:
         view = ChatScrollView()
         assert view._auto_scroll is True
-
-    def test_on_scroll_up_pauses(self) -> None:
-        view = ChatScrollView()
-        view.on_scroll_up()
-        assert view._auto_scroll is False
-
-    def test_on_mouse_scroll_up_pauses(self) -> None:
-        view = ChatScrollView()
-
-        class _FakeEvent:
-            pass
-
-        view.on_mouse_scroll_up(_FakeEvent())
-        assert view._auto_scroll is False
 
     def test_pause_auto_scroll(self) -> None:
         view = ChatScrollView()
