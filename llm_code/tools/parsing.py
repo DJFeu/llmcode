@@ -319,11 +319,13 @@ def _parse_hermes_args(body: str) -> dict:
     if args:
         return args
 
-    # 2) JSON payload — strip trailing </function> close if present, then
+    # 2) JSON payload — strip trailing XML closing tag if present, then
     # find the first '{' and try to parse from there to the matching '}'.
+    # The closing tag may be </function>, </search>, </web_search>, etc.
     candidate = body.strip()
-    if candidate.endswith("</function>"):
-        candidate = candidate[: -len("</function>")].strip()
+    _trail_tag = re.search(r"</[a-zA-Z_][a-zA-Z0-9_]*>\s*$", candidate)
+    if _trail_tag:
+        candidate = candidate[: _trail_tag.start()].strip()
     if not candidate.startswith("{"):
         # Try to find the first '{' anywhere in the body — handles
         # leading whitespace/newlines that strip() didn't catch.
