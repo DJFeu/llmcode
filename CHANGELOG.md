@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased — fix: tool-call-parser fallback must run BEFORE is_retryable short-circuit
+
+### Fixed
+- **Regression from PR #41**: the tool-call-parser error is now marked `is_retryable=False` (correctly — it can't be fixed by re-sending the same request), but the `conversation.py` outer exception handler checked the wave2-3 `is_retryable is False` short-circuit **before** the XML-fallback branch. Result: the recoverable error bypassed its recovery path and surfaced to the user as visible assistant text — `"Error: 'auto' tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"`. Reported immediately after PR #41 merged.
+- **Fix**: reorder the branches in the outer `except Exception` block so the tool-call-parser string-match runs FIRST (rebuilds request without tools, retries in XML mode), and the `is_retryable is False` short-circuit runs SECOND as a fallback for genuinely unrecoverable errors (401 auth, 404 model not found).
+
+### Conceptual distinction
+The root cause was conflating two meanings of "retryable":
+1. **Can retry the same request** (rate limit, timeout, transient failure) — wave2-3's `is_retryable=False` is about this
+2. **Can recover from this error somehow** (retry as-is, switch mode, rebuild request) — tool-call-parser is recoverable via mode switch, not re-send
+
+The fix makes the order explicit: try the specific recovery path first, fall through to the general "give up" check only if no recovery applies.
+
+### Tests
+- **`tests/test_runtime/test_force_xml_sticky.py`** — 2 new source-level regression guards:
+  - `test_fallback_branch_runs_before_is_retryable_short_circuit` — pins the ordering by searching for the two relevant string positions in the method source
+  - `test_is_retryable_short_circuit_still_present` — guards wave2-3's 401/404 behavior (the short-circuit was moved, not removed)
+- Existing 4 force_xml guards + 16 wave2-3 fallback tests + 16 wave2-1b retry tests all still pass
+- Full sweep: **3248 passed**, no regressions
+
+### Impact
+Same query that hit the "Error:" wall now triggers the XML fallback on the first attempt and produces a real tool_call. Combined with PR #41's fast-fail retry skip, the total turn time drops from 65s → estimated ~12s AND the turn actually succeeds instead of showing an error.
+
 ## Unreleased — perf: kill the native-tool-call retry storm (53s → ~0s)
 
 ### Fixed

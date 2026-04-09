@@ -1120,18 +1120,22 @@ class ConversationRuntime:
             except Exception as exc:
                 _exc_str = str(exc)
                 self._fire_hook("http_error", {"error": _exc_str[:200], "model": self._active_model})
-                # Wave2-3 Fix 1: non-retryable errors (401/400/model-not-found)
-                # must propagate immediately — they waste the fallback budget
-                # and retrying cannot possibly succeed.
-                if getattr(exc, "is_retryable", None) is False:
-                    self._fire_hook(
-                        "http_non_retryable",
-                        {"error": _exc_str[:200], "model": self._active_model},
-                    )
-                    logger.error("Non-retryable provider error; not retrying: %s", exc)
-                    _close_llm_span_with_error(exc)
-                    raise
-                # Auto-fallback: if native tool calling is not supported by server
+                # ORDER MATTERS: the tool-call-parser fallback branch
+                # MUST be checked BEFORE the wave2-3 is_retryable
+                # short-circuit. PR #41 marks the tool-call-parser
+                # error as ``is_retryable=False`` to skip the
+                # _post_with_retry retry loop (that was burning 30s
+                # on 3 exponential retries before the fallback
+                # could fire). But the same error HAS a recovery
+                # path right here: rebuild the request without
+                # tools=[...] and retry in XML tag mode. If the
+                # is_retryable short-circuit ran first, this
+                # recoverable error would surface to the user as
+                # visible text instead — observed in a field report
+                # after PR #41 merged: "Error: auto tool choice
+                # requires --enable-auto-tool-choice and
+                # --tool-call-parser to be set" became the visible
+                # assistant reply.
                 if "tool-call-parser" in _exc_str or "tool choice" in _exc_str.lower():
                     logger.debug("Server does not support native tool calling; falling back to XML tag mode")
                     self._fire_hook("http_fallback", {"reason": "xml_mode", "model": self._active_model})
@@ -1175,6 +1179,19 @@ class ConversationRuntime:
                         logger.error("XML fallback retry failed: %s", retry_exc)
                         _close_llm_span_with_error(retry_exc)
                         raise
+                elif getattr(exc, "is_retryable", None) is False:
+                    # Wave2-3 Fix 1 (re-added after the tool-call-parser
+                    # fallback above): genuinely non-retryable errors
+                    # (401 auth, 404 model-not-found, etc.) propagate
+                    # immediately so the 3-strike retry budget isn't
+                    # wasted on something that can never succeed.
+                    self._fire_hook(
+                        "http_non_retryable",
+                        {"error": _exc_str[:200], "model": self._active_model},
+                    )
+                    logger.error("Non-retryable provider error; not retrying: %s", exc)
+                    _close_llm_span_with_error(exc)
+                    raise
                 elif (
                     ("413" in _exc_str or "prompt too long" in _exc_str.lower())
                     and not self._has_attempted_reactive_compact
