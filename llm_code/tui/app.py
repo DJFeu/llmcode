@@ -2239,6 +2239,101 @@ class LLMCodeTUI(App):  # noqa: E302
         cost = self._cost_tracker.format_cost() if self._cost_tracker else "No cost data"
         self.query_one(ChatScrollView).add_entry(AssistantText(cost))
 
+    def _cmd_cache(self, args: str) -> None:
+        """Manage persistent caches (server capabilities + skill router).
+
+        Sub-commands:
+            /cache list   — show cached entries
+            /cache clear  — wipe all caches
+            /cache probe  — clear server-capabilities cache and re-probe
+                            native tool support on the next turn
+        """
+        chat = self.query_one(ChatScrollView)
+        sub = args.strip().lower().split()[0] if args.strip() else "list"
+
+        if sub == "list":
+            lines: list[str] = ["**Persistent caches:**\n"]
+            # Server capabilities
+            try:
+                from llm_code.runtime.server_capabilities import _CACHE_PATH as _sc_path
+                if _sc_path.exists():
+                    import json as _json
+                    data = _json.loads(_sc_path.read_text(encoding="utf-8"))
+                    lines.append(f"**server_capabilities** ({_sc_path}):")
+                    for key, entry in data.items():
+                        native = entry.get("native_tools", "?")
+                        cached_at = entry.get("cached_at", "?")
+                        lines.append(f"  `{key}` → native_tools={native} (cached {cached_at})")
+                else:
+                    lines.append("**server_capabilities**: (no cache file)")
+            except Exception as exc:
+                lines.append(f"**server_capabilities**: error reading: {exc}")
+            # Skill router cache
+            try:
+                from llm_code.runtime.skill_router_cache import _CACHE_PATH as _src_path
+                if _src_path.exists():
+                    import json as _json2
+                    data2 = _json2.loads(_src_path.read_text(encoding="utf-8"))
+                    total_entries = sum(
+                        len(bucket.get("entries", {}))
+                        for bucket in data2.values()
+                        if isinstance(bucket, dict)
+                    )
+                    lines.append(f"\n**skill_router_cache** ({_src_path}): {total_entries} entries across {len(data2)} skill set(s)")
+                else:
+                    lines.append("\n**skill_router_cache**: (no cache file)")
+            except Exception as exc:
+                lines.append(f"\n**skill_router_cache**: error reading: {exc}")
+            chat.add_entry(AssistantText("\n".join(lines)))
+
+        elif sub == "clear":
+            cleared: list[str] = []
+            try:
+                from llm_code.runtime.server_capabilities import clear_native_tools_cache
+                clear_native_tools_cache()
+                cleared.append("server_capabilities")
+            except Exception:
+                pass
+            try:
+                from llm_code.runtime.skill_router_cache import clear_cache
+                clear_cache()
+                cleared.append("skill_router_cache")
+            except Exception:
+                pass
+            # Also reset the in-memory force_xml flag so the
+            # next turn re-probes native tool support.
+            if self._runtime and hasattr(self._runtime, "_force_xml_mode"):
+                self._runtime._force_xml_mode = False
+            # Clear the in-memory skill router cache
+            if self._runtime and hasattr(self._runtime, "_skill_router"):
+                self._runtime._skill_router._cache.clear()
+            chat.add_entry(AssistantText(
+                f"Cleared: {', '.join(cleared) or 'nothing'}. "
+                f"In-memory caches reset. Next turn will re-probe "
+                f"server capabilities and re-run skill routing."
+            ))
+
+        elif sub == "probe":
+            # Clear only server capabilities, keep skill router cache
+            try:
+                from llm_code.runtime.server_capabilities import clear_native_tools_cache
+                clear_native_tools_cache()
+            except Exception:
+                pass
+            if self._runtime and hasattr(self._runtime, "_force_xml_mode"):
+                self._runtime._force_xml_mode = False
+            chat.add_entry(AssistantText(
+                "Server capabilities cache cleared. Next turn will "
+                "re-probe native tool support. If your vLLM was "
+                "upgraded with --enable-auto-tool-choice, llm-code "
+                "will discover and cache the new capability."
+            ))
+
+        else:
+            chat.add_entry(AssistantText(
+                "Usage: `/cache list` | `/cache clear` | `/cache probe`"
+            ))
+
     def _cmd_profile(self, args: str) -> None:
         """Show per-model token/cost breakdown from the query profiler."""
         chat = self.query_one(ChatScrollView)

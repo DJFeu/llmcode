@@ -280,6 +280,7 @@ class SkillRouterConfig:
     similarity_threshold: float = 0.3
     max_skills_per_turn: int = 2
     tier_c_model: str = ""         # empty = use same model
+    tier_c_timeout: float = 15.0   # max seconds for Tier C LLM classifier before skip
 
 
 @dataclass(frozen=True)
