@@ -60,6 +60,14 @@ _EVENT_GROUP: dict[str, str] = {
     "pre_compact": "session.pre_compact",
     "post_compact": "session.post_compact",
     "session_dream": "session.session_dream",
+    # Wave2-1c: pre-warning fired once per pressure crossing when
+    # estimated prompt tokens climb past the configured warning
+    # threshold but before the proactive-compaction trigger fires.
+    "context_pressure": "context.context_pressure",
+    # Wave2-1c: emitted when the model returns an assistant message
+    # with no text and no tool calls. Consecutive fires eventually
+    # nudge / abort the turn to prevent runaway loops.
+    "empty_assistant_response": "session.empty_assistant_response",
     # http
     "http_request": "http.http_request",
     "http_response": "http.http_response",

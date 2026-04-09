@@ -386,6 +386,16 @@ class ConversationRuntime:
         self._consecutive_failures: int = 0
         self._compressor = ContextCompressor()
         self._active_model: str = getattr(config, "model", "")
+        # Wave2-1c: consecutive empty assistant responses. We fire the
+        # empty_assistant_response hook every time, inject a nudge
+        # user-message after 2 (to prod the model into actually
+        # answering), and raise RuntimeError after 3 to prevent a
+        # tight loop from burning a whole retry budget on nothing.
+        self._consecutive_empty_responses: int = 0
+        # Wave2-1c: track the last-seen context pressure bucket (low/
+        # mid/high) so we only fire the context_pressure hook once
+        # per crossing instead of every turn past the threshold.
+        self._last_context_pressure_bucket: str = "low"
         self._hida_classifier: Any | None = None
         self._hida_engine: Any | None = None
         self._last_hida_profile: Any | None = None
@@ -837,6 +847,38 @@ class ConversationRuntime:
         for _iteration in range(self._config.max_turn_iterations):
             # Proactive context compaction: compress before hitting model limit
             est_tokens = self.session.estimated_tokens()
+
+            # Wave2-1c: fire context_pressure hook on bucket transitions
+            # (low → mid at 70%, mid → high at 85%) BEFORE the
+            # compaction trigger at 100%. The buckets keep the event
+            # from firing every turn past the threshold — observers
+            # only see it on the actual crossing.
+            _pressure_ratio = est_tokens / max(_context_limit, 1)
+            if _pressure_ratio >= 0.85:
+                _new_bucket = "high"
+            elif _pressure_ratio >= 0.70:
+                _new_bucket = "mid"
+            else:
+                _new_bucket = "low"
+            if _new_bucket != self._last_context_pressure_bucket:
+                # Only fire on ascending transitions — dropping back
+                # after a compaction is not a pressure event.
+                if _new_bucket in ("mid", "high") and _new_bucket != "low":
+                    self._fire_hook(
+                        "context_pressure",
+                        {
+                            "bucket": _new_bucket,
+                            "ratio": round(_pressure_ratio, 3),
+                            "est_tokens": est_tokens,
+                            "limit": _context_limit,
+                        },
+                    )
+                    logger.info(
+                        "context_pressure %s: %d/%d tokens (%.0f%%)",
+                        _new_bucket, est_tokens, _context_limit, _pressure_ratio * 100,
+                    )
+                self._last_context_pressure_bucket = _new_bucket
+
             if est_tokens > _context_limit:
                 logger.info(
                     "Proactive compaction: %d tokens > %d limit",
@@ -845,6 +887,9 @@ class ConversationRuntime:
                 self._compact_with_todo_preserve(
                     int(_context_limit * 0.6), reason="proactive",
                 )
+                # Compaction dropped us back under pressure; reset bucket
+                # so the next ascending crossing re-fires the hook.
+                self._last_context_pressure_bucket = "low"
 
             # Budget enforcement: check before each LLM call
             if self._cost_tracker is not None:
@@ -1362,6 +1407,10 @@ class ConversationRuntime:
 
             # 7. Add assistant message to session
             if assistant_blocks:
+                # Wave2-1c: a non-empty assistant turn resets the
+                # consecutive-empty counter. Even a lone ToolUseBlock
+                # counts as productive output.
+                self._consecutive_empty_responses = 0
                 assistant_msg = Message(
                     role="assistant",
                     content=tuple(assistant_blocks),
@@ -1372,6 +1421,43 @@ class ConversationRuntime:
                 if _assistant_text:
                     _out_tok = stop_event.usage.output_tokens if stop_event else 0
                     self._db_log("assistant", _assistant_text, output_tokens=_out_tok)
+            else:
+                # Wave2-1c: empty assistant response (no text, no
+                # tool calls). Count, hook, nudge on 2nd in a row,
+                # abort on 3rd so a degenerate provider state cannot
+                # burn the entire turn budget on nothing.
+                self._consecutive_empty_responses += 1
+                self._fire_hook(
+                    "empty_assistant_response",
+                    {
+                        "consecutive": self._consecutive_empty_responses,
+                        "model": self._active_model,
+                    },
+                )
+                logger.warning(
+                    "empty assistant response #%d for model %s",
+                    self._consecutive_empty_responses, self._active_model,
+                )
+                if self._consecutive_empty_responses >= 3:
+                    raise RuntimeError(
+                        "3 consecutive empty assistant responses; aborting turn "
+                        "to prevent runaway loop. Check provider health or "
+                        "reduce thinking budget."
+                    )
+                if self._consecutive_empty_responses >= 2:
+                    # Inject a nudge user message to prod the model
+                    # into actually responding on the next attempt.
+                    nudge = Message(
+                        role="user",
+                        content=(
+                            TextBlock(text=(
+                                "[system nudge] Your previous response was empty. "
+                                "Please provide an answer, ask a clarifying question, "
+                                "or call a tool."
+                            )),
+                        ),
+                    )
+                    self.session = self.session.add_message(nudge)
 
             # 8. Diminishing returns detection
             # Only check when model produced text without tool calls (pure text continuation).
