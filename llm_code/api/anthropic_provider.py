@@ -23,7 +23,6 @@ import httpx
 from llm_code.api.errors import (
     ProviderAuthError,
     ProviderConnectionError,
-    ProviderError,
     ProviderModelNotFoundError,
     ProviderOverloadError,
     ProviderRateLimitError,

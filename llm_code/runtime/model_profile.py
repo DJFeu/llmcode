@@ -17,7 +17,7 @@ All fields have sensible defaults so a missing profile still works.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 

@@ -9,7 +9,6 @@ import pytest
 from llm_code.runtime.model_profile import (
     ModelProfile,
     ProfileRegistry,
-    _DEFAULT_PROFILE,
     _profile_from_dict,
     get_profile,
 )

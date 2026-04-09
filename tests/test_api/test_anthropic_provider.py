@@ -1,7 +1,6 @@
 """Tests for the native Anthropic Messages API provider."""
 from __future__ import annotations
 
-import json
 
 import httpx
 import pytest
@@ -27,7 +26,6 @@ from llm_code.api.types import (
     StreamToolUseStart,
     TextBlock,
     ThinkingBlock,
-    TokenUsage,
     ToolDefinition,
     ToolResultBlock,
     ToolUseBlock,

@@ -1,8 +1,7 @@
 """Tests for llm_code.api.client — TDD: written before implementation."""
 from __future__ import annotations
 
-import pytest
-from unittest.mock import patch
+from unittest.mock import patch  # noqa: F401 — kept for future test expansion
 
 
 # ---------------------------------------------------------------------------

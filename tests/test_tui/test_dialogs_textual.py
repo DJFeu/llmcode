@@ -20,7 +20,6 @@ from llm_code.tui.dialogs import (
 from llm_code.tui.dialogs.textual_backend import (
     ChecklistScreen,
     ConfirmScreen,
-    SelectScreen,
     TextInputScreen,
 )
 
@@ -212,7 +211,7 @@ async def test_select_escape_raises_cancelled() -> None:
 @pytest.mark.asyncio
 async def test_select_no_choices_raises_cancelled() -> None:
     app = _ShellApp()
-    async with app.run_test(size=(80, 24)) as pilot:
+    async with app.run_test(size=(80, 24)):
         dialogs = TextualDialogs(app)
         with pytest.raises(DialogCancelled):
             await dialogs.select("Pick", [])
@@ -221,7 +220,7 @@ async def test_select_no_choices_raises_cancelled() -> None:
 @pytest.mark.asyncio
 async def test_select_all_disabled_raises_cancelled() -> None:
     app = _ShellApp()
-    async with app.run_test(size=(80, 24)) as pilot:
+    async with app.run_test(size=(80, 24)):
         dialogs = TextualDialogs(app)
         choices = [Choice("a", "Alpha", disabled=True)]
         with pytest.raises(DialogCancelled):
