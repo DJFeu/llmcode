@@ -1496,7 +1496,21 @@ class LLMCodeTUI(App):  # noqa: E302
         # TEXT / THINKING / TOOL_CALL events that we route into the TUI
         # widgets below. Replaced ~110 lines of inline tag parsing.
         from llm_code.streaming.stream_parser import StreamEventKind, StreamParser
-        _stream_parser = StreamParser()
+        # Auto-detect implicit thinking: if the runtime's config has
+        # thinking mode enabled, the vLLM chat template likely injects
+        # <think>\n into the assistant prompt prefix so only the
+        # closing tag appears in the stream. Starting the parser in
+        # implicit_thinking mode ensures early content is classified
+        # as THINKING, not TEXT — avoiding the retroactive
+        # reclassification problem (#8 StreamParser implicit-think-end).
+        _implicit_thinking = False
+        try:
+            _thinking_cfg = getattr(self._config, "thinking", None)
+            if _thinking_cfg and getattr(_thinking_cfg, "mode", "") not in ("disabled", ""):
+                _implicit_thinking = True
+        except Exception:
+            pass
+        _stream_parser = StreamParser(implicit_thinking=_implicit_thinking)
         _saw_tool_call_this_turn = False  # For empty-response diagnosis
 
         async def remove_spinner() -> None:

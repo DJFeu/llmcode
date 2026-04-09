@@ -51,9 +51,23 @@ class StreamParser:
     ``flush()``.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, implicit_thinking: bool = False) -> None:
+        """Create a new parser.
+
+        When ``implicit_thinking=True``, the parser starts in
+        ``_in_think`` state — content at the beginning of the
+        stream is classified as THINKING until a ``</think>``
+        closes it. This is for vLLM chat templates that inject
+        ``<think>\\n`` into the assistant prompt prefix: the opening
+        tag is NOT in the stream, only the closing tag appears.
+
+        Without this flag, the parser would eagerly emit early
+        content as TEXT and by the time ``</think>`` arrives the
+        content has already been rendered as visible text, which
+        can't be retroactively reclassified as thinking.
+        """
         self._buffer: str = ""
-        self._in_think: bool = False
+        self._in_think: bool = implicit_thinking
         self._in_tool_call: bool = False
 
     def feed(self, chunk: str) -> list[StreamEvent]:
