@@ -24,6 +24,17 @@ _PERMISSION_CHOICES = ["prompt", "auto_accept", "read_only", "workspace_write", 
 )
 @click.option("--budget", type=int, default=None, help="Token budget target")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
+@click.option(
+    "--log-file",
+    "log_file",
+    default=None,
+    help=(
+        "Write verbose logs to PATH instead of stderr. Required when "
+        "running the TUI with -v — otherwise logs and Textual's own "
+        "stderr writes interleave and break the rendering. Also "
+        "reads LLMCODE_LOG_FILE env var."
+    ),
+)
 @click.option("--serve", is_flag=True, help="Start as remote server")
 @click.option("--port", type=int, default=8765, help="Server port (for --serve)")
 @click.option("--connect", default=None, help="Connect to remote server (host:port)")
@@ -59,6 +70,7 @@ def main(
     quick_prompt: str | None = None,
     config_schema: bool = False,
     preset: str | None = None,
+    log_file: str | None = None,
 ) -> None:
     """llm-code: AI coding assistant CLI."""
     from llm_code.logging import setup_logging
@@ -70,7 +82,7 @@ def main(
         click.echo(_json.dumps(ConfigSchema.model_json_schema(), indent=2))
         return
 
-    setup_logging(verbose=verbose)
+    setup_logging(verbose=verbose, log_file=log_file)
     cwd = Path.cwd()
 
     # Build CLI overrides
