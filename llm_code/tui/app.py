@@ -2062,13 +2062,12 @@ class LLMCodeTUI(App):  # noqa: E302
         """Scroll chat view up by one page."""
         chat = self.query_one(ChatScrollView)
         chat.scroll_page_up(animate=False)
-        chat.pause_auto_scroll()
+        chat._auto_scroll = False
 
     def action_scroll_chat_down(self) -> None:
         """Scroll chat view down by one page."""
         chat = self.query_one(ChatScrollView)
         chat.scroll_page_down(animate=False)
-        chat.resume_auto_scroll()
 
     async def _graceful_exit(self) -> None:
         """Dream consolidation + cancel background tasks + exit."""
