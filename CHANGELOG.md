@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased — Wave2-1d: CancelledError cleanup on interrupted tool (wave2-1 COMPLETE)
+
+### Added
+- **`tool_cancelled` hook event**, `{tool_name, tool_id}` payload, registered under `tool.*` glob group.
+- **`_execute_tool_with_streaming`** wraps progress-queue + future-await in `try/except asyncio.CancelledError`. On cancel: fires `tool_cancelled` hook, yields `is_error=True` `ToolResultBlock`, re-raises. Yield-then-raise order is load-bearing — otherwise the session has an orphan `ToolUseBlock` with no matching `ToolResultBlock` and the next turn's payload is malformed.
+
+### Fixed
+- Interrupted tool calls (user ctrl+c, parent-task timeout) used to propagate `CancelledError` without any cleanup — conversation round-trip invariant broke silently. The ThreadPoolExecutor worker thread still runs to completion in the background (CPython constraint), but the session state is now consistent.
+
+### Tests
+- **`tests/test_runtime/test_wave2_1d_cancel_cleanup.py`** — 7 new tests: 3 hook registration (name / glob / exact), 3 cancellation contract (yield-before-reraise order, tool name in error content, payload schema), 1 source-level guard on the production try/except + yield/raise order + `tool_cancelled` fire.
+- Full sweep: **1649 passed**, no regressions.
+
+### Wave2-1 session recovery: COMPLETE ✅
+
+| Sub | Status | PR |
+|---|---|---|
+| 1a thinking blocks P1–P5 | ✅ | #26–#30 |
+| 1b Retry-After + ProviderTimeoutError | ✅ | #31 |
+| 1c Empty counter + context pre-warn | ✅ | #32 |
+| **1d CancelledError cleanup** | **✅** | **this** |
+
+All 8 failure modes from the wave2 audit are now covered:
+
+| Mode | Pre-wave2 | Post-wave2 |
+|---|---|---|
+| ToolNotFound | ✅ | ✅ |
+| MalformedToolInput | ✅ | ✅ |
+| ThinkingBlockOrder | ❌ | ✅ (wave2-1a P1–P5, reframed as architecture) |
+| RateLimited | ⚠️ | ✅ (wave2-1b Retry-After) |
+| ProviderTimeout | ⚠️ | ✅ (wave2-1b ProviderTimeoutError) |
+| ContextWindowExceeded | ⚠️ | ✅ (wave2-1c pre-warning) |
+| EmptyAssistantResponse | ⚠️ | ✅ (wave2-1c counter) |
+| **InterruptedToolCall** | **⚠️** | **✅ (wave2-1d)** |
+
 ## Unreleased — Wave2-1c: Empty response counter + context pressure pre-warning
 
 ### Added
