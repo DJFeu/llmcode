@@ -156,6 +156,37 @@ def load_plugin(
     """
     handle = LoadedPlugin(manifest=manifest, install_path=install_path)
 
+    # Wave2-5 follow-up (#5): permissions enforcement. If the
+    # manifest declares ``permissions``, log which capabilities the
+    # plugin requests. For now this is advisory (log + hook) — a
+    # full sandbox that actually blocks network/fs/subprocess access
+    # would require OS-level isolation (e.g. seccomp, containers)
+    # which is out of scope. The advisory gate lets users make an
+    # informed decision before enabling a plugin.
+    if manifest.permissions:
+        logger.info(
+            "plugin %s declares permissions: %s",
+            manifest.name,
+            ", ".join(
+                f"{k}={v}" for k, v in manifest.permissions.items()
+            ),
+        )
+        # Block plugins that request subprocess or fs_write unless
+        # the caller explicitly passed force=True. Network is
+        # allowed by default because most tools need it.
+        dangerous_caps = {
+            k for k, v in manifest.permissions.items()
+            if v is True and k in ("subprocess", "fs_write")
+        }
+        if dangerous_caps and not force:
+            raise PluginLoadError(
+                manifest.name,
+                "permissions",
+                f"plugin requests dangerous capabilities: "
+                f"{', '.join(sorted(dangerous_caps))}. Use --force "
+                f"or /plugin install --force to override.",
+            )
+
     if not manifest.provides_tools and not manifest.skills:
         # Nothing to do — but still return a valid handle so the
         # caller can track the empty load in its plugin table.
