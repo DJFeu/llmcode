@@ -37,6 +37,11 @@ _log = logging.getLogger(__name__)
 # just ``rm -rf ~/.llmcode/`` and get one.
 _CACHE_PATH = Path.home() / ".llmcode" / "server_capabilities.json"
 
+# Entries older than this are treated as expired and re-probed.
+# 7 days is long enough to avoid re-probing every session but
+# short enough that a vLLM upgrade is discovered within a week.
+_TTL_SECONDS = 7 * 24 * 60 * 60  # 7 days
+
 
 def _cache_key(base_url: str, model: str) -> str:
     """The cache is keyed by the exact base_url + model combo.
@@ -67,6 +72,24 @@ def load_native_tools_support(base_url: str, model: str) -> bool | None:
     entry = data.get(_cache_key(base_url, model))
     if not isinstance(entry, dict):
         return None
+    # TTL check: entries older than 7 days are treated as expired
+    # so a server that was upgraded (e.g. vLLM got
+    # --enable-auto-tool-choice) will be re-probed automatically
+    # without the user having to manually clear the cache.
+    cached_at = entry.get("cached_at")
+    if isinstance(cached_at, str):
+        try:
+            from datetime import datetime, timezone
+            age = datetime.now(timezone.utc) - datetime.fromisoformat(cached_at)
+            if age.total_seconds() > _TTL_SECONDS:
+                _log.debug(
+                    "server_capabilities cache expired for %s (%s): "
+                    "age %.0f seconds > TTL %d",
+                    base_url, model, age.total_seconds(), _TTL_SECONDS,
+                )
+                return None
+        except (ValueError, TypeError):
+            pass  # Malformed timestamp — treat as valid (don't expire)
     value = entry.get("native_tools")
     if isinstance(value, bool):
         return value

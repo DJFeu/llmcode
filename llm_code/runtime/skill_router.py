@@ -5,6 +5,7 @@ matched skill content is injected into the system prompt.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 from collections import Counter
@@ -499,13 +500,24 @@ class SkillRouter:
         if tier_c_enabled and self._provider:
             _tc_start = time.monotonic()
             model = self._config.tier_c_model or self._model
+            _tc_timeout = getattr(self._config, "tier_c_timeout", 15.0)
             logger.debug(
-                "skill_router tier C starting: model=%s cjk=%s",
-                model, has_cjk,
+                "skill_router tier C starting: model=%s cjk=%s timeout=%.0fs",
+                model, has_cjk, _tc_timeout,
             )
-            name, raw = await _classify_with_llm_debug(
-                user_message, self._skills, self._provider, model,
-            )
+            try:
+                name, raw = await asyncio.wait_for(
+                    _classify_with_llm_debug(
+                        user_message, self._skills, self._provider, model,
+                    ),
+                    timeout=_tc_timeout,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "skill_router tier_c timed out after %.0fs; skipping",
+                    _tc_timeout,
+                )
+                name, raw = None, ""
             _tc_elapsed = time.monotonic() - _tc_start
             self.last_tier_c_debug += (
                 f" model={model!r} raw={raw!r} matched={name!r} "
