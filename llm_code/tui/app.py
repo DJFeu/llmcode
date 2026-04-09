@@ -1577,7 +1577,10 @@ class LLMCodeTUI(App):  # noqa: E302
                             # dispatch the call; TUI just records the
                             # fact for the empty-response diagnostic.
                             _saw_tool_call_this_turn = True
-                    chat.resume_auto_scroll()
+                    # Scroll to bottom only if auto-scroll is still active
+                    # (user hasn't scrolled up with mouse/keyboard).
+                    if chat._auto_scroll:
+                        chat.scroll_end(animate=False)
 
                 elif isinstance(event, StreamThinkingDelta):
                     spinner.phase = "thinking"
