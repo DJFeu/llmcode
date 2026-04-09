@@ -1045,23 +1045,32 @@ class LLMCodeTUI(App):  # noqa: E302
     def _on_mcp_approval_event(self, event) -> None:
         """Sink called by ConversationRuntime.request_mcp_approval.
 
-        Mounts an MCPApprovalInline widget; resolution flows back through
-        ``runtime.send_mcp_approval_response`` when the user presses y/a/n.
+        Schedules an async modal dialog; resolution flows back through
+        ``runtime.send_mcp_approval_response`` when the user picks an option.
         """
+        import asyncio
+        asyncio.ensure_future(self._show_mcp_approval_dialog(event))
+
+    async def _show_mcp_approval_dialog(self, event) -> None:
+        """Show MCP approval as a TextualDialogs select modal."""
+        _prompt = f"MCP Server: {event.server_name}"
+        if event.command:
+            _prompt += f"\nCommand: {event.command}"
+        if event.description:
+            _prompt += f"\n{event.description}"
+        from llm_code.tui.dialogs import Choice
+        _choices = [
+            Choice(value="allow", label="Allow (y)", hint="Allow this MCP request"),
+            Choice(value="always", label="Always allow (a)", hint="Auto-allow from this server"),
+            Choice(value="deny", label="Deny (n)", hint="Reject this request"),
+        ]
         try:
-            from llm_code.tui.chat_widgets import MCPApprovalInline
-            chat = self.query_one(ChatScrollView)
-            widget = MCPApprovalInline(
-                server_name=event.server_name,
-                owner_agent_id=event.owner_agent_id,
-                command=event.command,
-                description=event.description,
-            )
-            chat.add_entry(widget)
-            self._mcp_approval_widget = widget
-            self._mcp_approval_pending = True
+            result = await self._dialogs.select(_prompt, _choices, default="allow")
+            if self._runtime is not None:
+                self._runtime.send_mcp_approval_response(result)
         except Exception:
-            logger.warning("failed to mount MCPApprovalInline", exc_info=True)
+            if self._runtime is not None:
+                self._runtime.send_mcp_approval_response("deny")
 
     async def _init_mcp(self) -> None:
         """Start MCP servers and register their tools (async, called after _init_runtime)."""
@@ -1367,52 +1376,10 @@ class LLMCodeTUI(App):  # noqa: E302
                 event.prevent_default()
                 event.stop()
             return
-        # MCP approval handling (y/a/n) — takes precedence over tool permission
-        if self._mcp_approval_pending and self._runtime is not None:
-            mcp_response_map = {
-                "y": "allow",
-                "a": "always",
-                "n": "deny",
-                "escape": "deny",
-            }
-            mcp_resp = mcp_response_map.get(event.key)
-            if mcp_resp is not None:
-                self._runtime.send_mcp_approval_response(mcp_resp)
-                self._mcp_approval_pending = False
-                if self._mcp_approval_widget is not None:
-                    try:
-                        w = self._mcp_approval_widget
-                        self._mcp_approval_widget = None
-                        if getattr(w, "is_mounted", False):
-                            w.remove()
-                    except Exception:
-                        pass
-                event.prevent_default()
-                event.stop()
-                return
-
-        # Permission handling (y/n/a)
-        if not self._permission_pending or self._runtime is None:
-            return
-        # y = allow once; a = always-by-kind/prefix; A = always-this-exact; n = deny
-        # 'a' and 'A' are distinct keys (shift modifier).
-        response_map = {
-            "y": "allow",
-            "n": "deny",
-            "a": "always_kind",
-            "A": "always_exact",
-            "shift+a": "always_exact",
-        }
-        response = response_map.get(event.key)
-        if response is not None:
-            self._runtime.send_permission_response(response)
-            event.prevent_default()
-            event.stop()
-            return
-        if event.key == "e":
-            # TODO: edit-args inline editor (Tier 2 follow-up)
-            event.prevent_default()
-            event.stop()
+        # MCP approval is now handled via TextualDialogs modal (see
+        # _show_mcp_approval_dialog). No inline key handler needed.
+        # Permission handling is now done via TextualDialogs modal (see
+        # StreamPermissionRequest handler in _run_turn).
 
     async def _run_turn(self, user_input: str, images: list | None = None) -> None:
         """Run a conversation turn with full streaming event handling.
@@ -1508,13 +1475,10 @@ class LLMCodeTUI(App):  # noqa: E302
         # implicit_thinking mode ensures early content is classified
         # as THINKING, not TEXT — avoiding the retroactive
         # reclassification problem (#8 StreamParser implicit-think-end).
-        _implicit_thinking = False
-        try:
-            _thinking_cfg = getattr(self._config, "thinking", None)
-            if _thinking_cfg and getattr(_thinking_cfg, "mode", "") not in ("disabled", ""):
-                _implicit_thinking = True
-        except Exception:
-            pass
+        # Read implicit_thinking from the model profile (authoritative)
+        # instead of probing config.thinking.mode.
+        _profile = getattr(self._runtime, "_model_profile", None)
+        _implicit_thinking = _profile.implicit_thinking if _profile else False
         _stream_parser = StreamParser(implicit_thinking=_implicit_thinking)
         _saw_tool_call_this_turn = False  # For empty-response diagnosis
 
@@ -1522,8 +1486,6 @@ class LLMCodeTUI(App):  # noqa: E302
             """Remove spinner if it is currently mounted."""
             if spinner.is_mounted:
                 await spinner.remove()
-
-        perm_widget = None
 
         # Sync plan mode flag to runtime before each turn
         self._runtime.plan_mode = self._plan_mode
@@ -1538,16 +1500,6 @@ class LLMCodeTUI(App):  # noqa: E302
             async for event in self._runtime.run_turn(
                 user_input, images=images, active_skill_content=_skill_content,
             ):
-                # Clean up permission widget from previous iteration
-                if self._permission_pending and not isinstance(event, StreamPermissionRequest):
-                    self._permission_pending = False
-                    if perm_widget is not None and perm_widget.is_mounted:
-                        await perm_widget.remove()
-                        perm_widget = None
-                    # Re-add spinner while tool executes
-                    spinner.phase = "running"
-                    chat.add_entry(spinner)
-
                 if isinstance(event, StreamTextDelta):
                     # Delegate all <think> / <tool_call> tag recognition
                     # to the shared StreamParser. It produces TEXT,
@@ -1636,18 +1588,28 @@ class LLMCodeTUI(App):  # noqa: E302
 
                 elif isinstance(event, StreamPermissionRequest):
                     await remove_spinner()
-                    perm_widget = PermissionInline(
-                        event.tool_name,
-                        event.args_preview,
-                        diff_lines=event.diff_lines,
-                        pending_files=event.pending_files,
-                    )
-                    chat.add_entry(perm_widget)
-                    self._permission_pending = True
-                    # No explicit wait — the runtime generator is suspended
-                    # on its own asyncio.Future. The async for loop blocks on
-                    # __anext__ until y/n/a resolves the Future via on_key →
-                    # send_permission_response. Cleanup at top of loop.
+                    # Show permission as a modal select dialog
+                    _perm_prompt = f"Tool: {event.tool_name}"
+                    if event.args_preview:
+                        _perm_prompt += f"\n{event.args_preview}"
+                    if event.diff_lines:
+                        _perm_prompt += "\n" + "\n".join(event.diff_lines[:10])
+                    if event.pending_files:
+                        _perm_prompt += "\nFiles: " + ", ".join(event.pending_files[:5])
+                    from llm_code.tui.dialogs import Choice
+                    _perm_choices = [
+                        Choice(value="allow", label="Allow (y)", hint="Allow this tool call"),
+                        Choice(value="always_kind", label="Always allow this type (a)", hint="Auto-allow this tool kind"),
+                        Choice(value="always_exact", label="Always allow exact (A)", hint="Auto-allow this exact tool+args"),
+                        Choice(value="deny", label="Deny (n)", hint="Reject this tool call"),
+                    ]
+                    try:
+                        _perm_result = await self._dialogs.select(
+                            _perm_prompt, _perm_choices, default="allow",
+                        )
+                        self._runtime.send_permission_response(_perm_result)
+                    except Exception:
+                        self._runtime.send_permission_response("deny")
 
                 elif isinstance(event, StreamCompactionStart):
                     spinner.phase = "compacting"
@@ -1715,16 +1677,10 @@ class LLMCodeTUI(App):  # noqa: E302
             chat.add_entry(AssistantText(f"Error: {exc}"))
         finally:
             timer_task.cancel()
-            self._permission_pending = False
             try:
                 await remove_spinner()
             except Exception:
                 pass
-            if perm_widget is not None and perm_widget.is_mounted:
-                try:
-                    await perm_widget.remove()
-                except Exception:
-                    pass
             input_bar.disabled = False
             status.is_streaming = False
 
@@ -2267,9 +2223,39 @@ class LLMCodeTUI(App):  # noqa: E302
             self._init_runtime()
             self.query_one(HeaderBar).model = args
             chat.add_entry(AssistantText(f"Model switched to: {args}"))
+            chat.add_entry(AssistantText(self._format_profile_info(args)))
         else:
             model = self._config.model if self._config else "(not set)"
             chat.add_entry(AssistantText(f"Current model: {model}"))
+            if model and model != "(not set)":
+                chat.add_entry(AssistantText(self._format_profile_info(model)))
+
+    def _format_profile_info(self, model: str) -> str:
+        """Format model profile as a compact info string."""
+        from llm_code.runtime.model_profile import get_profile
+        p = get_profile(model)
+        parts = [f"Profile: {p.name or model}"]
+        caps = []
+        if p.native_tools:
+            caps.append("native-tools")
+        if p.supports_reasoning:
+            caps.append("reasoning")
+        if p.supports_images:
+            caps.append("images")
+        if p.force_xml_tools:
+            caps.append("xml-tools")
+        if p.implicit_thinking:
+            caps.append("implicit-thinking")
+        if p.is_local:
+            caps.append("local")
+        if caps:
+            parts.append(f"  Capabilities: {', '.join(caps)}")
+        parts.append(f"  Provider: {p.provider_type}  |  Context: {p.context_window:,}  |  Max output: {p.max_output_tokens:,}")
+        if p.thinking_extra_body_format != "chat_template_kwargs":
+            parts.append(f"  Thinking format: {p.thinking_extra_body_format}")
+        if p.price_input > 0 or p.price_output > 0:
+            parts.append(f"  Pricing: ${p.price_input:.2f}/${p.price_output:.2f} per 1M tokens")
+        return "\n".join(parts)
 
     def _show_model_routes(self) -> None:
         """Display configured model routing table."""

@@ -52,7 +52,33 @@ class ImageBlock:
     data: str
 
 
-ContentBlock = Union[ThinkingBlock, TextBlock, ToolUseBlock, ToolResultBlock, ImageBlock]
+@dataclasses.dataclass(frozen=True)
+class ServerToolUseBlock:
+    """Anthropic server-side tool use (e.g. web search).
+
+    Must be round-tripped with its signature on subsequent turns.
+    """
+    id: str
+    name: str
+    input: dict
+    signature: str = ""
+
+
+@dataclasses.dataclass(frozen=True)
+class ServerToolResultBlock:
+    """Anthropic server-side tool result.
+
+    Must be round-tripped with its signature on subsequent turns.
+    """
+    tool_use_id: str
+    content: str
+    signature: str = ""
+
+
+ContentBlock = Union[
+    ThinkingBlock, TextBlock, ToolUseBlock, ToolResultBlock,
+    ImageBlock, ServerToolUseBlock, ServerToolResultBlock,
+]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -168,6 +194,28 @@ class StreamToolExecResult(StreamEvent):
 class StreamThinkingDelta(StreamEvent):
     """Emitted when the model produces a thinking/reasoning token."""
     text: str
+
+
+@dataclasses.dataclass(frozen=True)
+class StreamServerToolBlock(StreamEvent):
+    """Emitted when a server-side tool block completes (e.g. web_search).
+
+    Carries the full block data (server_tool_use or server_tool_result)
+    so the runtime can store it on the assistant message for round-trip.
+    """
+    block: "ServerToolUseBlock | ServerToolResultBlock"
+
+
+@dataclasses.dataclass(frozen=True)
+class StreamThinkingSignature(StreamEvent):
+    """Emitted when a thinking block's signature is fully accumulated.
+
+    Anthropic streams the cryptographic signature for signed thinking
+    blocks as multiple ``signature_delta`` events. This event carries
+    the complete, concatenated signature string once the thinking
+    content block closes (``content_block_stop``).
+    """
+    signature: str
 
 
 @dataclasses.dataclass(frozen=True)

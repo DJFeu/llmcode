@@ -22,7 +22,9 @@ from llm_code.api.types import (
     StreamMessageStop,
     StreamPermissionRequest,
     StreamTextDelta,
+    StreamServerToolBlock,
     StreamThinkingDelta,
+    StreamThinkingSignature,
     StreamToolExecResult,
     StreamToolExecStart,
     StreamToolProgress,
@@ -122,6 +124,7 @@ def build_thinking_extra_body(
     provider_supports_reasoning: bool = False,
     runtime: Any = None,
     max_output_tokens: int | None = None,
+    profile: Any = None,
 ) -> dict | None:
     """Build extra_body dict for thinking mode configuration.
 
@@ -131,7 +134,26 @@ def build_thinking_extra_body(
       reasoning support via ``provider.supports_reasoning()``;
       disable otherwise (vLLM without --enable-reasoning mixes
       thinking text into response); let cloud providers decide.
+
+    The output format is determined by the model profile's
+    ``thinking_extra_body_format``:
+    - ``"chat_template_kwargs"`` → ``{"chat_template_kwargs": {...}}``
+    - ``"anthropic_native"`` → ``{"thinking": {"type": ..., "budget_tokens": ...}}``
     """
+    fmt = "chat_template_kwargs"
+    if profile is not None:
+        fmt = getattr(profile, "thinking_extra_body_format", fmt)
+
+    def _wrap(enabled: bool, budget: int = 0) -> dict:
+        if fmt == "anthropic_native":
+            if enabled:
+                return {"thinking": {"type": "enabled", "budget_tokens": budget}}
+            return {"thinking": {"type": "disabled"}}
+        # Default: chat_template_kwargs (vLLM / OpenAI-compat)
+        if enabled:
+            return {"chat_template_kwargs": {"enable_thinking": True, "thinking_budget": budget}}
+        return {"chat_template_kwargs": {"enable_thinking": False}}
+
     mode = thinking_config.mode
     if mode == "enabled":
         budget = thinking_config.budget_tokens
@@ -143,14 +165,9 @@ def build_thinking_extra_body(
             max_budget=131072 if is_local else None,
         )
         budget = _apply_thinking_budget_cap(budget, max_output_tokens=max_output_tokens)
-        return {
-            "chat_template_kwargs": {
-                "enable_thinking": True,
-                "thinking_budget": budget,
-            }
-        }
+        return _wrap(True, budget)
     if mode == "disabled":
-        return {"chat_template_kwargs": {"enable_thinking": False}}
+        return _wrap(False)
     # adaptive: enable for local models that support reasoning;
     # disable for those that don't (prevents thinking text leak)
     if is_local:
@@ -162,13 +179,8 @@ def build_thinking_extra_body(
                 max_budget=131072,
             )
             budget = _apply_thinking_budget_cap(budget, max_output_tokens=max_output_tokens)
-            return {
-                "chat_template_kwargs": {
-                    "enable_thinking": True,
-                    "thinking_budget": budget,
-                }
-            }
-        return {"chat_template_kwargs": {"enable_thinking": False}}
+            return _wrap(True, budget)
+        return _wrap(False)
     return None
 
 
@@ -891,19 +903,23 @@ class ConversationRuntime:
                     pass
         # Token limit auto-upgrade state: reset each turn, doubles on max_tokens stop
         _current_max_tokens: int = self._config.max_tokens
-        # Local models (localhost/private network) have no cost concern — no cap
+        # Determine if the model is locally-hosted (unlimited token upgrades).
+        # Profile is authoritative; URL-based heuristic is the fallback for
+        # models without an explicit profile.
         _base_url = getattr(self._config, "provider_base_url", "") or ""
-        # Detect self-hosted models: private IPs, localhost, or model paths (e.g. /models/Qwen...)
-        _is_local = (
-            any(h in _base_url for h in ("localhost", "127.0.0.1", "0.0.0.0", "192.168.", "10.", "172."))
-            or _base_url.startswith("http://")  # non-HTTPS = likely self-hosted
-            or self._active_model.startswith("/")  # path-based model name = vLLM
-        )
+        _is_local = self._model_profile.is_local or self._model_profile.unlimited_token_upgrade
+        if not _is_local:
+            # Fallback: detect self-hosted models by URL pattern
+            _is_local = (
+                any(h in _base_url for h in ("localhost", "127.0.0.1", "0.0.0.0", "192.168.", "10.", "172."))
+                or _base_url.startswith("http://")  # non-HTTPS = likely self-hosted
+                or self._active_model.startswith("/")  # path-based model name = vLLM
+            )
         _TOKEN_UPGRADE_CAP = 0 if _is_local else 65536  # 0 means unlimited
 
         # Determine effective context limit for proactive compaction
         _context_limit = self._config.compact_after_tokens
-        # Auto-detect model context window (query /v1/models once)
+        # Auto-detect model context window and profile (query /v1/models once)
         if not hasattr(self, "_detected_context_window"):
             self._detected_context_window = 0
             try:
@@ -917,6 +933,22 @@ class ConversationRuntime:
                             break
             except Exception:
                 pass
+            # Profile auto-discovery: if current profile is default,
+            # try to resolve a better one from the provider's model list.
+            if self._model_profile.name in ("(default)", ""):
+                from llm_code.runtime.model_profile import probe_provider_profile
+                _discovered = probe_provider_profile(_base_url, self._active_model)
+                if _discovered is not None:
+                    self._model_profile = _discovered
+                    # Re-evaluate is_local with the new profile
+                    _is_local = self._model_profile.is_local or self._model_profile.unlimited_token_upgrade
+                    if not _is_local:
+                        _is_local = (
+                            any(h in _base_url for h in ("localhost", "127.0.0.1", "0.0.0.0", "192.168.", "10.", "172."))
+                            or _base_url.startswith("http://")
+                            or self._active_model.startswith("/")
+                        )
+                    _TOKEN_UPGRADE_CAP = 0 if _is_local else 65536
         if self._detected_context_window > 0:
             # Use 70% of model's context window as compaction threshold
             _context_limit = min(_context_limit, int(self._detected_context_window * 0.7))
@@ -1113,6 +1145,7 @@ class ConversationRuntime:
                     provider_supports_reasoning=self._provider.supports_reasoning(),
                     runtime=self,
                     max_output_tokens=_current_max_tokens,
+                    profile=self._model_profile,
                 ) if not use_native else None,
             )
 
@@ -1229,6 +1262,7 @@ class ConversationRuntime:
                             provider_supports_reasoning=self._provider.supports_reasoning(),
                             runtime=self,
                             max_output_tokens=_current_max_tokens,
+                            profile=self._model_profile,
                         ),
                     )
                     try:
@@ -1312,11 +1346,9 @@ class ConversationRuntime:
             # can prepend them as a ThinkingBlock on the assembled
             # assistant message. Streaming never carries a signature
             # today (Anthropic signature arrives on block_stop events
-            # which llm-code doesn't yet surface), so the assembled
-            # block uses signature="". When P4 adds native Anthropic
-            # streaming support, replace the empty literal below with
-            # the captured value.
             thinking_parts: list[str] = []
+            thinking_signature: str = ""
+            server_tool_blocks: list = []  # ServerToolUse/ResultBlock for round-trip
             native_tool_calls: dict[str, dict] = {}  # id -> {id, name, json_parts}
             native_tool_list: list[dict] = []
             stop_event: StreamMessageStop | None = None
@@ -1333,9 +1365,11 @@ class ConversationRuntime:
                     if isinstance(event, StreamTextDelta):
                         text_parts.append(event.text)
                     elif isinstance(event, StreamThinkingDelta):
-                        # Wave2-1a P3: collect provider thinking so we
-                        # can store it on the assistant message.
                         thinking_parts.append(event.text)
+                    elif isinstance(event, StreamThinkingSignature):
+                        thinking_signature = event.signature
+                    elif isinstance(event, StreamServerToolBlock):
+                        server_tool_blocks.append(event.block)
                     elif isinstance(event, StreamToolUseStart):
                         # Finalize the previously streaming tool (if any) before starting new one
                         if _current_streaming_tool_id is not None:
@@ -1549,11 +1583,14 @@ class ConversationRuntime:
                 assistant_blocks.append(
                     ThinkingBlock(
                         content="".join(thinking_parts),
-                        signature="",
+                        signature=thinking_signature,
                     )
                 )
             if response_text:
                 assistant_blocks.append(TextBlock(text=response_text))
+            # Server-side tool blocks (web search, etc.) — round-trip with signatures
+            for stb in server_tool_blocks:
+                assistant_blocks.append(stb)
             for call in parsed_calls:
                 assistant_blocks.append(
                     ToolUseBlock(id=call.id, name=call.name, input=call.args)
@@ -1588,7 +1625,7 @@ class ConversationRuntime:
                 if thinking_parts:
                     self._db_log_thinking(
                         content="".join(thinking_parts),
-                        signature="",
+                        signature=thinking_signature,
                     )
             else:
                 # Wave2-1c: empty assistant response (no text, no

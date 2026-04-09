@@ -54,6 +54,13 @@ class ModelProfile:
     price_input: float = 0.0  # 0 = unknown / free
     price_output: float = 0.0
 
+    # ── Deployment ────────────────────────────────────────────────────
+    is_local: bool = False  # self-hosted / private network — unlimited token upgrades
+    unlimited_token_upgrade: bool = False  # explicit override for token upgrade cap
+
+    # ── Routing ───────────────────────────────────────────────────────
+    tier_c_model: str = ""  # model for SkillRouter Tier C; "" = use self
+
     # ── Limits ────────────────────────────────────────────────────────
     max_output_tokens: int = 4096
     context_window: int = 128000  # advertised context length
@@ -74,6 +81,7 @@ _BUILTIN_PROFILES: dict[str, ModelProfile] = {
         reasoning_field="reasoning_content",
         thinking_extra_body_format="chat_template_kwargs",
         default_thinking_budget=16384,
+        is_local=True,
         context_window=131072,
     ),
     "qwen3.5": ModelProfile(
@@ -87,6 +95,7 @@ _BUILTIN_PROFILES: dict[str, ModelProfile] = {
         reasoning_field="reasoning_content",
         thinking_extra_body_format="chat_template_kwargs",
         default_thinking_budget=10000,
+        is_local=True,
         context_window=131072,
     ),
     "qwen3": ModelProfile(
@@ -100,6 +109,7 @@ _BUILTIN_PROFILES: dict[str, ModelProfile] = {
         reasoning_field="reasoning_content",
         thinking_extra_body_format="chat_template_kwargs",
         default_thinking_budget=8192,
+        is_local=True,
         context_window=32768,
     ),
 
@@ -253,6 +263,7 @@ _FAMILY_DEFAULTS: dict[str, ModelProfile] = {
         implicit_thinking=True,
         reasoning_field="reasoning_content",
         thinking_extra_body_format="chat_template_kwargs",
+        is_local=True,
         context_window=131072,
     ),
 }
@@ -288,6 +299,8 @@ def _profile_from_dict(data: dict[str, Any], base: ModelProfile | None = None) -
         "thinking": ("thinking_extra_body_format", "default_thinking_budget"),
         "pricing": ("price_input", "price_output"),
         "limits": ("max_output_tokens", "context_window"),
+        "deployment": ("is_local", "unlimited_token_upgrade"),
+        "routing": ("tier_c_model",),
     }
     for key, value in data.items():
         if isinstance(value, dict):
@@ -425,3 +438,53 @@ def get_registry() -> ProfileRegistry:
     if _registry is None:
         _registry = ProfileRegistry()
     return _registry
+
+
+def probe_provider_profile(base_url: str, current_model: str) -> ModelProfile | None:
+    """Probe a provider's ``/v1/models`` endpoint and resolve the best profile.
+
+    Returns a ``ModelProfile`` if the probe finds a model ID that resolves
+    to a more specific profile than the default, or ``None`` if the probe
+    fails or the current profile is already the best match.
+
+    This is a blocking HTTP call — call from a thread or during init.
+    """
+    import httpx
+
+    try:
+        url = f"{base_url.rstrip('/v1').rstrip('/')}/v1/models"
+        resp = httpx.get(url, timeout=3.0)
+        if resp.status_code != 200:
+            return None
+
+        data = resp.json().get("data", [])
+        if not data:
+            return None
+
+        # Try each model ID from the provider
+        registry = get_registry()
+        current_profile = registry.resolve(current_model)
+        for m in data:
+            model_id = m.get("id", "")
+            if not model_id:
+                continue
+            candidate = registry.resolve(model_id)
+            # A named profile (not the default) is better than the default
+            if candidate.name and candidate.name != "(default)" and (
+                current_profile.name == "(default)" or current_profile.name == ""
+            ):
+                # Merge context window from probe if available
+                mml = m.get("max_model_len", 0)
+                if mml > 0 and mml != candidate.context_window:
+                    from dataclasses import replace
+                    candidate = replace(candidate, context_window=mml)
+                _logger.info(
+                    "auto-discovered profile '%s' for model '%s' from %s",
+                    candidate.name, model_id, url,
+                )
+                return candidate
+
+        return None
+    except Exception as exc:
+        _logger.debug("profile probe failed for %s: %s", base_url, exc)
+        return None

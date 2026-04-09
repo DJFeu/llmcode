@@ -35,10 +35,14 @@ from llm_code.api.types import (
     Message,
     MessageRequest,
     MessageResponse,
+    ServerToolResultBlock,
+    ServerToolUseBlock,
     StreamEvent,
     StreamMessageStop,
+    StreamServerToolBlock,
     StreamTextDelta,
     StreamThinkingDelta,
+    StreamThinkingSignature,
     StreamToolUseInputDelta,
     StreamToolUseStart,
     TextBlock,
@@ -88,6 +92,7 @@ class AnthropicProvider(LLMProvider):
             headers={
                 "x-api-key": api_key,
                 "anthropic-version": _API_VERSION,
+                "anthropic-beta": "prompt-caching-2024-07-31",
                 "content-type": "application/json",
             },
             timeout=httpx.Timeout(timeout),
@@ -131,27 +136,48 @@ class AnthropicProvider(LLMProvider):
         }
 
         if request.system:
-            payload["system"] = request.system
+            # Prompt caching: wrap system prompt as a content block array
+            # with cache_control on the last block so the system prompt
+            # is cached across turns.
+            payload["system"] = [
+                {
+                    "type": "text",
+                    "text": request.system,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
 
         if request.tools:
-            payload["tools"] = [self._convert_tool(t) for t in request.tools]
+            tools = [self._convert_tool(t) for t in request.tools]
+            # Prompt caching: mark the last tool definition as a cache
+            # breakpoint so the full tool schema is cached.
+            if tools:
+                tools[-1]["cache_control"] = {"type": "ephemeral"}
+            payload["tools"] = tools
 
         if stream:
             payload["stream"] = True
 
-        # Extended thinking: pass budget via extra_body or detect config
+        # Extended thinking: pass budget via extra_body or detect config.
+        # Two formats are supported depending on model profile:
+        # - anthropic_native: {"thinking": {"type": "enabled", "budget_tokens": N}}
+        # - chat_template_kwargs: {"chat_template_kwargs": {"enable_thinking": true, ...}}
         if request.extra_body:
-            # Anthropic-specific: thinking budget
-            thinking_cfg = request.extra_body.get("chat_template_kwargs", {})
-            if thinking_cfg.get("enable_thinking"):
-                budget = thinking_cfg.get("thinking_budget", 10000)
-                payload["thinking"] = {
-                    "type": "enabled",
-                    "budget_tokens": budget,
-                }
+            # Native Anthropic format — pass through directly
+            if "thinking" in request.extra_body:
+                payload["thinking"] = request.extra_body["thinking"]
+            else:
+                # Legacy chat_template_kwargs format — convert
+                thinking_cfg = request.extra_body.get("chat_template_kwargs", {})
+                if thinking_cfg.get("enable_thinking"):
+                    budget = thinking_cfg.get("thinking_budget", 10000)
+                    payload["thinking"] = {
+                        "type": "enabled",
+                        "budget_tokens": budget,
+                    }
             # Pass through any other extra_body keys
             for k, v in request.extra_body.items():
-                if k not in ("chat_template_kwargs",):
+                if k not in ("chat_template_kwargs", "thinking"):
                     payload[k] = v
 
         if request.temperature is not None and "thinking" not in payload:
@@ -163,6 +189,16 @@ class AnthropicProvider(LLMProvider):
         result: list[dict] = []
         for msg in messages:
             result.append(self._convert_message(msg))
+        # Prompt caching: add cache_control breakpoint on the last
+        # content block of the last user message. This creates a cache
+        # boundary at the most recent turn so prefix tokens up to this
+        # point can be reused on the next request.
+        for i in range(len(result) - 1, -1, -1):
+            if result[i].get("role") == "user":
+                content = result[i].get("content")
+                if isinstance(content, list) and content:
+                    content[-1]["cache_control"] = {"type": "ephemeral"}
+                break
         return result
 
     def _convert_message(self, msg: Message) -> dict:
@@ -225,6 +261,25 @@ class AnthropicProvider(LLMProvider):
                         "data": block.data,
                     },
                 })
+            elif isinstance(block, ServerToolUseBlock):
+                entry = {
+                    "type": "server_tool_use",
+                    "id": block.id,
+                    "name": block.name,
+                    "input": block.input,
+                }
+                if block.signature:
+                    entry["signature"] = block.signature
+                content.append(entry)
+            elif isinstance(block, ServerToolResultBlock):
+                entry = {
+                    "type": "server_tool_result",
+                    "tool_use_id": block.tool_use_id,
+                    "content": block.content,
+                }
+                if block.signature:
+                    entry["signature"] = block.signature
+                content.append(entry)
 
         # Single text block — keep as content array (Anthropic wants it)
         return {"role": msg.role, "content": content}
@@ -344,6 +399,19 @@ class AnthropicProvider(LLMProvider):
                     name=block.get("name", ""),
                     input=block.get("input", {}),
                 ))
+            elif btype == "server_tool_use":
+                content_blocks.append(ServerToolUseBlock(
+                    id=block.get("id", ""),
+                    name=block.get("name", ""),
+                    input=block.get("input", {}),
+                    signature=block.get("signature", ""),
+                ))
+            elif btype == "server_tool_result":
+                content_blocks.append(ServerToolResultBlock(
+                    tool_use_id=block.get("tool_use_id", ""),
+                    content=block.get("content", ""),
+                    signature=block.get("signature", ""),
+                ))
 
         usage_data = data.get("usage", {})
         usage = TokenUsage(
@@ -398,6 +466,10 @@ class _AnthropicStreamIterator:
         # Track block types by index
         block_types: dict[int, str] = {}
         block_ids: dict[int, str] = {}
+        # Accumulate signature deltas per block index (thinking + server_tool_*)
+        block_signatures: dict[int, list[str]] = {}
+        # Accumulate server tool block data for final assembly
+        server_blocks: dict[int, dict] = {}
         final_usage: dict = {}
         stop_reason = "end_turn"
 
@@ -442,6 +514,8 @@ class _AnthropicStreamIterator:
                         id=cb.get("id", ""),
                         name=cb.get("name", ""),
                     ))
+                elif cb_type in ("server_tool_use", "server_tool_result"):
+                    server_blocks[idx] = dict(cb)
 
             elif dtype == "content_block_delta":
                 idx = data.get("index", 0)
@@ -465,16 +539,41 @@ class _AnthropicStreamIterator:
                             partial_json=partial,
                         ))
                 elif delta_type == "signature_delta":
-                    # Signature deltas are accumulated by the runtime
-                    # during thinking assembly (P4). We don't emit a
-                    # separate event — the final signature is on the
-                    # content_block_stop. For now, just skip.
-                    pass
+                    sig_part = delta.get("signature", "")
+                    if sig_part:
+                        block_signatures.setdefault(idx, []).append(sig_part)
 
             elif dtype == "content_block_stop":
-                # Nothing special needed — block assembly is done by
-                # the runtime's post-stream logic.
-                pass
+                idx = data.get("index", 0)
+                btype = block_types.get(idx, "")
+                sig = "".join(block_signatures.pop(idx, []))
+                # Emit accumulated signature for thinking blocks
+                if btype == "thinking" and sig:
+                    events.append(StreamThinkingSignature(signature=sig))
+                # Emit server tool blocks with accumulated signatures
+                elif btype == "server_tool_use" and idx in server_blocks:
+                    sb = server_blocks.pop(idx)
+                    events.append(StreamServerToolBlock(
+                        block=ServerToolUseBlock(
+                            id=sb.get("id", ""),
+                            name=sb.get("name", ""),
+                            input=sb.get("input", {}),
+                            signature=sig,
+                        )
+                    ))
+                elif btype == "server_tool_result" and idx in server_blocks:
+                    sb = server_blocks.pop(idx)
+                    # server_tool_result content can be a list or string
+                    content = sb.get("content", "")
+                    if isinstance(content, list):
+                        content = json.dumps(content)
+                    events.append(StreamServerToolBlock(
+                        block=ServerToolResultBlock(
+                            tool_use_id=sb.get("tool_use_id", ""),
+                            content=content,
+                            signature=sig,
+                        )
+                    ))
 
             elif dtype == "message_delta":
                 delta = data.get("delta", {})

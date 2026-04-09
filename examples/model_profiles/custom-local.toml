@@ -1,0 +1,30 @@
+# Custom local model template
+#
+# Use this as a starting point for any self-hosted model served via
+# vLLM, Ollama, or another OpenAI-compatible API.
+
+name = "My Custom Model"
+
+[provider]
+type = "openai-compat"
+native_tools = true        # set false if model doesn't support function calling
+supports_reasoning = false  # set true for reasoning models (DeepSeek-R1, Qwen3, etc.)
+supports_images = false
+
+[streaming]
+implicit_thinking = false   # set true if chat template injects <think> prefix
+reasoning_field = ""        # e.g. "reasoning_content" for DeepSeek/Qwen
+
+[thinking]
+thinking_extra_body_format = "chat_template_kwargs"
+default_thinking_budget = 8192
+
+[deployment]
+is_local = true             # enables unlimited token upgrades
+
+[limits]
+max_output_tokens = 4096
+context_window = 32768
+
+[routing]
+tier_c_model = ""           # override to use a different model for skill routing

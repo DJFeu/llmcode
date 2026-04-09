@@ -499,7 +499,10 @@ class SkillRouter:
         # Tier C fallback
         if tier_c_enabled and self._provider:
             _tc_start = time.monotonic()
-            model = self._config.tier_c_model or self._model
+            # Resolve tier_c model: profile > config > self._model
+            from llm_code.runtime.model_profile import get_profile
+            _profile = get_profile(self._model)
+            model = _profile.tier_c_model or self._config.tier_c_model or self._model
             _tc_timeout = getattr(self._config, "tier_c_timeout", 15.0)
             logger.debug(
                 "skill_router tier C starting: model=%s cjk=%s timeout=%.0fs",

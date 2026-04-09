@@ -207,7 +207,14 @@ class TestPayloadBuilding:
         p = _make_provider()
         req = _make_request(system="You are helpful.")
         payload = p._build_payload(req, stream=False)
-        assert payload["system"] == "You are helpful."
+        # System prompt is a content block array with cache_control
+        assert payload["system"] == [
+            {
+                "type": "text",
+                "text": "You are helpful.",
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
 
     def test_tools_in_payload(self) -> None:
         p = _make_provider()
@@ -221,6 +228,8 @@ class TestPayloadBuilding:
         assert len(payload["tools"]) == 1
         assert payload["tools"][0]["name"] == "read_file"
         assert "input_schema" in payload["tools"][0]
+        # Last tool should have cache_control
+        assert payload["tools"][-1]["cache_control"] == {"type": "ephemeral"}
 
     def test_thinking_enabled(self) -> None:
         p = _make_provider()
