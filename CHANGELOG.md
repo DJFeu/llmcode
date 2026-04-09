@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased — Wave2-6: Dialog launcher (API + Scripted + Headless)
+
+### Added
+- **`llm_code.tui.dialogs` package** with unified `Dialogs` Protocol (4 async methods: `confirm` / `select` / `text` / `checklist`), generic `Choice[T]` frozen dataclass (`value`, `label`, `hint`, `disabled`), and two explicit exception types (`DialogCancelled`, `DialogValidationError`).
+- **`ScriptedDialogs`** deterministic test backend. Pre-enqueue responses via `push_confirm` / `push_select` / `push_text` / `push_checklist` / `push_cancel`. `.calls` log captures exact prompt text; `assert_drained()` at teardown catches unconsumed responses. Validates enqueued select / checklist values are actually in the passed-in choice list.
+- **`HeadlessDialogs`** stdin/stderr line-based backend for CI, pipe mode, `--yes` runs, SSH without TTY. Writes prompts to stderr so piped stdout stays clean. Multi-line text is blank-line terminated. Select uses 1-based indices. Checklist parses comma-separated indices. EOF / out-of-range / disabled / non-integer → `DialogCancelled`. `assume_yes=True` short-circuits every prompt to its default with zero I/O. `confirm(danger=True)` renders a ⚠ prefix.
+
+### Scope discipline
+This PR lands the **API + two non-interactive backends only**. The Textual backend (modal screens inside the running app) and the call-site migration sweep (~12 existing hand-rolled prompts across `llm_code/tui/`) are deferred to follow-up PRs so this change stays focused and reviewable:
+
+- No existing TUI code is modified — every hand-rolled prompt continues to work exactly as before.
+- New code that needs a dialog can already use `ScriptedDialogs` in tests and `HeadlessDialogs` in CI.
+
+### Tests
+- **`tests/test_tui/test_dialogs_wave2_6.py`** — 36 new tests:
+  - 4 Protocol surface + `Choice` type tests
+  - 13 `ScriptedDialogs` tests (push/empty-queue/cancel, value membership validation, validator runs, bounds enforcement, drain assertion, call log)
+  - 16 `HeadlessDialogs` tests (confirm y/n/blank/EOF/danger, `assume_yes` short-circuit, select index/default/out-of-range/disabled, text single/default/multiline/validator, checklist comma/blank/min/max)
+  - 3 cross-backend contract tests (shared `_drive_simple_confirm` helper exercises both backends against the same spec)
+- Full `tests/test_runtime/` + `tests/test_api/` + `tests/test_tui/` sweep: **2008 passed**, no regressions.
+
+### Deferred
+- `TextualDialogs` backend (needs screen push/pop integration)
+- Call-site migration sweep (worktree confirm, permission prompt, skill picker, commit-message input, settings modal, quick-open, MCP approval, etc.)
+- Removal of legacy prompt helpers after migration
+
 ## v1.12.0 (2026-04-08)
 
 **Highlights:**
