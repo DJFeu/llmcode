@@ -237,7 +237,11 @@ def _register_core_tools(registry: "ToolRegistry", config: "RuntimeConfig") -> N
         ReadFileTool(),
         WriteFileTool(),
         EditFileTool(),
-        BashTool(default_timeout=bash_timeout, compress_output=config.output_compression),
+        BashTool(
+            default_timeout=bash_timeout,
+            compress_output=config.output_compression,
+            sandbox=_make_sandbox(config),
+        ),
         GlobSearchTool(),
         GrepSearchTool(),
         NotebookReadTool(),
@@ -263,6 +267,18 @@ def _register_core_tools(registry: "ToolRegistry", config: "RuntimeConfig") -> N
             registry.register(cls())
         except ValueError:
             pass
+
+
+def _make_sandbox(config):
+    """Create a DockerSandbox if sandbox is configured."""
+    try:
+        sandbox_cfg = getattr(config, "sandbox", None)
+        if sandbox_cfg is not None and getattr(sandbox_cfg, "enabled", False):
+            from llm_code.sandbox.docker_sandbox import DockerSandbox
+            return DockerSandbox(sandbox_cfg)
+    except Exception:
+        pass
+    return None
 
 
 class LLMCodeTUI(App):  # noqa: E302
@@ -1061,6 +1077,15 @@ class LLMCodeTUI(App):  # noqa: E302
             lsp_manager=self._lsp_manager,
             dialogs=self._dialogs,
         )
+        # Register plan mode tools (need runtime reference)
+        try:
+            from llm_code.tools.plan_mode import EnterPlanModeTool, ExitPlanModeTool
+            if self._tool_reg:
+                self._tool_reg.register(EnterPlanModeTool(runtime=self._runtime))
+                self._tool_reg.register(ExitPlanModeTool(runtime=self._runtime))
+        except Exception:
+            pass
+
         # Install MCP event sink so non-root server spawns surface an
         # inline approval widget.
         try:

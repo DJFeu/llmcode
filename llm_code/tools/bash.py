@@ -29,6 +29,7 @@ _log = logging.getLogger(__name__)
 class BashInput(BaseModel):
     command: str
     timeout: int = 30
+    pty: bool = False  # use PTY mode for interactive commands
 
 
 # ---------------------------------------------------------------------------
@@ -412,10 +413,18 @@ def classify_command(
 
 
 class BashTool(Tool):
-    def __init__(self, default_timeout: int = 30, max_output: int = 8000, *, compress_output: bool = True) -> None:
+    def __init__(
+        self,
+        default_timeout: int = 30,
+        max_output: int = 8000,
+        *,
+        compress_output: bool = True,
+        sandbox: object | None = None,
+    ) -> None:
         self._default_timeout = default_timeout
         self._max_output = max_output
         self._compress_output = compress_output
+        self._sandbox = sandbox
 
     @property
     def name(self) -> str:
@@ -435,6 +444,11 @@ class BashTool(Tool):
                     "type": "integer",
                     "description": "Timeout in seconds (default 30)",
                     "default": 30,
+                },
+                "pty": {
+                    "type": "boolean",
+                    "description": "Use PTY mode for interactive commands (e.g. git rebase -i)",
+                    "default": False,
                 },
             },
             "required": ["command"],
@@ -479,6 +493,7 @@ class BashTool(Tool):
         command: str = args["command"]
         _raw_timeout = int(args.get("timeout", self._default_timeout))
         timeout: int | None = None if _raw_timeout <= 0 else _raw_timeout
+        use_pty: bool = args.get("pty", False)
 
         result = classify_command(command)
         if result.is_blocked:
@@ -488,6 +503,8 @@ class BashTool(Tool):
                 metadata={"dangerous": True, "rule_ids": list(result.rule_ids)},
             )
 
+        if use_pty:
+            return self._run_pty(command, timeout or 30)
         return self._run(command, timeout)
 
     def execute_with_progress(
@@ -579,8 +596,67 @@ class BashTool(Tool):
             output = result.output
         return ToolResult(output=output, is_error=is_error)
 
+    def _run_pty(self, command: str, timeout: int) -> ToolResult:
+        """Execute command in a PTY for interactive programs."""
+        from llm_code.sandbox.pty_runner import run_pty
+        result = run_pty(command, timeout=timeout)
+        output = result.output
+        if result.timed_out:
+            return ToolResult(
+                output=f"Command timed out after {timeout}s (pty): {command}",
+                is_error=True,
+            )
+        if len(output) > self._max_output:
+            output = output[: self._max_output] + f"\n... [output truncated at {self._max_output} chars]"
+        output, findings = scan_output(output)
+        if findings:
+            _log.warning("Secrets redacted from bash output: %s", findings)
+        is_error = result.returncode != 0
+        if self._compress_output:
+            compressed = compress_output(command, output, is_error=is_error)
+            output = compressed.output
+        return ToolResult(
+            output=output or "(no output)",
+            is_error=is_error,
+            metadata={"pty": True},
+        )
+
     def _run(self, command: str, timeout: int) -> ToolResult:
-        """Simple blocking run (used by execute())."""
+        """Simple blocking run (used by execute()).
+
+        If a Docker sandbox is configured and available, the command
+        runs inside the container. Otherwise falls back to host exec.
+        """
+        # Try sandbox execution first
+        if self._sandbox is not None and self._sandbox.is_available():
+            if self._sandbox.ensure_running():
+                sr = self._sandbox.run(command, timeout=timeout)
+                output = sr.stdout
+                if sr.stderr:
+                    output = (output + sr.stderr).strip()
+                else:
+                    output = output.rstrip("\n")
+                if sr.timed_out:
+                    return ToolResult(
+                        output=f"Command timed out after {timeout}s (sandbox): {command}",
+                        is_error=True,
+                    )
+                if len(output) > self._max_output:
+                    output = output[: self._max_output] + f"\n... [output truncated at {self._max_output} chars]"
+                output, findings = scan_output(output)
+                if findings:
+                    _log.warning("Secrets redacted from bash output: %s", findings)
+                is_error = sr.returncode != 0
+                if self._compress_output:
+                    result = compress_output(command, output, is_error=is_error)
+                    output = result.output
+                return ToolResult(
+                    output=output or "(no output)",
+                    is_error=is_error,
+                    metadata={"sandbox": True},
+                )
+
+        # Host execution (no sandbox)
         try:
             proc = subprocess.run(
                 command,

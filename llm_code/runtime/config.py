@@ -220,6 +220,11 @@ class BashRulesConfig:
     rules: tuple[BashRule, ...] = ()
 
 
+def _default_sandbox_config():
+    from llm_code.sandbox.docker_sandbox import SandboxConfig
+    return SandboxConfig()
+
+
 @dataclass(frozen=True)
 class EnterpriseAuthConfig:
     provider: str = ""  # "" | "none" | "oidc"
@@ -340,6 +345,7 @@ class RuntimeConfig:
     max_budget_usd: float | None = None
     compressor: CompressorConfig = field(default_factory=CompressorConfig)
     bash_rules: BashRulesConfig = field(default_factory=BashRulesConfig)
+    sandbox: object = field(default_factory=lambda: _default_sandbox_config())
     enterprise: EnterpriseConfig = field(default_factory=EnterpriseConfig)
     output_compression: bool = True
     auto_commit: bool = False
