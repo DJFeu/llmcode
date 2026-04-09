@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased — Empty-response diagnostics: debug log + unclassified variant
+
+### Added
+- **Diagnostic log at the TUI empty-response fallback** captures the full state in one `logger.warning` line so a `-v` run has everything needed to debug the cause: `out_tokens`, `thinking_len`, `saw_tool_call`, `assistant_added`, `stop_reason`, and a 120-char `thinking_head` preview. Previously the user only saw a generic i18n message with no observable state — the only way to investigate was to hand-instrument and re-run.
+- **New "unclassified tokens" diagnostic variant** (`_EMPTY_RESPONSE_UNCLASSIFIED_EN` / `_ZH`) for the specific case where the model emitted N output tokens but the TUI could not route *any* of them to visible text, thinking, or a dispatched tool call. Includes the actual token count in the message so the user can compare against their `max_tokens` / `thinking_budget` config without leaving the TUI. Classic causes: malformed `<think>` tags that slipped past the parser, a partial `<tool_call>` that got stripped but not dispatched, or truncation from a low output-token cap.
+- **`_empty_response_message` helper accepts `turn_output_tokens` and `thinking_buffer_len` keyword arguments** (both default 0 for backward-compat with existing callers). The decision tree is now:
+  1. Saw a dispatched tool call → tool-call variant (actionable: "ask for a direct answer")
+  2. Tokens emitted but nothing in thinking buffer → **unclassified variant (new)** with token count
+  3. Otherwise → classic "thinking exhausted the budget" variant
+
+### Context
+Found by investigating a Qwen3.5-122B screenshot where the user saw the classic "模型沒有產生任何回應 — 可能 thinking 用光輸出 token" message after a 24-output-token turn. The `-q` oneshot path returned a correct 282-token response for the same query, isolating the bug to the TUI layer (runtime layer is fine — wave2-1a P3 assembly handles thinking blocks correctly). The empty-response fallback at `app.py:L1665` pre-dates wave2 and had no observability — this PR adds the single missing log line so the next occurrence is fully diagnosable.
+
+### Tests
+- **`tests/test_tui/test_empty_response_i18n.py`** — 6 new tests:
+  - Unclassified variant in English includes the token count and references `max_tokens`/`budget`
+  - Unclassified variant in Chinese includes the token count and references `max_tokens`/`thinking_budget`
+  - Classic "thinking exhausted" variant fires when thinking buffer has content (even with positive tokens)
+  - Classic variant fires when both tokens and thinking are zero (pre-wave2 default)
+  - Tool-call variant still wins precedence over unclassified when both conditions could apply
+  - Legacy callers without the new kwargs still get the classic message (backward-compat)
+- Existing 26 `test_empty_response_i18n.py` tests still pass — **32 total**, no regressions.
+- Full `tests/test_tui/` sweep: **372 passed**.
+
 ## Unreleased — Wave2-1a P5: conversation_db thinking persistence + FTS5 (wave2-1a COMPLETE)
 
 ### Added

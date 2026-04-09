@@ -76,6 +76,24 @@ _EMPTY_RESPONSE_THINKING_ZH = (
     "(模型沒有產生任何回應 — 可能 thinking 用光輸出 token。"
     "試試重新表達或加長 context window。)"
 )
+# New (empty-response-diagnostics): distinct variant for "the model
+# emitted N tokens but none of them landed in the visible buffer nor
+# the thinking buffer". This is different from the thinking-exhausted
+# case: here we KNOW tokens came back, we just couldn't classify them.
+# Typical causes: malformed <think> tags that slipped past the parser,
+# a partial tool_call that got stripped but not dispatched, or a
+# truncated response caused by a low max_tokens / thinking_budget cap.
+_EMPTY_RESPONSE_UNCLASSIFIED_EN = (
+    "(The model emitted {n} output token(s) but none were visible text, "
+    "thinking, or a dispatched tool call. This is usually a truncated "
+    "response — check max_tokens / thinking_budget or rerun with -v to "
+    "capture the raw stream.)"
+)
+_EMPTY_RESPONSE_UNCLASSIFIED_ZH = (
+    "(模型輸出了 {n} 個 token,但全部都不是可見文字、thinking 內容,"
+    "也不是成功派發的工具呼叫。通常是輸出被截斷 — 檢查 max_tokens / "
+    "thinking_budget 設定,或用 -v 重跑以擷取 raw stream。)"
+)
 
 
 def _session_is_cjk(user_input: str, session_messages: Any = None) -> bool:
@@ -114,14 +132,39 @@ def _empty_response_message(
     saw_tool_call: bool,
     user_input: str,
     session_messages: Any = None,
+    turn_output_tokens: int = 0,
+    thinking_buffer_len: int = 0,
 ) -> str:
-    """Pick the right empty-response diagnostic message, matching the
-    user's language (CJK vs non-CJK), looking at the current input AND
-    the recent session history so a Chinese user typing a short follow-up
-    like "1" still sees Chinese."""
+    """Pick the right empty-response diagnostic, matching the user's
+    language (CJK vs non-CJK) and the *reason* the visible buffer is
+    empty.
+
+    Decision tree:
+
+    1. The model dispatched a tool call (``saw_tool_call=True``) but
+       produced no visible reply → tool-call variant. This is the
+       common case where the model tried to call a tool for a query
+       that didn't actually need one.
+    2. The model emitted some output tokens AND we captured nothing
+       in the thinking buffer either → ``unclassified`` variant. We
+       know tokens came back but could not route them anywhere — this
+       is usually a truncated response. The message includes the
+       token count so the user can compare against their configured
+       ``max_tokens`` / ``thinking_budget``.
+    3. Otherwise → the classic "thinking exhausted the budget"
+       variant. This is the thinking-mode misconfiguration path.
+    """
     zh = _session_is_cjk(user_input, session_messages)
     if saw_tool_call:
         return _EMPTY_RESPONSE_TOOL_CALL_ZH if zh else _EMPTY_RESPONSE_TOOL_CALL_EN
+    # Tokens came back but we classified none of them — pick the
+    # unclassified variant so the user knows the token counter is
+    # non-zero and can check max_tokens.
+    if turn_output_tokens > 0 and thinking_buffer_len == 0:
+        template = (
+            _EMPTY_RESPONSE_UNCLASSIFIED_ZH if zh else _EMPTY_RESPONSE_UNCLASSIFIED_EN
+        )
+        return template.format(n=turn_output_tokens)
     return _EMPTY_RESPONSE_THINKING_ZH if zh else _EMPTY_RESPONSE_THINKING_EN
 
 
@@ -1625,11 +1668,29 @@ class LLMCodeTUI(App):  # noqa: E302
             # only a <tool_call> XML block — which gets stripped from the
             # visible stream — for a query that doesn't actually need a tool.
             # Pick message language to match the user's input language.
+            #
+            # Diagnostic log: everything the user might need to debug
+            # the empty-response cause is captured in a single warning
+            # line so `-v` runs have the full state immediately.
+            _thinking_len = len(thinking_buffer)
+            logger.warning(
+                "empty response fallback: out_tokens=%d thinking_len=%d "
+                "saw_tool_call=%s assistant_added=%s stop_reason=%s "
+                "thinking_head=%r",
+                turn_output_tokens,
+                _thinking_len,
+                _saw_tool_call_this_turn,
+                assistant_added,
+                getattr(self, "_last_stop_reason", "unknown"),
+                thinking_buffer[:120],
+            )
             chat.add_entry(AssistantText(
                 _empty_response_message(
                     saw_tool_call=_saw_tool_call_this_turn,
                     user_input=user_input,
                     session_messages=getattr(self._runtime, "session", None) and self._runtime.session.messages,
+                    turn_output_tokens=turn_output_tokens,
+                    thinking_buffer_len=_thinking_len,
                 )
             ))
 
