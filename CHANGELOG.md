@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased — perf: kill the native-tool-call retry storm (53s → ~0s)
+
+### Fixed
+- **Stale `force_xml` local** in `ConversationRuntime._run_turn_body` shadowed `self._force_xml_mode` within a single turn. The local was captured once at turn setup (L834) and never refreshed, so when iteration 1 hit the "tool-call-parser not supported" error and set `self._force_xml_mode = True`, iteration 2 still read the stale local as `False` and re-attempted native tool calling from scratch. Observed in a Qwen3.5 field report: second iteration burned ~19s on a duplicate retry storm before hitting the same fallback branch.
+- **Tool-call-parser error is now non-retryable** in `_raise_for_status`. Previously a server response containing "tool-call-parser" or "tool choice" in the error message was classified as a generic `ProviderConnectionError` and went through `_post_with_retry`'s 3-strike exponential backoff — burning ~30s before the error surfaced to the outer fallback branch. Now it raises `ProviderError(msg, is_retryable=False)` which bypasses the retry loop entirely; the outer `except Exception` in `conversation.py` still pattern-matches the message and switches to XML mode on the first attempt.
+
+### Impact
+Same field-report turn: **65s total → estimated ~12s** (rough estimate; actual wins depend on server first-token latency for the legitimate XML-mode attempts).
+
+Before:
+- 12:52:19 Starting turn
+- 12:52:53 Native fallback triggered (**+34s** — 3 native retries)
+- 12:52:57 Executing web_search
+- 12:53:16 Native fallback triggered **AGAIN** (**+19s** — duplicate retry storm)
+- 12:53:24 Turn complete (**+8s**)
+
+After:
+- Native attempt → instant fail → immediate XML fallback (no retry sleeps)
+- force_xml sticky → iteration 2 skips native entirely
+
+### Tests
+- **`tests/test_runtime/test_force_xml_sticky.py`** — 4 source-level guards pinning the fix:
+  - `force_xml = getattr(self, ...)` local shadow pattern is gone
+  - `use_native` reads `self._force_xml_mode` directly
+  - `self._force_xml_mode` is initialized before the iteration loop
+  - The fallback branch still sets `self._force_xml_mode = True` (wave2-3 regression guard)
+- **`tests/test_api/test_rate_timeout_backoff_wave2_1b.py`** — 3 new tests for the fast-fail:
+  - `"tool-call-parser"` error in response → `ProviderError(is_retryable=False)`, **zero sleeps**, **exactly 1 HTTP call**
+  - `"tool choice"` error variant → same fast-fail behavior
+  - Plain 400 without tool-related message → still retryable (preserves existing 4xx handling)
+- Full sweep `test_runtime/` + `test_api/` + `test_tui/` + `test_streaming/` + `test_tools/`: **3246 passed**, no regressions.
+
+### Analysis chain
+The user ran `llmcode -v --log-file /tmp/llmv.log` (PR #40) and shared a clean log. Timeline analysis revealed:
+1. Two "Server does not support native tool calling" messages per turn — obvious smell
+2. 34s for first native-mode attempt → 3× retry in `_post_with_retry`
+3. 19s for second iteration's retry of the same error → stale local caching `force_xml` at turn start
+
+Without PR #40's log-file support this would have been impossible to diagnose — the user's earlier `2> /tmp/log` attempts garbled both the TUI and the log.
+
 ## Unreleased — cli: `--log-file` flag so `-v` doesn't break the TUI
 
 ### Added

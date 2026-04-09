@@ -266,3 +266,77 @@ async def test_auth_error_still_not_retried() -> None:
     with pytest.raises(ProviderAuthError):
         await provider._post_with_retry({"model": "test"})
     assert provider._client.calls == 1  # type: ignore[attr-defined]
+
+
+# ----- Tool-call-parser fast-fail (screenshot 3 field report) -----
+
+from llm_code.api.errors import ProviderError  # noqa: E402
+
+
+@pytest.mark.asyncio
+async def test_tool_call_parser_error_is_non_retryable(monkeypatch) -> None:
+    """When the server returns an error mentioning 'tool-call-parser'
+    or 'tool choice', _raise_for_status raises ProviderError with
+    is_retryable=False. The retry loop should NOT re-attempt — the
+    outer fallback in conversation.py will switch to XML mode and
+    retry with tools=[]. Without this fast-fail, _post_with_retry
+    burns ~30s on exponential backoff before surfacing the error."""
+    sleeps: list[float] = []
+
+    async def _record_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("llm_code.api.openai_compat.asyncio.sleep", _record_sleep)
+
+    provider = _make_provider([
+        httpx.Response(
+            status_code=400,
+            content=b'{"error": {"message": "tool-call-parser not configured"}}',
+        ),
+    ])
+    with pytest.raises(ProviderError) as excinfo:
+        await provider._post_with_retry({"model": "test"})
+    assert excinfo.value.is_retryable is False
+    assert "tool-call-parser" in str(excinfo.value)
+    # CRITICAL: zero sleeps — no retry budget was spent
+    assert sleeps == []
+    # CRITICAL: exactly one call to the server
+    assert provider._client.calls == 1  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_tool_choice_error_is_also_non_retryable(monkeypatch) -> None:
+    """Same as above but the other known error message variant."""
+    sleeps: list[float] = []
+    async def _record_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+    monkeypatch.setattr("llm_code.api.openai_compat.asyncio.sleep", _record_sleep)
+
+    provider = _make_provider([
+        httpx.Response(
+            status_code=400,
+            content=b'{"error": {"message": "invalid tool choice parameter"}}',
+        ),
+    ])
+    with pytest.raises(ProviderError) as excinfo:
+        await provider._post_with_retry({"model": "test"})
+    assert excinfo.value.is_retryable is False
+    assert sleeps == []
+
+
+@pytest.mark.asyncio
+async def test_plain_400_without_tool_message_still_retryable(monkeypatch) -> None:
+    """A generic 4xx (not tool-call related) stays on the retry path
+    so existing behavior for other 4xx errors isn't affected."""
+    sleeps: list[float] = []
+    async def _record_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+    monkeypatch.setattr("llm_code.api.openai_compat.asyncio.sleep", _record_sleep)
+
+    provider = _make_provider([
+        httpx.Response(status_code=400, content=b'{"error": {"message": "bad request"}}'),
+        _ok_response(),
+    ])
+    await provider._post_with_retry({"model": "test"})
+    # Should have retried at least once (1s backoff)
+    assert sleeps == [1.0]
