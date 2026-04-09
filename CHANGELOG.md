@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased — Wave2-1c: Empty response counter + context pressure pre-warning
+
+### Added
+- **`_consecutive_empty_responses`** counter on `ConversationRuntime`. Empty turn (no text, no tool calls) → increment; productive turn → reset. **2nd in a row** injects a nudge user message (`[system nudge] Your previous response was empty...`); **3rd** raises `RuntimeError` so a degenerate provider state cannot burn the turn budget on nothing.
+- **`empty_assistant_response` hook event** fires on every empty response with `{consecutive, model}`. Observers see the escalation unfold regardless of whether nudge/abort thresholds have been reached.
+- **`context_pressure` hook event** fires once per ascending bucket transition **before** the 100% compaction trigger. Buckets: `low` (<70%), `mid` (70–85%), `high` (≥85%). Payload: `{bucket, ratio, est_tokens, limit}`. Compaction resets the bucket so the next ascending crossing re-fires.
+- Both new event names in `_EVENT_GROUP`: `context.context_pressure` + `session.empty_assistant_response` so `context.*` / `session.*` glob subscribers pick them up automatically.
+
+### Fixed
+- Empty response loops silently burned turn budgets (the old `if assistant_blocks:` just skipped assembly with no logging or counter).
+- Context-window pressure was invisible to observers until the 100%-hit compaction log — no pre-emptive escape hatch.
+
+### Tests
+- **`tests/test_runtime/test_wave2_1c_empty_context.py`** — 24 new tests: 3 hook registration, 10 pressure buckets (9 parametrized + zero-limit guard), 5 pressure transitions (ascending mid / mid→high, no spam within bucket, silent descent, refire after reset), 5 empty-counter state machine (continue/nudge/abort/reset/hook-on-every-empty), 1 source-level guard on runtime `__init__` sentinels.
+- Full sweep: **1666 passed**, no regressions.
+
+### Wave2-1 progress
+| Sub | Status | PR |
+|---|---|---|
+| 1a P1–P5 thinking blocks | ✅ | #26–#30 |
+| 1b Retry-After + ProviderTimeoutError | ✅ | #31 |
+| **1c Empty counter + context pre-warn** | **✅** | **this** |
+| 1d CancelledError cleanup | — | — |
+
 ## Unreleased — Wave2-1b: Retry-After header + ProviderTimeoutError
 
 ### Added
