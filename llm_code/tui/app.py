@@ -2974,7 +2974,6 @@ class LLMCodeTUI(App):  # noqa: E302
         key, value = parts[0], parts[1]
         try:
             from llm_code.tui.settings_modal import apply_setting
-            import dataclasses
             self._config = apply_setting(self._config, key, value)
             if key == "model":
                 self._init_runtime()
