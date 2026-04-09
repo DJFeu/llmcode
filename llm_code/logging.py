@@ -2,17 +2,49 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
+from pathlib import Path
 
 
-def setup_logging(verbose: bool = False) -> logging.Logger:
-    """Configure root llm_code logger. Safe to call multiple times."""
+def setup_logging(
+    verbose: bool = False,
+    log_file: str | Path | None = None,
+) -> logging.Logger:
+    """Configure root llm_code logger. Safe to call multiple times.
+
+    Destination priority:
+      1. Explicit ``log_file`` argument (CLI flag ``--log-file PATH``)
+      2. ``LLMCODE_LOG_FILE`` environment variable
+      3. Default: ``sys.stderr``
+
+    When a log file is used the StreamHandler is NOT added, so the
+    TUI's stderr stream is never polluted. This matters because
+    ``-v 2> /tmp/log`` would otherwise interleave Python logging
+    output with Textual's own stderr writes, which completely
+    breaks the TUI rendering for anyone who wants to capture a
+    verbose log during a live session.
+    """
     logger = logging.getLogger("llm_code")
     if logger.handlers:
         return logger
 
     level = logging.DEBUG if verbose else logging.WARNING
-    handler = logging.StreamHandler(sys.stderr)
+
+    # Resolve log file destination. Explicit arg wins; then env var.
+    resolved_log_file = log_file or os.environ.get("LLMCODE_LOG_FILE")
+
+    if resolved_log_file:
+        path = Path(resolved_log_file).expanduser()
+        # Create parent directory if it doesn't exist so the caller
+        # can pass ~/.llmcode/logs/today.log without pre-creating it.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler: logging.Handler = logging.FileHandler(
+            path, mode="a", encoding="utf-8"
+        )
+    else:
+        handler = logging.StreamHandler(sys.stderr)
+
     handler.setFormatter(
         logging.Formatter(
             "%(asctime)s [%(levelname)s] %(name)s: %(message)s",

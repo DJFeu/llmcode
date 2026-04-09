@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased — cli: `--log-file` flag so `-v` doesn't break the TUI
+
+### Added
+- **`--log-file PATH`** CLI flag routes verbose logs to a file instead of `sys.stderr`. Required when running the TUI with `-v` — otherwise the user's natural instinct to do `llmcode -v 2> /tmp/log` interleaves Python logging output with Textual's own stderr writes, which completely breaks the TUI rendering (terminal fills with raw ANSI escape codes mixed with log lines).
+- **`LLMCODE_LOG_FILE` environment variable** as the secondary source for the log destination, so users who want logs everywhere can set it once in their shell rc instead of passing the flag on every invocation.
+- **Destination priority**: explicit `--log-file` > `LLMCODE_LOG_FILE` env > `sys.stderr` (existing default). Tilde expansion is honored so callers can pass `~/.llmcode/logs/debug.log`. Parent directories are created on demand.
+- **`setup_logging(verbose, log_file)`** now accepts the new kwarg. When a log file is chosen, a `FileHandler` is installed and the `StreamHandler(sys.stderr)` is NOT — the TUI's stderr stream stays clean.
+
+### Context
+Found while investigating the Qwen3.5 TUI field reports. The user tried `llmcode -v 2> /tmp/llmv.log` to capture a verbose log for me to diagnose slowness — the command started the TUI but stderr redirect grabbed Textual's terminal control codes along with the log messages, producing a garbled log file and a broken TUI display ("卡住很久了"). The log file contained full TUI frame snapshots in ANSI escape sequences instead of clean log lines. No amount of user education can fix this — the right answer is a first-class file destination for logs that bypasses stderr entirely.
+
+### Tests
+- **`tests/test_logging_file.py`** — 8 new tests:
+  - Default destination is stderr (pre-existing behavior preserved)
+  - Explicit `log_file` argument installs a FileHandler, not StreamHandler
+  - Messages actually land in the file (write + read roundtrip)
+  - Parent directory auto-created so `~/.llmcode/logs/today.log` just works
+  - `LLMCODE_LOG_FILE` env var used when no explicit arg
+  - Explicit arg overrides env var
+  - `~` path expansion honored
+  - `verbose=False` still accepts log_file (destination is independent of level)
+- Full sweep `test_logging_file.py` + `test_runtime/` + `test_api/` + `test_tui/` + `test_streaming/` + `test_tools/`: **3247 passed**, no regressions.
+
+### Usage
+```bash
+# Previously broken:
+llmcode -v 2> /tmp/llmv.log          # TUI garbled, log polluted with ANSI
+
+# Now works cleanly:
+llmcode -v --log-file /tmp/llmv.log  # TUI clean, log is just log lines
+LLMCODE_LOG_FILE=/tmp/llmv.log llmcode -v  # same, via env var
+```
+
 ## Unreleased — parser: recognize bare ``<NAME>JSON</NAME>`` tool call variant (Hermes variant 5)
 
 ### Fixed
