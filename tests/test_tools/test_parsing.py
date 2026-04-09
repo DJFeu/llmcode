@@ -526,9 +526,14 @@ class TestBareNameTagVariant:
         text = '<web_search>{not valid json}</web_search>'
         assert parse_tool_calls(text, None) == []
 
-    def test_mismatched_close_tag_rejected(self):
+    def test_mismatched_close_tag_accepted(self):
+        """Qwen3.5 sometimes emits mismatched closing tags like
+        ``<web_search>JSON</search>``. These should still parse."""
         text = '<web_search>{"q": "x"}</other>'
-        assert parse_tool_calls(text, None) == []
+        calls = parse_tool_calls(text, None)
+        assert len(calls) == 1
+        assert calls[0].name == "web_search"
+        assert calls[0].args == {"q": "x"}
 
     def test_scalar_json_rejected(self):
         """Only object bodies are valid tool args. A scalar / list

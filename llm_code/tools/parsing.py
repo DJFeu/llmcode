@@ -57,10 +57,12 @@ _HERMES_PARAMETER_RE = re.compile(
 #
 #     <web_search>{"query": "今日熱門新聞", "max_results": 3}</web_search>
 #
+# The closing tag may NOT match the opening tag — observed in the wild:
+#
+#     <web_search>{"query": "今日熱門新聞", "max_results": 3}</search>
+#
 # That is: the function name IS the XML tag itself, and the body is
-# a JSON object of args. Captured 2026-04-09 from a Qwen3.5 TUI run
-# where the turn produced a raw tool_call as visible text because no
-# parser variant matched. The leading ``<`` may also be missing in
+# a JSON object of args. The leading ``<`` may also be missing in
 # terminal renderings (and possibly in the actual stream when the
 # chat template prefix-injected it as a prompt prefix), so the regex
 # makes the opening ``<`` optional.
@@ -72,8 +74,11 @@ _HERMES_PARAMETER_RE = re.compile(
 # ``_parse_xml`` and the JSON-must-parse-as-dict check in
 # ``_parse_bare_name_tag``, false positives on legitimate XML-ish
 # content are effectively impossible.
+# Closing tag may differ from opening tag — Qwen3.5 sometimes emits
+# ``<web_search>JSON</search>`` (truncated closer). We capture the
+# opening name and accept ANY ``</identifier>`` as closer.
 _HERMES_BARE_NAME_TAG_RE = re.compile(
-    r"<?([a-zA-Z_][a-zA-Z0-9_]*)>\s*(\{.*?\})\s*</\1>",
+    r"<?([a-zA-Z_][a-zA-Z0-9_]*)>\s*(\{.*?\})\s*</[a-zA-Z_][a-zA-Z0-9_]*>",
     re.DOTALL,
 )
 
