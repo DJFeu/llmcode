@@ -9,9 +9,10 @@ must:
    agents' servers running.
 
 This module owns the ownership bookkeeping and the approval-request shape.
-TODO(v1.10): wire into ``llm_code.mcp.manager.MCPManager`` and the agent-spawn
-flow in ``llm_code.tools.agent``. For now this is self-contained so tests can
-exercise the state machine independently of the MCP host.
+Wired into ``llm_code.mcp.manager.MCPManager`` via the ``approval_callback``
+parameter on ``start_server()``. The ``ConversationRuntime.request_mcp_approval``
+method serves as the callback, surfacing requests to the TUI via
+``StreamMCPApprovalRequest`` events (or the modal dialog in TextualDialogs mode).
 """
 from __future__ import annotations
 

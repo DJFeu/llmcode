@@ -24,6 +24,7 @@ COMMAND_REGISTRY: tuple[CommandDef, ...] = (
     CommandDef("cd", "Change directory"),
     CommandDef("config", "Runtime config", no_arg=True),
     CommandDef("settings", "Open settings panel", no_arg=True),
+    CommandDef("set", "Set config value: /set temperature 0.5"),
     CommandDef("thinking", "Toggle thinking"),
     CommandDef("vim", "Toggle vim mode", no_arg=True),
     CommandDef("image", "Attach image"),

@@ -30,11 +30,11 @@ class PluginManifest:
     # temporarily on sys.path) and calling the class with no args,
     # then passes the resulting Tool to ToolRegistry.register.
     provides_tools: tuple[str, ...] = ()
-    # Wave2-5: declared capability envelope the plugin needs. The
-    # executor only reads this for surfacing to the user / audit log
-    # — it does not enforce sandboxing here. Expected keys (all
-    # optional, all default False): "network", "fs_write",
-    # "subprocess", "env". A follow-up PR may add actual enforcement.
+    # Declared capability envelope the plugin needs. The executor
+    # blocks dangerous capabilities (subprocess, fs_write, env)
+    # unless --force is passed. Network is allowed by default.
+    # Expected keys (all optional, all default False):
+    # "network", "fs_write", "subprocess", "env".
     permissions: dict[str, Any] | None = None
 
     @classmethod

@@ -156,13 +156,12 @@ def load_plugin(
     """
     handle = LoadedPlugin(manifest=manifest, install_path=install_path)
 
-    # Wave2-5 follow-up (#5): permissions enforcement. If the
-    # manifest declares ``permissions``, log which capabilities the
-    # plugin requests. For now this is advisory (log + hook) — a
-    # full sandbox that actually blocks network/fs/subprocess access
-    # would require OS-level isolation (e.g. seccomp, containers)
-    # which is out of scope. The advisory gate lets users make an
-    # informed decision before enabling a plugin.
+    # Permissions enforcement: block plugins that request dangerous
+    # capabilities unless the caller passed force=True. Network is
+    # allowed by default because most tools need it. OS-level
+    # sandboxing (seccomp, containers) is out of scope — this gate
+    # is a manifest-declared trust boundary enforced at load time.
+    _DANGEROUS_CAPS = frozenset({"subprocess", "fs_write", "env"})
     if manifest.permissions:
         logger.info(
             "plugin %s declares permissions: %s",
@@ -171,12 +170,9 @@ def load_plugin(
                 f"{k}={v}" for k, v in manifest.permissions.items()
             ),
         )
-        # Block plugins that request subprocess or fs_write unless
-        # the caller explicitly passed force=True. Network is
-        # allowed by default because most tools need it.
         dangerous_caps = {
             k for k, v in manifest.permissions.items()
-            if v is True and k in ("subprocess", "fs_write")
+            if v is True and k in _DANGEROUS_CAPS
         }
         if dangerous_caps and not force:
             raise PluginLoadError(
@@ -268,17 +264,22 @@ def load_plugin(
         # does not roll back the tools (tools were already registered
         # successfully and are valuable on their own).
         if skill_router is not None and manifest.skills:
-            # manifest.skills can be a str (single file) or tuple
-            # (multiple files). For wave2-5 we defer actual skill
-            # file parsing to the existing loader — the executor's
-            # job is to pass the resolved skill objects through, not
-            # to re-invent skill markdown parsing. A follow-up that
-            # wires this to /plugin install will supply pre-parsed
-            # skill objects.
-            logger.debug(
-                "plugin %s declares skills but skill-object resolution "
-                "is handled by the caller's skill loader", manifest.name,
-            )
+            from llm_code.runtime.skills import SkillLoader
+            skill_paths = manifest.skills
+            if isinstance(skill_paths, str):
+                skill_paths = (skill_paths,)
+            for skill_rel in skill_paths:
+                skill_path = install_path / skill_rel
+                if not skill_path.exists():
+                    logger.debug("plugin %s: skill file not found: %s", manifest.name, skill_path)
+                    continue
+                try:
+                    skill_obj = SkillLoader.load_skill(skill_path)
+                    skill_router.add_skill(skill_obj)
+                    handle.skill_names.append(skill_obj.name)
+                    logger.info("plugin %s: registered skill %s", manifest.name, skill_obj.name)
+                except Exception as exc:
+                    logger.debug("plugin %s: failed to load skill %s: %s", manifest.name, skill_rel, exc)
     finally:
         if added_path:
             try:

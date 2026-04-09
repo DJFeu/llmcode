@@ -84,11 +84,12 @@ class McpServerManager:
         and no state is mutated.  Root (default) always skips approval for
         backward compatibility.
 
-        TODO: future callers that spawn MCP servers on behalf of personas,
-        swarm members, or orchestrated sub-agents should pass
+        Callers that spawn MCP servers on behalf of personas, swarm
+        members, or orchestrated sub-agents pass
         ``ConversationRuntime.request_mcp_approval`` as ``approval_callback``
         so the TUI surfaces a user prompt before the spawn proceeds. The TUI
         sink is wired automatically in :class:`LLMCodeApp._init_runtime`.
+        See also ``orchestrate_executor.py`` for persona-driven spawns.
         """
         if owner_agent_id != ROOT_AGENT_ID and approval_callback is not None:
             request = MCPApprovalRequest(

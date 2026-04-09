@@ -1,7 +1,7 @@
-"""Read-only settings panel — sectioned view of runtime state.
+"""Settings panel — sectioned view of runtime state with write-back.
 
 Sections: Status, Config, Usage, Keybindings, Skills.
-TODO: write-back support in a future iteration.
+Editable fields: temperature, max_tokens, model (via apply_setting).
 """
 from __future__ import annotations
 
@@ -81,6 +81,42 @@ def _safe(obj: object, attr: str, default):
         return getattr(obj, attr, default)
     except Exception:
         return default
+
+
+_EDITABLE_FIELDS = frozenset({"temperature", "max_tokens", "model"})
+
+
+def editable_fields() -> frozenset[str]:
+    """Return the set of config field names that support write-back."""
+    return _EDITABLE_FIELDS
+
+
+def apply_setting(config: object, key: str, value: str) -> object:
+    """Return a new config with *key* set to *value*.
+
+    Only ``_EDITABLE_FIELDS`` are accepted. Raises ``ValueError`` for
+    unknown keys or invalid values. Returns a new frozen config via
+    ``dataclasses.replace``.
+    """
+    import dataclasses as _dc
+
+    if key not in _EDITABLE_FIELDS:
+        raise ValueError(f"Field '{key}' is not editable. Editable: {sorted(_EDITABLE_FIELDS)}")
+
+    if key == "temperature":
+        typed_value = float(value)
+        if not (0.0 <= typed_value <= 2.0):
+            raise ValueError("temperature must be between 0.0 and 2.0")
+        return _dc.replace(config, temperature=typed_value)  # type: ignore[misc]
+    if key == "max_tokens":
+        typed_int = int(value)
+        if typed_int < 1:
+            raise ValueError("max_tokens must be >= 1")
+        return _dc.replace(config, max_tokens=typed_int)  # type: ignore[misc]
+    if key == "model":
+        return _dc.replace(config, model=value.strip())  # type: ignore[misc]
+
+    raise ValueError(f"Unhandled field: {key}")
 
 
 def render_sections_text(sections: list[SettingsSection]) -> str:

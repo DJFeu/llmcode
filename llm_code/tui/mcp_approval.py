@@ -37,5 +37,6 @@ class McpApprovalRequest:
         return [i for i in self.items if i.name in self.approved]
 
 
-# TODO: hook into llm_code.mcp.manager once it emits a `server_registered`
-# event so this dialog can be opened automatically.
+# MCP approval is now handled via TextualDialogs modal in
+# LLMCodeApp._show_mcp_approval_dialog, triggered automatically by
+# ConversationRuntime.request_mcp_approval → set_mcp_event_sink.

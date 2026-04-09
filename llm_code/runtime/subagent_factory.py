@@ -29,8 +29,8 @@ def make_subagent_runtime(
 ) -> ConversationRuntime:
     """Build a sub-ConversationRuntime for *role* under *parent*.
 
-    *model* is currently a placeholder for future per-role model routing —
-    accepted but not yet wired through. Pass None for the parent default.
+    *model* overrides the parent's active model for this sub-agent.
+    Pass None to inherit the parent default.
     """
     effective_role = role if role is not None else BUILD_ROLE
 
@@ -64,13 +64,19 @@ def make_subagent_runtime(
         project_path = Path.cwd()
     child_session = Session.create(project_path)
 
+    # Apply model override if specified
+    child_config = parent._config
+    if model:
+        import dataclasses as _dc
+        child_config = _dc.replace(parent._config, model=model)
+
     child = ConversationRuntime(
         provider=parent._provider,
         tool_registry=child_registry,
         permission_policy=parent._permissions,
         hook_runner=parent._hooks,
         prompt_builder=parent._prompt_builder,
-        config=parent._config,
+        config=child_config,
         session=child_session,
         context=parent._context,
         checkpoint_manager=getattr(parent, "_checkpoint_mgr", None),

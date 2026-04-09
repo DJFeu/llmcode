@@ -327,6 +327,7 @@ class LLMCodeTUI(App):  # noqa: E302
         self._mcp_approval_pending = False
         self._mcp_approval_widget = None
         self._pending_images: list = []
+        self._loaded_plugins: dict[str, object] = {}  # name → LoadedPlugin handle
         self._plan_mode: bool = False
         self._voice_active = False
         self._vcr_recorder = None
@@ -567,39 +568,54 @@ class LLMCodeTUI(App):  # noqa: E302
         ))
 
     def _load_plugin_tools(self, plugin_dir: Path, chat: "ChatScrollView") -> None:
-        """Wave2-5 wiring: load Python tools from a plugin's manifest.
+        """Load Python tools from a plugin's manifest into the tool registry.
 
-        Uses the ``marketplace.executor.load_plugin`` path added in
-        wave2-5. If the plugin doesn't declare ``provides_tools`` in
-        its manifest, this is a no-op. Failures are reported in the
-        chat as a non-blocking warning.
+        Stores the LoadedPlugin handle in ``_loaded_plugins`` so
+        ``_unload_plugin_tools`` can reverse the load on disable/remove.
         """
         try:
             from llm_code.marketplace.plugin import PluginManifest
             from llm_code.marketplace.executor import load_plugin, PluginConflictError, PluginLoadError
             manifest = PluginManifest.from_path(plugin_dir)
             if not manifest.provides_tools:
-                return  # no Python tools to load
-            if self._tool_registry is None:
+                return
+            if self._tool_reg is None:
                 return
             handle = load_plugin(
                 manifest,
                 plugin_dir,
-                tool_registry=self._tool_registry,
+                tool_registry=self._tool_reg,
                 skill_router=getattr(self._runtime, "_skill_router", None),
-                known_tool_names={t.name for t in self._tool_registry.all_tools()},
+                known_tool_names={t.name for t in self._tool_reg.all_tools()},
             )
+            self._loaded_plugins[manifest.name] = handle
             if handle.tool_names:
                 chat.add_entry(AssistantText(
                     f"Loaded {len(handle.tool_names)} tool(s) from plugin: "
                     f"{', '.join(handle.tool_names)}"
                 ))
         except FileNotFoundError:
-            pass  # no manifest → pure skill plugin, not a Python tool plugin
+            pass
         except (PluginConflictError, PluginLoadError) as exc:
-            chat.add_entry(AssistantText(f"⚠ Plugin tool load warning: {exc}"))
+            chat.add_entry(AssistantText(f"Plugin tool load warning: {exc}"))
         except Exception as exc:
             logger.debug("Plugin tool load failed for %s: %s", plugin_dir, exc)
+
+    def _unload_plugin_tools(self, name: str, chat: "ChatScrollView") -> None:
+        """Reverse a previous ``_load_plugin_tools`` call."""
+        handle = self._loaded_plugins.pop(name, None)
+        if handle is None or self._tool_reg is None:
+            return
+        try:
+            from llm_code.marketplace.executor import unload_plugin
+            unload_plugin(
+                handle,
+                tool_registry=self._tool_reg,
+                skill_router=getattr(self._runtime, "_skill_router", None),
+            )
+            chat.add_entry(AssistantText(f"Unloaded tools from plugin: {name}"))
+        except Exception as exc:
+            logger.debug("Plugin tool unload failed for %s: %s", name, exc)
 
     def _reload_skills(self) -> None:
         """(Re)load skills from all configured directories."""
@@ -777,6 +793,16 @@ class LLMCodeTUI(App):  # noqa: E302
             self._memory = MemoryStore(memory_dir, self._cwd)
         except Exception:
             self._memory = None
+
+        # Run daily memory distillation (today-*.md → recent.md → archive.md)
+        try:
+            from llm_code.runtime.memory_layers import distill_daily
+            from datetime import date as _date
+            _mem_dir = Path.home() / ".llmcode" / "memory"
+            if _mem_dir.is_dir():
+                distill_daily(_mem_dir, _date.today())
+        except Exception:
+            pass  # non-critical — skip silently
 
         # Typed memory (4-type taxonomy)
         self._typed_memory = None
@@ -1394,7 +1420,7 @@ class LLMCodeTUI(App):  # noqa: E302
             StreamMessageStop, StreamCompactionStart, StreamCompactionDone,
         )
         from llm_code.tui.chat_widgets import (
-            PermissionInline, SpinnerLine, ThinkingBlock, ToolBlock, TurnSummary,
+            SpinnerLine, ThinkingBlock, ToolBlock, TurnSummary,
         )
 
         if self._runtime is None:
@@ -1601,13 +1627,29 @@ class LLMCodeTUI(App):  # noqa: E302
                         Choice(value="allow", label="Allow (y)", hint="Allow this tool call"),
                         Choice(value="always_kind", label="Always allow this type (a)", hint="Auto-allow this tool kind"),
                         Choice(value="always_exact", label="Always allow exact (A)", hint="Auto-allow this exact tool+args"),
+                        Choice(value="edit", label="Edit args (e)", hint="Edit tool arguments before running"),
                         Choice(value="deny", label="Deny (n)", hint="Reject this tool call"),
                     ]
                     try:
                         _perm_result = await self._dialogs.select(
                             _perm_prompt, _perm_choices, default="allow",
                         )
-                        self._runtime.send_permission_response(_perm_result)
+                        if _perm_result == "edit":
+                            # Open a text editor with the current args as JSON
+                            import json as _json
+                            _edited = await self._dialogs.text(
+                                f"Edit args for {event.tool_name}:",
+                                default=event.args_preview or "{}",
+                                multiline=True,
+                            )
+                            try:
+                                _parsed = _json.loads(_edited)
+                                self._runtime.send_permission_response("edit", edited_args=_parsed)
+                            except _json.JSONDecodeError:
+                                chat.add_entry(AssistantText("Invalid JSON — running with original args."))
+                                self._runtime.send_permission_response("allow")
+                        else:
+                            self._runtime.send_permission_response(_perm_result)
                     except Exception:
                         self._runtime.send_permission_response("deny")
 
@@ -2908,8 +2950,30 @@ class LLMCodeTUI(App):  # noqa: E302
             return query
         return " ".join(f'"{t}"' for t in tokens)
 
+    def _cmd_set(self, args: str) -> None:
+        """Set a config value: /set temperature 0.5"""
+        chat = self.query_one(ChatScrollView)
+        parts = args.strip().split(None, 1)
+        if len(parts) < 2:
+            from llm_code.tui.settings_modal import editable_fields
+            chat.add_entry(AssistantText(
+                f"Usage: /set <key> <value>\nEditable: {', '.join(sorted(editable_fields()))}"
+            ))
+            return
+        key, value = parts[0], parts[1]
+        try:
+            from llm_code.tui.settings_modal import apply_setting
+            import dataclasses
+            self._config = apply_setting(self._config, key, value)
+            if key == "model":
+                self._init_runtime()
+                self.query_one(HeaderBar).model = value.strip()
+            chat.add_entry(AssistantText(f"Set {key} = {value}"))
+        except ValueError as exc:
+            chat.add_entry(AssistantText(f"Error: {exc}"))
+
     def _cmd_settings(self, args: str) -> None:
-        """Open the read-only settings panel (Tier 2 wiring)."""
+        """Open the settings panel."""
         from textual.screen import ModalScreen
         from textual.containers import VerticalScroll
         from textual.widgets import Static
@@ -3716,6 +3780,7 @@ class LLMCodeTUI(App):  # noqa: E302
                 chat.add_entry(AssistantText("Invalid plugin name."))
                 return
             try:
+                self._unload_plugin_tools(subargs, chat)
                 installer.disable(subargs)
                 self._reload_skills()
                 chat.add_entry(AssistantText(f"Disabled {subargs}"))
@@ -3726,6 +3791,7 @@ class LLMCodeTUI(App):  # noqa: E302
                 chat.add_entry(AssistantText("Invalid plugin name."))
                 return
             try:
+                self._unload_plugin_tools(subargs, chat)
                 installer.uninstall(subargs)
                 self._reload_skills()
                 chat.add_entry(AssistantText(f"Removed {subargs}"))

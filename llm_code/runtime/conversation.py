@@ -715,18 +715,19 @@ class ConversationRuntime:
         elif choice == "always_exact":
             self._session_allowed_exact.add((tool_name, args_preview))
 
-    def send_permission_response(self, response: str) -> None:
-        """Resolve the pending permission prompt with 'allow', 'deny', or 'always'.
+    def send_permission_response(self, response: str, *, edited_args: dict | None = None) -> None:
+        """Resolve the pending permission prompt.
 
-        Called by the TUI when the user presses y/n/a on a permission inline widget.
-
-        IMPORTANT: Must be called from the same event loop thread that owns
-        ``_permission_future``. In Textual, this is guaranteed when called from
-        an ``on_key`` handler since both the app and ``run_worker`` share the
-        same asyncio event loop.
+        ``response`` is one of ``allow``, ``deny``, ``always_kind``,
+        ``always_exact``, or ``edit``. When ``response`` is ``edit``,
+        ``edited_args`` must contain the modified tool arguments; the
+        runtime will re-validate and execute with the new args.
         """
         if self._permission_future is not None and not self._permission_future.done():
-            self._permission_future.set_result(response)
+            if response == "edit" and edited_args is not None:
+                self._permission_future.set_result(f"edit:{__import__('json').dumps(edited_args)}")
+            else:
+                self._permission_future.set_result(response)
 
     async def _spawn_pending_skill_mcp_servers(self) -> None:
         """Spawn on-demand MCP servers declared by loaded skills.
@@ -2054,6 +2055,16 @@ class ConversationRuntime:
                     logger.warning("Permission prompt for '%s' timed out (300s), auto-denying", call.name)
                 finally:
                     self._permission_future = None
+
+                if response.startswith("edit:"):
+                    # User edited the tool args — parse and replace
+                    try:
+                        edited = json.loads(response[5:])
+                        if isinstance(edited, dict):
+                            validated_args = edited
+                    except (json.JSONDecodeError, ValueError):
+                        pass  # keep original args
+                    response = "allow"  # proceed with (possibly edited) args
 
                 if response in ("allow", "always", "always_kind", "always_exact"):
                     if response in ("always", "always_kind"):

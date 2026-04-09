@@ -588,7 +588,7 @@ class PermissionInline(Widget):
             ("n", "Deny"),
         ]
         if self._supports_edit_args():
-            options.append(("e", "Edit args (TODO)"))
+            options.append(("e", "Edit args"))
         for i, (key, label) in enumerate(options):
             if i == 0:
                 text.append("  ")

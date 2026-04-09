@@ -470,7 +470,7 @@ class LayeredMemory:
 
 # ----------------------------------------------------------------------
 # Daily distillation: today-*.md -> recent.md -> archive.md
-# TODO(cron): wire into scheduler (see docs/superpowers/plans/*-cron.md)
+# Runs at TUI startup via LLMCodeApp._init_runtime. Idempotent.
 # ----------------------------------------------------------------------
 
 _TODAY_FILE_RE = re.compile(r"^today-(\d{4}-\d{2}-\d{2})(?:[._-].*)?\.md$")
