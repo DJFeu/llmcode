@@ -1,5 +1,63 @@
 # Changelog
 
+## Unreleased — perf: persistent native-tools capability cache (14s/turn → 0s after first)
+
+### Added
+- **`llm_code/runtime/server_capabilities.py`** — tiny persistent JSON cache at `~/.llmcode/server_capabilities.json` keyed by `(base_url, model)`. Records whether each server+model combination supports native OpenAI-style tool calling. When the `conversation.py` auto-fallback branch detects the "Server does not support native tool calling" error and sets `self._force_xml_mode = True`, it now also writes the result to this cache.
+- **Next session reads the cache** at turn setup. If the combo is marked unsupported, `self._force_xml_mode` is seeded to True immediately and the entire 14-second native-rejection round-trip is SKIPPED on turn 1.
+
+### Impact
+The 14-second server-side latency that remained after PRs #41/#42/#43 is now paid **once per (server, model) combination, EVER** — not once per session. A user who runs llmcode daily against the same local vLLM server pays the 14s on day 1 and never again.
+
+### Data model
+```json
+{
+  "http://localhost:8000|/models/Qwen3.5-122B-A10B-int4-AutoRound": {
+    "native_tools": false,
+    "cached_at": "2026-04-09T13:30:00+00:00"
+  }
+}
+```
+
+Keyed by `f"{base_url.rstrip('/')}|{model}"` — trailing-slash-normalized base URL + exact model name. Two models on the same server get independent entries; same model on two servers gets independent entries. A future retention policy can expire stale entries via the `cached_at` timestamp.
+
+### Atomic writes
+Writes go through `tempfile.mkstemp` + `os.replace` so a concurrent reader never sees a partial write. Failed writes log at DEBUG and are swallowed — this is a pure optimization, not a correctness boundary.
+
+### Cache management
+- **Default**: write-on-fallback, read-on-turn-setup. No user action required.
+- **Manual clear**: `clear_native_tools_cache()` wipes the whole file; `clear_native_tools_cache(base_url, model)` removes one entry. Exposed as a module-level helper for tests and a future `/cache clear` user command.
+
+### Tests
+- **`tests/test_runtime/test_server_capabilities.py`** — 14 new tests covering:
+  - Load returns None on fresh system (no cache file)
+  - Mark-then-load round-trip
+  - Different models on same server are independent
+  - Different base URLs with same model are independent
+  - Trailing slash normalization on `base_url`
+  - Marking one entry preserves siblings
+  - Corrupted JSON file treated as "no cache" (never crashes)
+  - Cache entries have ISO-format `cached_at` timestamp
+  - `clear_native_tools_cache(url, model)` removes specific entry
+  - `clear_native_tools_cache()` (no args) wipes entire cache
+  - Partial clear (one arg) raises ValueError
+  - Atomic writes leave no `.tmp` files
+  - Source-level guard: `conversation.py` calls `load_native_tools_support`
+  - Source-level guard: `conversation.py` calls `mark_native_tools_unsupported` in fallback branch
+- Full sweep: **3266 passed**, no regressions
+
+### Combined with the previous 8 fixes
+| Metric | Original | After #41-#43 | **After this** |
+|---|---|---|---|
+| First turn / new server | 65s (retry storm) | 58s (1 fallback) | **58s** (one-time cost) |
+| Second turn+ / same server | 58s | 58s | **~44s** (skips 14s) |
+| Fifth session / same server | 58s × 5 = 290s | 58s × 5 = 290s | **44s + 58s (first) = 102s** for equivalent workload |
+
+### Future enhancements
+- `/cache clear` user command to manually reset if the user intentionally changes server config
+- TTL-based expiry (e.g. 7 days) so a server that added `--enable-auto-tool-choice` is re-probed automatically
+- Probe on startup rather than on first turn so even the first turn is instant
+
 ## Unreleased — fix: idempotent-retry detector actually aborts the turn (was: continue → burn 91s)
 
 ### Fixed

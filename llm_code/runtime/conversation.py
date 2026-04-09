@@ -831,18 +831,36 @@ class ConversationRuntime:
 
         accumulated_usage = TokenUsage(input_tokens=0, output_tokens=0)
         self._has_attempted_reactive_compact = False
-        # ``self._force_xml_mode`` is the sticky "this server rejected
-        # native tool calls, always use XML" flag. We read it as an
-        # attribute inside the iteration loop below (NOT as a local
-        # variable captured here) so an auto-fallback triggered in
-        # iteration 1 is honored by iteration 2 within the SAME turn.
-        # Previously a stale local meant iteration 2 retried native
-        # mode and burned ~19s on the same error before hitting the
-        # same fallback branch again. Observed in a Qwen3.5 field
-        # report: 65s total turn with ~53s of wasted native-tool-call
-        # retry storm.
+        # ``self._force_xml_mode`` is sticky both within a turn
+        # (iteration 2 honors iteration 1's fallback) AND across
+        # sessions (seeded from the persistent server_capabilities
+        # cache so the 14s native-rejection round-trip is paid ONCE
+        # per server+model combo, EVER).
         if not hasattr(self, "_force_xml_mode"):
             self._force_xml_mode = False
+            # Seed from the on-disk cache. Any failure is swallowed
+            # inside the cache module (logs at DEBUG) — a missing or
+            # corrupted cache just means this session's first turn
+            # pays the fallback cost one more time.
+            try:
+                from llm_code.runtime.server_capabilities import (
+                    load_native_tools_support,
+                )
+                _cached = load_native_tools_support(
+                    base_url=getattr(self._config, "provider_base_url", "") or "",
+                    model=self._active_model,
+                )
+                if _cached is False:
+                    self._force_xml_mode = True
+                    logger.debug(
+                        "server_capabilities cache: %s (%s) marked "
+                        "as not supporting native tool calling; "
+                        "skipping native mode for this session",
+                        getattr(self._config, "provider_base_url", ""),
+                        self._active_model,
+                    )
+            except Exception:
+                pass
         # Token limit auto-upgrade state: reset each turn, doubles on max_tokens stop
         _current_max_tokens: int = self._config.max_tokens
         # Local models (localhost/private network) have no cost concern — no cap
@@ -1140,6 +1158,21 @@ class ConversationRuntime:
                     logger.debug("Server does not support native tool calling; falling back to XML tag mode")
                     self._fire_hook("http_fallback", {"reason": "xml_mode", "model": self._active_model})
                     self._force_xml_mode = True
+                    # Write the result to the persistent cache so
+                    # the NEXT session for this server+model skips
+                    # the 14s native-rejection round-trip entirely.
+                    # Best-effort: cache failures are logged at DEBUG
+                    # inside the module and never raise.
+                    try:
+                        from llm_code.runtime.server_capabilities import (
+                            mark_native_tools_unsupported,
+                        )
+                        mark_native_tools_unsupported(
+                            base_url=getattr(self._config, "provider_base_url", "") or "",
+                            model=self._active_model,
+                        )
+                    except Exception:
+                        pass
                     # Rebuild request without tools
                     system_prompt = self._prompt_builder.build(
                         self._context,
