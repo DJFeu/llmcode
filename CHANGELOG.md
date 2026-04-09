@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased — Wave2-5: Plugin executor (schema + dynamic loader + SkillRouter hooks)
+
+### Added
+- **`PluginManifest.provides_tools`** — declarative list of Python tools a plugin exports as `"package.module:ClassName"`. Parses from either `providesTools` (camelCase) or `provides_tools` (snake_case).
+- **`PluginManifest.permissions`** — declared capability envelope (dict). Wave2-5 reads for surfacing / audit; sandbox enforcement is a follow-up. Non-dict values dropped defensively.
+- **`llm_code/marketplace/executor.py`** — the missing piece. `load_plugin(manifest, install_path, *, tool_registry, skill_router=None, force=False)` resolves each `provides_tools` entry, imports the module (with install path temporarily on `sys.path`, restored in `finally`), instantiates the class, registers it. Returns a `LoadedPlugin` handle so `unload_plugin` can reverse the load. `PluginLoadError` / `PluginConflictError` carry `.plugin_name` + `.entry` for log-traceable failures.
+- **`ToolRegistry.unregister(name) -> bool`** — idempotent removal. Used by executor rollback and `unload_plugin`.
+- **`SkillRouter.add_skill(skill)`** / **`remove_skill(name) -> bool`** — post-construction registration/removal. Rebuilds TF-IDF + keyword index, invalidates route cache, rejects duplicate names.
+
+### Fixed
+- **Plugin-provided Python tools now have an actual loader.** Before wave2-5 the marketplace had manifest parsing + install-from-local/github/npm + security scan + 91 tests, but no code path that took a declared tool class and put it in the tool registry. Plugin authors could ship Python tools and llm-code silently ignored them.
+
+### Contract: rollback on any failure
+Any failure during `load_plugin` (unparseable entry / missing module / missing class / ctor failure / name conflict) unregisters every tool this load call already registered before the exception propagates. Registry returns to its pre-load state. Pinned by `test_load_plugin_rolls_back_on_conflict` — a two-tool plugin whose second tool conflicts leaves the first tool NOT registered.
+
+### Scope discipline
+Lands the **executor + schema + router hooks only**. TUI wiring (hooking `load_plugin` into `_cmd_plugin install` and `_reload_skills`) is deferred to a follow-up PR. Existing `/plugin install` path for markdown-only skill plugins continues to work exactly as before.
+
+### Tests
+- **`tests/test_marketplace/test_plugin_executor_wave2_5.py`** — 20 new tests: 6 manifest schema (camelCase / snake_case / empty / permissions dict / default None / non-dict dropped), 3 `unregister` (remove / missing / re-register), 3 happy-path (fixture plugin loads, empty manifest, sys.path cleanup), 2 conflict (rollback / force override), 4 structural failures (unparseable / missing module / missing class / broken ctor), 2 `unload_plugin` (removes / idempotent)
+- **`tests/test_runtime/test_skill_router_add_remove_wave2_5.py`** — 7 new tests: add grows list, add rejects duplicate, add invalidates cache, remove unknown returns False, remove works, remove invalidates cache, add-then-remove round-trip
+- Full `tests/test_runtime/` + `tests/test_api/` + `tests/test_marketplace/` + `tests/test_tools/` sweep: **2794 passed**, no regressions (existing 91 marketplace tests unchanged).
+
+### Wave2 status: all 11 items landed
+
+| Item | PR |
+|---|---|
+| wave2-1a thinking blocks P1–P5 | #26–#30 |
+| wave2-1b rate-limit + timeout | #31 |
+| wave2-1c empty + context pre-warn | #32 |
+| wave2-1d cancel cleanup | #33 |
+| wave2-2 cost tracker | #24 |
+| wave2-3 fallback | #24 |
+| wave2-4 todo preserver | #25 |
+| wave2-6 dialog launcher | #34 |
+| **wave2-5 plugin executor** | **this** |
+
 ## Unreleased — Wave2-6: Dialog launcher (API + Scripted + Headless)
 
 ### Added

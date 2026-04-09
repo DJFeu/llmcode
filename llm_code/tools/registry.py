@@ -49,6 +49,20 @@ class ToolRegistry:
             raise ValueError(f"Tool '{tool.name}' is already registered")
         self._tools[tool.name] = tool
 
+    def unregister(self, name: str) -> bool:
+        """Remove a tool by name. Returns True if removed, False if absent.
+
+        Wave2-5: used by the plugin executor to unload tools when a
+        plugin is disabled or when rolling back a failed load. Safe
+        to call on an unknown name (returns False) so the caller
+        doesn't need to track which names made it into the registry
+        before the error.
+        """
+        if name in self._tools:
+            del self._tools[name]
+            return True
+        return False
+
     def get(self, name: str) -> Tool | None:
         """Return the tool with the given name, or None if not found."""
         return self._tools.get(name)
