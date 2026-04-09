@@ -177,6 +177,13 @@ class WebSearchTool(Tool):
 
         if not results:
             lines.append("(0 results)")
+            lines.append("")
+            lines.append(
+                "No results found for this query. Do NOT retry with the "
+                "same search terms — try rephrasing with different keywords, "
+                "a different language (e.g. English instead of Chinese), "
+                "or answer based on your existing knowledge instead."
+            )
             return "\n".join(lines)
 
         for i, result in enumerate(results, start=1):
