@@ -127,6 +127,33 @@ def _session_is_cjk(user_input: str, session_messages: Any = None) -> bool:
     return False
 
 
+def _truncation_warning_message(
+    *,
+    stop_reason: str,
+    turn_output_tokens: int,
+    user_input: str,
+    session_messages: Any = None,
+) -> str:
+    """Wave: truncation warning shown when the model hit its output
+    token cap mid-generation (``stop_reason`` in ``("length",
+    "max_tokens")``). Kept as a pure helper so tests can exercise
+    the i18n logic without spinning up the full TUI event loop.
+    """
+    zh = _session_is_cjk(user_input, session_messages)
+    if zh:
+        return (
+            f"(⚠ 回應被截斷 — 模型達到輸出上限 ({stop_reason})。"
+            f"實際輸出 {turn_output_tokens} tokens。"
+            f"試試加長 max_tokens 或 context window,或重新提問。)"
+        )
+    return (
+        f"(⚠ Response truncated — the model hit its output "
+        f"token cap ({stop_reason}) after {turn_output_tokens} "
+        f"tokens. Try increasing max_tokens / context window "
+        f"or rephrasing.)"
+    )
+
+
 def _empty_response_message(
     *,
     saw_tool_call: bool,
@@ -280,6 +307,10 @@ class LLMCodeTUI(App):  # noqa: E302
         self._cost_tracker = None
         self._input_tokens = 0
         self._output_tokens = 0
+        # Latest StreamMessageStop.stop_reason captured per turn.
+        # Used by the truncation warning + empty-response log so
+        # the TUI can explain *why* a reply looked short.
+        self._last_stop_reason: str = "unknown"
         self._tool_reg = None
         self._deferred_tool_manager = None
         self._checkpoint_mgr = None
@@ -1582,6 +1613,13 @@ class LLMCodeTUI(App):  # noqa: E302
                         pass
 
                 elif isinstance(event, StreamMessageStop):
+                    # Capture the provider's stop_reason so the turn-
+                    # end diagnostics can tell the user *why* the
+                    # model stopped. Previously this field was read
+                    # only by the runtime's auto-upgrade logic and
+                    # never surfaced to the TUI, so a truncation
+                    # that slipped past that path was invisible.
+                    self._last_stop_reason = event.stop_reason or "unknown"
                     if event.usage:
                         turn_input_tokens += event.usage.input_tokens
                         turn_output_tokens += event.usage.output_tokens
@@ -1693,6 +1731,43 @@ class LLMCodeTUI(App):  # noqa: E302
                     thinking_buffer_len=_thinking_len,
                 )
             ))
+
+        # Unconditional turn-end diagnostic so every turn (not just
+        # the empty-response path) has a single log line capturing
+        # the full state. Useful for "my reply seems truncated"
+        # reports where the TUI shows SOME text but the user suspects
+        # content went missing.
+        _stop_reason = getattr(self, "_last_stop_reason", "unknown")
+        logger.debug(
+            "turn complete: out_tokens=%d thinking_len=%d "
+            "assistant_added=%s saw_tool_call=%s stop_reason=%s",
+            turn_output_tokens,
+            len(thinking_buffer),
+            assistant_added,
+            _saw_tool_call_this_turn,
+            _stop_reason,
+        )
+
+        # Truncation warning: if the provider reported finish_reason
+        # == "length" / "max_tokens" AND some visible content was
+        # shown (so the empty-response fallback didn't fire), the
+        # user's reply was cut off mid-generation. The runtime's
+        # auto-upgrade path handles most cases but a provider that
+        # caps hard can still leak through. Show a subtle but
+        # explicit warning so the user knows what happened instead
+        # of puzzling over a truncated list.
+        if assistant_added and _stop_reason in ("length", "max_tokens"):
+            warn_text = _truncation_warning_message(
+                stop_reason=_stop_reason,
+                turn_output_tokens=turn_output_tokens,
+                user_input=user_input,
+                session_messages=getattr(self._runtime, "session", None) and self._runtime.session.messages,
+            )
+            chat.add_entry(AssistantText(warn_text))
+            logger.warning(
+                "truncation warning shown: out_tokens=%d stop_reason=%s",
+                turn_output_tokens, _stop_reason,
+            )
 
         elapsed = time.monotonic() - start
         cost = self._cost_tracker.format_cost() if self._cost_tracker else ""

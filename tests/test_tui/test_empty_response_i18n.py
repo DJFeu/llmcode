@@ -250,3 +250,87 @@ def test_unclassified_variant_defaults_preserve_legacy_behavior() -> None:
     assert "thinking" in msg.lower()
     # Legacy callers don't know about token counts, so no number
     assert "emitted" not in msg.lower()
+
+
+# ----- Truncation warning (tui-stop-reason-diagnostics) -----
+
+from llm_code.tui.app import _truncation_warning_message  # noqa: E402
+
+
+def test_truncation_warning_english_basic() -> None:
+    """English user sees English warning with stop_reason + token count."""
+    msg = _truncation_warning_message(
+        stop_reason="length",
+        turn_output_tokens=279,
+        user_input="today top 3 news",
+    )
+    assert "truncated" in msg.lower()
+    assert "length" in msg
+    assert "279" in msg
+    assert "max_tokens" in msg
+
+
+def test_truncation_warning_chinese_basic() -> None:
+    msg = _truncation_warning_message(
+        stop_reason="length",
+        turn_output_tokens=279,
+        user_input="今日新聞三則",
+    )
+    assert "截斷" in msg
+    assert "length" in msg
+    assert "279" in msg
+    assert "max_tokens" in msg
+
+
+def test_truncation_warning_max_tokens_variant() -> None:
+    """Some providers report ``max_tokens`` instead of ``length`` —
+    the warning should show whichever label the provider used so a
+    log reader can match it back to provider-specific docs."""
+    msg = _truncation_warning_message(
+        stop_reason="max_tokens",
+        turn_output_tokens=500,
+        user_input="hi",
+    )
+    assert "max_tokens" in msg
+    assert "500" in msg
+
+
+def test_truncation_warning_zero_tokens_still_formats() -> None:
+    """Edge case: stop_reason=length but turn_output_tokens=0. Should
+    still produce a coherent message (no KeyError, no broken format)."""
+    msg = _truncation_warning_message(
+        stop_reason="length",
+        turn_output_tokens=0,
+        user_input="hi",
+    )
+    assert "0" in msg
+    assert "length" in msg
+
+
+def test_truncation_warning_uses_session_history_for_language() -> None:
+    """Chinese session with English follow-up should still show
+    Chinese truncation warning (reusing the _session_is_cjk helper)."""
+    history = (
+        _FakeMsg("user", "今日新聞三則"),
+        _FakeMsg("assistant", "here are the top 3"),
+    )
+    msg = _truncation_warning_message(
+        stop_reason="length",
+        turn_output_tokens=100,
+        user_input="1",  # ambiguous short follow-up
+        session_messages=history,
+    )
+    assert "截斷" in msg
+
+
+def test_truncation_warning_carries_ascii_warning_marker() -> None:
+    """The ⚠ marker is in both locales for easy visual distinction
+    from the classic empty-response diagnostics."""
+    en = _truncation_warning_message(
+        stop_reason="length", turn_output_tokens=1, user_input="hi",
+    )
+    zh = _truncation_warning_message(
+        stop_reason="length", turn_output_tokens=1, user_input="你好",
+    )
+    assert "⚠" in en
+    assert "⚠" in zh
