@@ -3824,6 +3824,7 @@ class LLMCodeTUI(App):  # noqa: E302
                         name=p.manifest.name,
                         description=getattr(p.manifest, "description", ""),
                         source="installed",
+                        category="Installed",
                         installed=True,
                         enabled=p.enabled,
                         repo="",
@@ -3837,10 +3838,13 @@ class LLMCodeTUI(App):  # noqa: E302
                 if p["name"] not in installed_names:
                     skills_count = p.get("skills", 0)
                     extra = f"{skills_count} skills" if skills_count > 0 else p.get("type", "plugin")
+                    _source = p.get("source", "official")
+                    _category = "Official" if _source == "official" else "Community"
                     items.append(MarketplaceItem(
                         name=p["name"],
                         description=p.get("desc", ""),
-                        source=p.get("source", "official"),
+                        source=_source,
+                        category=_category,
                         installed=False,
                         repo=p.get("repo", ""),
                         extra=extra,

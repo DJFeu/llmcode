@@ -367,24 +367,49 @@ class ProfileRegistry:
         if user_profile_dir is None:
             user_profile_dir = Path.home() / ".llmcode" / "model_profiles"
         self._user_dir = user_profile_dir
+        self._user_mtime: float = 0.0  # track directory mtime for hot-reload
         self._load_user_profiles()
 
     def _load_user_profiles(self) -> None:
         """Load *.toml files from the user profile directory."""
         if not self._user_dir.is_dir():
             return
+        # Record dir mtime for hot-reload detection
+        try:
+            self._user_mtime = self._user_dir.stat().st_mtime
+        except OSError:
+            pass
         for toml_path in sorted(self._user_dir.glob("*.toml")):
             try:
                 data = _load_toml(toml_path)
-                # Profile key is the filename without extension
                 key = toml_path.stem.lower()
-                # Find base profile to merge over
                 base = self._profiles.get(key, _DEFAULT_PROFILE)
                 profile = _profile_from_dict(data, base=base)
                 self._profiles[key] = profile
                 _logger.debug("loaded user profile: %s from %s", key, toml_path)
             except Exception as exc:
                 _logger.warning("failed to load profile %s: %s", toml_path, exc)
+
+    def reload_if_changed(self) -> bool:
+        """Re-read user TOML profiles if the directory was modified.
+
+        Returns True if profiles were reloaded. Cheap to call frequently
+        — only stats the directory, not individual files.
+        """
+        if not self._user_dir.is_dir():
+            return False
+        try:
+            current_mtime = self._user_dir.stat().st_mtime
+        except OSError:
+            return False
+        if current_mtime <= self._user_mtime:
+            return False
+        # Directory was touched — reload all user profiles
+        _logger.info("model_profiles directory changed, reloading")
+        # Reset to built-ins before reloading
+        self._profiles = dict(_BUILTIN_PROFILES)
+        self._load_user_profiles()
+        return True
 
     def resolve(self, model: str) -> ModelProfile:
         """Resolve a model name to its profile."""
@@ -423,12 +448,14 @@ _registry: ProfileRegistry | None = None
 def get_profile(model: str) -> ModelProfile:
     """Resolve a model name to its profile using the global registry.
 
-    The registry is lazily initialized on first call. Thread-safe for
-    reads after initialization (frozen dataclasses, dict lookup).
+    The registry is lazily initialized on first call. Hot-reloads
+    user TOML overrides if the profile directory was modified.
     """
     global _registry
     if _registry is None:
         _registry = ProfileRegistry()
+    else:
+        _registry.reload_if_changed()
     return _registry.resolve(model)
 
 

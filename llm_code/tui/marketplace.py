@@ -9,7 +9,7 @@ from textual.containers import VerticalScroll
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widget import Widget
-from textual.widgets import Static
+from textual.widgets import Input, Static
 from rich.text import Text
 
 
@@ -20,6 +20,7 @@ class MarketplaceItem:
     name: str
     description: str
     source: str  # "installed", "official", "community", "npm", "clawhub"
+    category: str = ""  # grouping label: "Installed", "Official", "Community"
     installed: bool = False
     enabled: bool = True
     repo: str = ""
@@ -85,6 +86,7 @@ class MarketplaceBrowser(ModalScreen):
         Binding("i", "install", "Install"),
         Binding("e", "enable_toggle", "Enable/Disable"),
         Binding("r", "remove", "Remove"),
+        Binding("/", "focus_search", "Search"),
     ]
 
     DEFAULT_CSS = """
@@ -103,6 +105,11 @@ class MarketplaceBrowser(ModalScreen):
         text-style: bold;
         margin-bottom: 1;
     }
+    #marketplace-search {
+        dock: top;
+        margin: 0 1 1 1;
+        height: 1;
+    }
     #marketplace-hint {
         dock: bottom;
         height: 1;
@@ -111,6 +118,18 @@ class MarketplaceBrowser(ModalScreen):
     }
     #marketplace-list {
         height: 1fr;
+    }
+    .category-header {
+        height: 1;
+        color: $accent;
+        text-style: bold;
+        padding: 0 1;
+    }
+    #marketplace-stats {
+        height: 1;
+        color: $text-muted;
+        text-align: right;
+        padding: 0 1;
     }
     """
 
@@ -126,17 +145,66 @@ class MarketplaceBrowser(ModalScreen):
         super().__init__()
         self._title = title
         self._items = items
+        self._filtered_items = list(items)
         self._cursor = 0
+        self._filter_text = ""
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="marketplace-container"):
             yield Static(self._title, id="marketplace-title")
-            for i, item in enumerate(self._items):
-                yield ItemRow(item, i)
+            yield Input(placeholder="Type to filter...", id="marketplace-search")
+            stats = self._stats_text()
+            yield Static(stats, id="marketplace-stats")
+            self._render_items()
         yield Static(
-            "↑↓ Navigate · Enter/i Install · e Enable/Disable · r Remove · Esc Close",
+            "↑↓ Navigate · / Search · Enter/i Install · e Enable/Disable · r Remove · Esc Close",
             id="marketplace-hint",
         )
+
+    def _stats_text(self) -> str:
+        installed = sum(1 for i in self._items if i.installed)
+        enabled = sum(1 for i in self._items if i.installed and i.enabled)
+        available = len(self._items) - installed
+        return f"{installed} installed ({enabled} enabled) · {available} available"
+
+    def _render_items(self) -> None:
+        """Mount item rows grouped by category."""
+        container = self.query_one("#marketplace-container", VerticalScroll)
+        # Remove existing rows and category headers
+        for widget in list(container.query(ItemRow)):
+            widget.remove()
+        for widget in list(container.query(".category-header")):
+            widget.remove()
+
+        current_cat = ""
+        idx = 0
+        for item in self._filtered_items:
+            cat = item.category or item.source
+            if cat != current_cat:
+                current_cat = cat
+                container.mount(Static(f"── {cat} ──", classes="category-header"))
+            container.mount(ItemRow(item, idx))
+            idx += 1
+
+    def _apply_filter(self, text: str) -> None:
+        """Filter items by name or description."""
+        self._filter_text = text.strip().lower()
+        if not self._filter_text:
+            self._filtered_items = list(self._items)
+        else:
+            self._filtered_items = [
+                i for i in self._items
+                if self._filter_text in i.name.lower()
+                or self._filter_text in i.description.lower()
+            ]
+        self._cursor = 0
+        self._render_items()
+        self._update_selection()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """React to search input changes."""
+        if event.input.id == "marketplace-search":
+            self._apply_filter(event.value)
 
     def on_mount(self) -> None:
         self._update_selection()
@@ -162,8 +230,8 @@ class MarketplaceBrowser(ModalScreen):
                 row.remove_class("selected")
 
     def _selected_item(self) -> MarketplaceItem | None:
-        if 0 <= self._cursor < len(self._items):
-            return self._items[self._cursor]
+        if 0 <= self._cursor < len(self._filtered_items):
+            return self._filtered_items[self._cursor]
         return None
 
     def action_cursor_up(self) -> None:
@@ -172,9 +240,15 @@ class MarketplaceBrowser(ModalScreen):
             self._update_selection()
 
     def action_cursor_down(self) -> None:
-        if self._cursor < len(self._items) - 1:
+        if self._cursor < len(self._filtered_items) - 1:
             self._cursor += 1
             self._update_selection()
+
+    def action_focus_search(self) -> None:
+        try:
+            self.query_one("#marketplace-search", Input).focus()
+        except Exception:
+            pass
 
     def action_select(self) -> None:
         item = self._selected_item()
