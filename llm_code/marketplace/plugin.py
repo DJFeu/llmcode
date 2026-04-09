@@ -24,6 +24,18 @@ class PluginManifest:
     hooks: dict[str, Any] | None = None
     mcp_servers: tuple[dict[str, Any], ...] | None = None
     lsp_servers: tuple[dict[str, Any], ...] | None = None
+    # Wave2-5: Python tools exported by the plugin, in the form
+    # ``"package.module:ClassName"``. The executor resolves each
+    # entry by importing the module (with the plugin install path
+    # temporarily on sys.path) and calling the class with no args,
+    # then passes the resulting Tool to ToolRegistry.register.
+    provides_tools: tuple[str, ...] = ()
+    # Wave2-5: declared capability envelope the plugin needs. The
+    # executor only reads this for surfacing to the user / audit log
+    # — it does not enforce sandboxing here. Expected keys (all
+    # optional, all default False): "network", "fs_write",
+    # "subprocess", "env". A follow-up PR may add actual enforcement.
+    permissions: dict[str, Any] | None = None
 
     @classmethod
     def from_path(cls, plugin_dir: Path) -> "PluginManifest":
@@ -49,6 +61,10 @@ class PluginManifest:
         agents_raw = data.get("agents")
         skills_raw = data.get("skills")
         hooks_raw = data.get("hooks")
+        # Wave2-5: both camelCase and snake_case accepted so plugin
+        # authors can pick whichever matches the rest of their manifest.
+        tools_raw = data.get("providesTools") or data.get("provides_tools") or []
+        perms_raw = data.get("permissions")
 
         return cls(
             name=data["name"],
@@ -64,6 +80,8 @@ class PluginManifest:
             hooks=hooks_raw,
             mcp_servers=tuple(mcp_raw) if mcp_raw is not None else None,
             lsp_servers=tuple(lsp_raw) if lsp_raw is not None else None,
+            provides_tools=tuple(tools_raw) if tools_raw else (),
+            permissions=perms_raw if isinstance(perms_raw, dict) else None,
         )
 
 

@@ -316,6 +316,61 @@ class SkillRouter:
     # Public API
     # ------------------------------------------------------------------
 
+    def add_skill(self, skill: Any) -> None:
+        """Wave2-5: register a skill after construction time.
+
+        Used by the plugin executor when a plugin declares skills —
+        we don't want to rebuild the router from scratch just to add
+        one entry. The router's caches are invalidated so subsequent
+        route() calls see the new skill immediately.
+
+        Raises ValueError if a skill with the same name is already
+        registered, so plugin name conflicts are caught loudly
+        instead of silently shadowing the built-in skill.
+        """
+        for existing in self._skills:
+            if getattr(existing, "name", None) == skill.name:
+                raise ValueError(
+                    f"Skill '{skill.name}' is already registered; "
+                    f"remove the existing entry before adding a plugin skill"
+                )
+        self._skills = (*self._skills, skill)
+        # Tier A: add the new skill to the keyword index
+        kws = _extract_keywords(skill)
+        self._skill_keywords[skill.name] = kws
+        for kw in kws:
+            self._keyword_index.setdefault(kw, []).append(skill)
+        # Tier B: rebuild the TF-IDF index from the new skill list.
+        # Incremental TF-IDF updates are possible but not worth the
+        # complexity for a handful of plugin skills — a rebuild is
+        # cheap for <100 skills which is the realistic ceiling.
+        self._tfidf = _build_tfidf_index(self._skills)
+        # Invalidate cached route results — an old answer might have
+        # missed a better plugin match now that the skill exists.
+        self._cache.clear()
+
+    def remove_skill(self, name: str) -> bool:
+        """Wave2-5: un-register a skill by name.
+
+        Returns True on removal, False if the name was not found.
+        Called when a plugin is disabled or unloaded.
+        """
+        new_skills = tuple(s for s in self._skills if getattr(s, "name", None) != name)
+        if len(new_skills) == len(self._skills):
+            return False
+        self._skills = new_skills
+        # Rebuild both indices from scratch — removing a skill from
+        # the keyword index would require scanning every bucket,
+        # which is the same cost as rebuilding.
+        self._skill_keywords.pop(name, None)
+        self._keyword_index = {}
+        for existing in self._skills:
+            for kw in self._skill_keywords.get(existing.name, frozenset()):
+                self._keyword_index.setdefault(kw, []).append(existing)
+        self._tfidf = _build_tfidf_index(self._skills)
+        self._cache.clear()
+        return True
+
     def route(self, user_message: str) -> list[Any]:
         """Route a user message to matching skills (sync, Tier A + B only)."""
         if not self._config.enabled or not self._skills:
