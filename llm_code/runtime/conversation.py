@@ -1618,6 +1618,15 @@ class ConversationRuntime:
                 self._fire_hook("agent_spawn", {"agent_id": ac.id, "args": str(ac.args)[:200]})
 
             tool_result_blocks: list[ToolResultBlock] = []
+            # Set to True when the idempotent-retry tracker detects
+            # the model is stuck calling the same tool with the same
+            # args. We drop out of the inner dispatch loop AND the
+            # outer turn-iteration loop so the turn actually ends —
+            # previously the inner ``continue`` only skipped the one
+            # offending call, the model got another iteration, saw
+            # the "Aborted" error block, and re-emitted the same
+            # call, burning the full max_turn_iterations budget.
+            _turn_aborted_by_retry_loop = False
 
             # Non-agent calls: use pre-computed result if available, else execute normally
             for call in non_agent_calls:
@@ -1638,7 +1647,19 @@ class ConversationRuntime:
                             is_error=True,
                         )
                     )
-                    continue
+                    _turn_aborted_by_retry_loop = True
+                    # Emit a visible explanation so the user sees WHY
+                    # the turn ended instead of just silently stopping.
+                    yield StreamTextDelta(
+                        text=(
+                            f"\n\n⚠ Aborted: the model asked to call "
+                            f"{call.name!r} again with the same arguments "
+                            f"as the previous call, which indicates a retry "
+                            f"loop. Try rephrasing your request, or check "
+                            f"whether the tool result was useful.\n"
+                        ),
+                    )
+                    break  # Stop dispatching any more calls from this batch
                 _retry_tracker.record(call.name, call.args)
                 if call.id in _precomputed_by_id:
                     # Read-only tool already executed concurrently — emit events and reuse result
@@ -1718,6 +1739,20 @@ class ConversationRuntime:
                     self._compact_with_todo_preserve(
                         int(_context_limit * 0.6), reason="post_tool",
                     )
+
+            # Fast exit if the idempotent-retry tracker detected a
+            # loop. We still record the error tool_result_block and
+            # add it to the session so the model's message history
+            # is consistent, but we don't give the model another
+            # iteration to re-emit the same failing call.
+            if _turn_aborted_by_retry_loop:
+                if tool_result_blocks:
+                    tool_msg = Message(
+                        role="user",
+                        content=tuple(tool_result_blocks),
+                    )
+                    self.session = self.session.add_message(tool_msg)
+                break  # Exit the outer turn-iteration loop
 
             # 10. Loop back for LLM to process results
 
