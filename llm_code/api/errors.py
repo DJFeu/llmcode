@@ -29,7 +29,29 @@ class ProviderAuthError(ProviderError):
 
 
 class ProviderRateLimitError(ProviderError):
-    """Provider rate-limit exceeded (retryable)."""
+    """Provider rate-limit exceeded (retryable).
+
+    Wave2-1b: carries an optional ``retry_after`` hint in seconds
+    when the provider sends an HTTP Retry-After header on the 429
+    response. Callers should honor this value instead of their own
+    exponential backoff when it is non-None, capped at a reasonable
+    maximum to avoid wedging on a misbehaving proxy.
+    """
+
+    def __init__(self, message: str, *, retry_after: float | None = None) -> None:
+        super().__init__(message, is_retryable=True)
+        self.retry_after = retry_after
+
+
+class ProviderTimeoutError(ProviderError):
+    """Network timeout talking to the provider (retryable).
+
+    Wave2-1b: distinct from ProviderConnectionError so the retry path
+    can use a timeout-specific exponential backoff. Previously
+    ``httpx.ReadTimeout`` and ``httpx.ConnectTimeout`` fell through
+    _post_with_retry uncaught and became generic ``Exception`` in the
+    conversation loop, skipping the retry budget entirely.
+    """
 
     def __init__(self, message: str) -> None:
         super().__init__(message, is_retryable=True)

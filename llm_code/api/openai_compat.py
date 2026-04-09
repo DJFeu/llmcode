@@ -13,42 +13,10 @@ from llm_code.api.errors import (
     ProviderModelNotFoundError,
     ProviderOverloadError,
     ProviderRateLimitError,
+    ProviderTimeoutError,
 )
 from llm_code.api.provider import LLMProvider
 from llm_code.api.sse import parse_sse_events
-
-
-def _token_usage_from_dict(usage_data: dict) -> "TokenUsage":
-    """Build TokenUsage from a raw provider usage dict.
-
-    Handles both payload shapes:
-
-    * OpenAI-compat (``prompt_tokens`` / ``completion_tokens`` +
-      ``prompt_tokens_details.cached_tokens`` for cache reads).
-    * Anthropic-style (``cache_read_input_tokens`` /
-      ``cache_creation_input_tokens`` top-level).
-
-    Falls back to 0 for any missing field so upstream code can assume
-    a fully-populated object.
-    """
-    input_tokens = int(usage_data.get("prompt_tokens") or usage_data.get("input_tokens") or 0)
-    output_tokens = int(usage_data.get("completion_tokens") or usage_data.get("output_tokens") or 0)
-
-    # OpenAI-compat nests cache reads under prompt_tokens_details.
-    cache_read = 0
-    details = usage_data.get("prompt_tokens_details")
-    if isinstance(details, dict):
-        cache_read = int(details.get("cached_tokens") or 0)
-    # Anthropic surfaces them top-level; prefer the explicit field.
-    cache_read = int(usage_data.get("cache_read_input_tokens") or cache_read)
-    cache_creation = int(usage_data.get("cache_creation_input_tokens") or 0)
-
-    return TokenUsage(
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        cache_read_tokens=cache_read,
-        cache_creation_tokens=cache_creation,
-    )
 from llm_code.api.types import (
     ContentBlock,
     ImageBlock,
@@ -66,6 +34,63 @@ from llm_code.api.types import (
     ToolResultBlock,
     ToolUseBlock,
 )
+
+
+# Wave2-1b: hard cap on provider-reported Retry-After so a misbehaving
+# proxy that returns "Retry-After: 86400" does not wedge the runtime
+# for a day. Real providers use small values (30s typical on 429).
+_MAX_RETRY_AFTER_SECONDS = 60.0
+
+
+def _parse_retry_after_header(raw: str | None) -> float | None:
+    """Parse an HTTP Retry-After value into a seconds float.
+
+    Returns None on missing, empty, or unparseable input. Negative
+    or absurdly large values are clamped to the max cap. The HTTP
+    spec allows either a delta-seconds integer or an HTTP-date;
+    this helper only handles the delta-seconds form which is what
+    every real LLM provider actually sends on 429.
+    """
+    if not raw:
+        return None
+    try:
+        value = float(raw.strip())
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+    return min(value, _MAX_RETRY_AFTER_SECONDS)
+
+
+def _token_usage_from_dict(usage_data: dict) -> "TokenUsage":
+    """Build TokenUsage from a raw provider usage dict (wave2-2).
+
+    Handles both payload shapes:
+
+    * OpenAI-compat (``prompt_tokens`` / ``completion_tokens`` +
+      ``prompt_tokens_details.cached_tokens`` for cache reads).
+    * Anthropic-style (``cache_read_input_tokens`` /
+      ``cache_creation_input_tokens`` top-level).
+
+    Falls back to 0 for any missing field so upstream code can assume
+    a fully-populated object.
+    """
+    input_tokens = int(usage_data.get("prompt_tokens") or usage_data.get("input_tokens") or 0)
+    output_tokens = int(usage_data.get("completion_tokens") or usage_data.get("output_tokens") or 0)
+
+    cache_read = 0
+    details = usage_data.get("prompt_tokens_details")
+    if isinstance(details, dict):
+        cache_read = int(details.get("cached_tokens") or 0)
+    cache_read = int(usage_data.get("cache_read_input_tokens") or cache_read)
+    cache_creation = int(usage_data.get("cache_creation_input_tokens") or 0)
+
+    return TokenUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_tokens=cache_read,
+        cache_creation_tokens=cache_creation,
+    )
 
 
 class OpenAICompatProvider(LLMProvider):
@@ -234,7 +259,19 @@ class OpenAICompatProvider(LLMProvider):
                     # Overload retries don't count against normal retry budget
                     continue
                 raise
-            except (ProviderConnectionError, ProviderRateLimitError) as exc:
+            except ProviderRateLimitError as exc:
+                # Wave2-1b: honor Retry-After hint from the provider
+                # when set; otherwise fall back to exponential. This
+                # is what avoids hammering a rate-limited provider
+                # before its reset window expires.
+                last_exc = exc
+                if attempt < self._max_retries:
+                    backoff = exc.retry_after if exc.retry_after is not None else float(2 ** attempt)
+                    await asyncio.sleep(backoff)
+                    attempt += 1
+                    continue
+                raise
+            except ProviderConnectionError as exc:
                 last_exc = exc
                 if attempt < self._max_retries:
                     await asyncio.sleep(2 ** attempt)
@@ -245,6 +282,17 @@ class OpenAICompatProvider(LLMProvider):
                 raise
             except httpx.ConnectError as exc:
                 last_exc = ProviderConnectionError(str(exc))
+                if attempt < self._max_retries:
+                    await asyncio.sleep(2 ** attempt)
+                    attempt += 1
+                    continue
+                raise last_exc from exc
+            except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
+                # Wave2-1b: any httpx timeout flavor is now a distinct
+                # ProviderTimeoutError (retryable) instead of falling
+                # through to a generic Exception in conversation.py
+                # that skipped the retry budget entirely.
+                last_exc = ProviderTimeoutError(str(exc) or type(exc).__name__)
                 if attempt < self._max_retries:
                     await asyncio.sleep(2 ** attempt)
                     attempt += 1
@@ -268,7 +316,13 @@ class OpenAICompatProvider(LLMProvider):
         if response.status_code == 404:
             raise ProviderModelNotFoundError(msg)
         if response.status_code == 429:
-            raise ProviderRateLimitError(msg)
+            # Wave2-1b: honor the provider's Retry-After hint when
+            # present so the backoff respects its own rate-limit
+            # reset window instead of guessing with 2**attempt.
+            retry_after = _parse_retry_after_header(
+                response.headers.get("Retry-After")
+            )
+            raise ProviderRateLimitError(msg, retry_after=retry_after)
         if response.status_code == 529:
             raise ProviderOverloadError(msg)
         if response.status_code >= 500:
