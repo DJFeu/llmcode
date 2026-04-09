@@ -32,11 +32,22 @@ class CheckpointRecovery:
     # Core persistence
     # ------------------------------------------------------------------
 
-    def save_checkpoint(self, session: "Session") -> Path:
-        """Serialize *session* to disk and return the checkpoint file path."""
+    def save_checkpoint(
+        self,
+        session: "Session",
+        cost_tracker: "object | None" = None,
+    ) -> Path:
+        """Serialize *session* to disk and return the checkpoint file path.
+
+        When ``cost_tracker`` is provided, its accumulated token/cost
+        state is included so a resumed session continues from the
+        correct running total instead of resetting to zero.
+        """
 
         data = session.to_dict()
         data["checkpoint_saved_at"] = datetime.now(timezone.utc).isoformat()
+        if cost_tracker is not None and hasattr(cost_tracker, "to_dict"):
+            data["cost_tracker"] = cost_tracker.to_dict()
 
         path = self._dir / f"{session.id}.json"
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")

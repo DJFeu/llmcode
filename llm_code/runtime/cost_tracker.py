@@ -130,6 +130,27 @@ class CostTracker:
             )
         return (0.0, 0.0)
 
+    def to_dict(self) -> dict:
+        """Serialize accumulated cost state for session persistence."""
+        return {
+            "model": self.model,
+            "total_input_tokens": self.total_input_tokens,
+            "total_output_tokens": self.total_output_tokens,
+            "total_cost_usd": self.total_cost_usd,
+        }
+
+    def restore_from_dict(self, data: dict) -> None:
+        """Restore accumulated cost state from a persisted dict.
+
+        Adds the persisted values ON TOP of the current state so a
+        resumed session's cost is cumulative with any usage that
+        happened before the restore call (e.g. the resume itself
+        may have already incurred a small request).
+        """
+        self.total_input_tokens += data.get("total_input_tokens", 0)
+        self.total_output_tokens += data.get("total_output_tokens", 0)
+        self.total_cost_usd += data.get("total_cost_usd", 0.0)
+
     def format_cost(self) -> str:
         lines = [f"Tokens — in: {self.total_input_tokens:,}  out: {self.total_output_tokens:,}"]
         in_price, out_price = self._get_pricing()

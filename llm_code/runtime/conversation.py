@@ -1804,7 +1804,9 @@ class ConversationRuntime:
         # Auto-checkpoint: persist session state after each turn completes
         if self._recovery_checkpoint is not None:
             try:
-                self._recovery_checkpoint.save_checkpoint(self.session)
+                self._recovery_checkpoint.save_checkpoint(
+                    self.session, cost_tracker=self._cost_tracker,
+                )
             except Exception as exc:
                 logger.debug("Recovery checkpoint save failed: %s", exc)
 
