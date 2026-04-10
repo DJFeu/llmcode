@@ -986,6 +986,7 @@ class ConversationRuntime:
         _prev_output_tokens = 0
         _continuation_count = 0
         _retry_tracker = RecentToolCallTracker()
+        _force_text_next_iteration = False
 
         for _iteration in range(self._config.max_turn_iterations):
             # Proactive context compaction: compress before hitting model limit
@@ -1097,6 +1098,14 @@ class ConversationRuntime:
                     allowed=allowed_tool_names,
                     model=self._active_model,
                 )
+
+            # Forced-text mode for local models: after tool results,
+            # strip ALL tools so the model is physically unable to call
+            # tools and must generate a text response instead.
+            if _force_text_next_iteration:
+                tool_defs = ()
+                _force_text_next_iteration = False
+                logger.debug("Forced-text mode: stripped tools for this iteration")
 
             # Collect MCP instructions if manager is available
             _mcp_instructions: dict[str, str] | None = None
@@ -1883,24 +1892,14 @@ class ConversationRuntime:
                 )
                 self.session = self.session.add_message(tool_result_msg)
 
-                # Local model nudge: some quantized models (Qwen INT4,
-                # DeepSeek, etc.) generate end_turn immediately after
-                # receiving tool results instead of producing a
-                # substantive response.  Append a short user-role
-                # reminder so the model continues with a real answer.
+                # Local model forced-text mode: after receiving tool
+                # results, some quantized models (Qwen INT4, DeepSeek)
+                # either end immediately or re-call the same tool
+                # instead of producing a text answer.  Setting this
+                # flag strips tools from the NEXT iteration so the
+                # model is physically forced to generate text.
                 if _is_local:
-                    _nudge = Message(
-                        role="user",
-                        content=(TextBlock(
-                            text=(
-                                "Above are the tool results. Now give a "
-                                "complete, detailed answer to the user's "
-                                "original question based on these results. "
-                                "Do NOT call any more tools — answer directly."
-                            ),
-                        ),),
-                    )
-                    self.session = self.session.add_message(_nudge)
+                    _force_text_next_iteration = True
 
                 # Compact after tool results to prevent context overflow
                 est = self.session.estimated_tokens()
