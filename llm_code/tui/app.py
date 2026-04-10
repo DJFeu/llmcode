@@ -422,9 +422,11 @@ class LLMCodeTUI(App):  # noqa: E302
         self.run_worker(self._init_mcp(), name="init_mcp")
 
     def _render_welcome(self) -> None:
-        """Show styled welcome banner in chat area."""
+        """Show styled welcome banner with gradient logo in chat area."""
         import sys
         from textual.widgets import Static
+        from rich.color import Color
+        from rich.style import Style
         from rich.text import Text as RichText
 
         chat = self.query_one(ChatScrollView)
@@ -444,6 +446,22 @@ class LLMCodeTUI(App):  # noqa: E302
             "   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝",
         ]
 
+        # Gradient: bright gold (#FFD700) → warm amber (#E8A317) → burnt orange (#CC5500)
+        gradient_colors = [
+            (255, 223, 50),   # bright gold
+            (255, 215, 0),    # gold
+            (250, 200, 0),    # warm gold
+            (245, 185, 10),   # gold-amber
+            (240, 170, 20),   # amber
+            (235, 155, 25),   # warm amber
+            (225, 138, 30),   # amber-orange
+            (215, 120, 30),   # deep amber
+            (205, 105, 25),   # orange-amber
+            (195, 90, 15),    # burnt amber
+            (185, 78, 10),    # burnt orange
+            (175, 68, 5),     # deep burnt orange
+        ]
+
         model = self._config.model if self._config else "(not set)"
         branch = self._detect_branch()
         workspace = self._cwd.name
@@ -453,8 +471,9 @@ class LLMCodeTUI(App):  # noqa: E302
         paste_key = "Cmd+V to paste" if sys.platform == "darwin" else "Ctrl+V to paste"
 
         text = RichText()
-        for line in logo_lines:
-            text.append(line + "\n", style="bold cyan")
+        for i, line in enumerate(logo_lines):
+            r, g, b = gradient_colors[i]
+            text.append(line + "\n", style=Style(color=Color.from_rgb(r, g, b), bold=True))
         text.append("\n")
         for label, value in [
             ("Model", model),
