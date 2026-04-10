@@ -21,6 +21,12 @@ from llm_code.runtime.conversation import ConversationRuntime
 from llm_code.runtime.session import Session
 from llm_code.tools.agent_roles import BUILD_ROLE, AgentRole
 
+_ANTI_RECURSION = (
+    "\n\nIMPORTANT: You are a sub-agent. Do NOT spawn further sub-agents or "
+    "delegate work. Execute the task directly. If you cannot complete it, "
+    "report back with what you found — do not attempt to fork or delegate."
+)
+
 
 def make_subagent_runtime(
     parent: ConversationRuntime,
@@ -97,4 +103,5 @@ def make_subagent_runtime(
 
     # Tag the runtime with its role so downstream observers can react.
     child._subagent_role = effective_role  # type: ignore[attr-defined]
+    child._subagent_system_suffix = _ANTI_RECURSION  # type: ignore[attr-defined]
     return child

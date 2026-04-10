@@ -1134,6 +1134,11 @@ class ConversationRuntime:
                 if injection:
                     system_prompt = system_prompt + "\n\n" + injection
 
+            # Anti-recursion suffix for sub-agents
+            _subagent_suffix = getattr(self, "_subagent_system_suffix", None)
+            if _subagent_suffix:
+                system_prompt = system_prompt + _subagent_suffix
+
             self._fire_hook("prompt_compile", {"prompt_length": len(system_prompt), "tool_count": len(tool_defs)})
 
             # 3. Create request and stream

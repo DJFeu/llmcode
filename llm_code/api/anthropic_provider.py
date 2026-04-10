@@ -87,6 +87,7 @@ class AnthropicProvider(LLMProvider):
         self._max_retries = max_retries
         self._timeout = timeout
         self._base_url = base_url.rstrip("/")
+        self._prev_cache_read_tokens: int = 0
 
         self._client = httpx.AsyncClient(
             headers={
@@ -413,10 +414,21 @@ class AnthropicProvider(LLMProvider):
                 ))
 
         usage_data = data.get("usage", {})
+        cache_read = int(usage_data.get("cache_read_input_tokens", 0))
+        if self._prev_cache_read_tokens > 0 and cache_read > 0:
+            drop = self._prev_cache_read_tokens - cache_read
+            drop_pct = drop / self._prev_cache_read_tokens if self._prev_cache_read_tokens > 0 else 0
+            if drop > 2000 and drop_pct > 0.05:
+                _logger.warning(
+                    "Cache breakpoint detected: cache_read dropped %d tokens (%.1f%%): %d → %d",
+                    drop, drop_pct * 100, self._prev_cache_read_tokens, cache_read,
+                )
+        self._prev_cache_read_tokens = cache_read
+
         usage = TokenUsage(
             input_tokens=int(usage_data.get("input_tokens", 0)),
             output_tokens=int(usage_data.get("output_tokens", 0)),
-            cache_read_tokens=int(usage_data.get("cache_read_input_tokens", 0)),
+            cache_read_tokens=cache_read,
             cache_creation_tokens=int(usage_data.get("cache_creation_input_tokens", 0)),
         )
 
