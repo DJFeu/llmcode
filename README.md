@@ -1,7 +1,7 @@
 # llmcode
 
 <p align="center">
-  <img src="assets/banner.svg" alt="LLM CODE" width="600">
+  <img src="assets/banner.png" alt="LLM CODE" width="600">
 </p>
 
 <p align="center">
