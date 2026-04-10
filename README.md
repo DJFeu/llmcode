@@ -155,7 +155,7 @@ llmcode is **deeply influenced by Claude Code's architecture**, borrows proven p
 | Prompt caching (Anthropic) | ✅ | ✅ | ❌ | ❌ |
 | Signed thinking round-trip | ✅ | ✅ | ❌ | ❌ |
 | IDE extensions | ✅ | ✅ | ✅ | ❌ |
-| i18n (UI level) | ✅ | ❌ | ✅ | ❌ |
+| i18n (UI level) | ⚠️ | ❌ | ✅ | ❌ |
 | MCP servers | ✅ | ✅ | ✅ | ✅ |
 | Plugin ecosystem | ✅ | ✅ | ✅ | ✅ |
 | Voice input | ✅ | ❌ | ❌ | ❌ |
