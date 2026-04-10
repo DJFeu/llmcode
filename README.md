@@ -134,30 +134,31 @@ llmcode is **deeply influenced by Claude Code's architecture**, borrows proven p
 
 | Feature | llmcode | Claude Code | Qwen Code | opencode |
 |---------|:-------:|:-----------:|:---------:|:--------:|
-| Open source | ✅ MIT | ❌ | ✅ Apache-2.0 | ✅ MIT |
+| Open source | ✅ | ❌ | ✅ | ✅ |
 | Language | Python | TypeScript | TypeScript | TypeScript |
-| Local model first | ✅ | ❌ | ✅ (Qwen) | ⚠️ |
+| Local model first | ✅ | ❌ | ✅ | ⚠️ |
 | Default model | any | Claude | Qwen3-Coder | any |
 | Free tier | self-hosted | ❌ | 1000 req/day | self-hosted |
-| Per-model system prompts | ✅ (9) | N/A | ⚠️ (Qwen only) | ✅ (7) |
-| **Qwen / Llama / DeepSeek tuned prompts** | ✅ | ❌ | Qwen only | ❌ |
+| Per-model system prompts | ✅ | N/A | ⚠️ | ✅ |
+| **Qwen / Llama / DeepSeek tuned prompts** | ✅ | ❌ | ⚠️ | ❌ |
 | Model profile system (TOML) | ✅ | ❌ | ❌ | ❌ |
 | Skill router (auto match) | **3-tier** | ❌ | manual | manual |
 | Memory system | **5-layer** | basic | basic | basic |
 | Multi-agent coordinator | **synthesis-first** | ❌ | Arena pattern | task tool |
 | Arena parallel agents | ✅ | ❌ | ✅ | ❌ |
-| Specialist personas | ✅ **9 built-in** | ❌ | ❌ | ⚠️ |
-| Plan mode (model-driven) | ✅ (tools) | ❌ | ✅ (tool) | ❌ |
+| Specialist personas | ✅ | ❌ | ❌ | ⚠️ |
+| Plan mode | ✅ | ❌ | ✅ | ❌ |
 | Docker sandbox | ✅ | ❌ | ✅ | ❌ |
-| PTY (interactive shell) | ✅ | ❌ | ✅ (node-pty) | ❌ |
+| PTY (interactive shell) | ✅ | ❌ | ✅ | ❌ |
 | Context overlap detection | ✅ | ❌ | ❌ | ❌ |
 | Diminishing returns auto-stop | ✅ | ❌ | ❌ | ❌ |
 | Prompt caching (Anthropic) | ✅ | ✅ | ❌ | ❌ |
 | Signed thinking round-trip | ✅ | ✅ | ❌ | ❌ |
-| i18n (UI level) | CJK support | ❌ | ✅ (6+ languages) | ❌ |
+| IDE extensions | ✅ | ✅ | ✅ | ❌ |
+| i18n (UI level) | ✅ | ❌ | ✅ | ❌ |
 | MCP servers | ✅ | ✅ | ✅ | ✅ |
-| Plugin ecosystem | ✅ (Claude Code compat) | ✅ | ✅ | ✅ |
-| Voice input | ✅ (Whisper/Anthropic/Google) | ❌ | ❌ | ❌ |
+| Plugin ecosystem | ✅ | ✅ | ✅ | ✅ |
+| Voice input | ✅ | ❌ | ❌ | ❌ |
 | Computer use | ✅ | ✅ | ❌ | ❌ |
 | Notebook tools | ✅ | ❌ | ❌ | ❌ |
 | YOLO mode | ✅ | ✅ | ✅ | ✅ |
