@@ -252,7 +252,7 @@ Native httpx-based provider for Anthropic's Messages API:
 
 ### Terminal UI
 
-- **Mouse scroll + text selection** — mouse wheel scrolling and scrollbar clicks enabled by default; use Shift+drag for terminal text selection (or set `"mouse": false` in config to disable mouse capture)
+- **Native text selection** — `mouse=False` preserves terminal text selection; use Shift+Up/Down and PageUp/PageDown for scrollback
 - **Cmd+V auto-detect** — text via bracketed paste, image via clipboard fallback
 - **Shift+Tab cycles agents** — BUILD → PLAN → SUGGEST → BUILD
 - **Mouse wheel scrolling** — scroll up to browse history (auto-scroll pauses), scroll back down to resume

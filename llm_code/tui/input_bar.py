@@ -189,16 +189,6 @@ class InputBar(Widget):
         return self.value.replace(self._IMAGE_MARKER, "").strip()
 
     def on_key(self, event: events.Key) -> None:
-        # Scroll keys — dispatch directly to App actions since event
-        # bubbling doesn't reliably reach App bindings from InputBar.
-        if event.key in ("shift+up", "pageup"):
-            self.app.action_scroll_chat_up()
-            event.stop()
-            return
-        if event.key in ("shift+down", "pagedown"):
-            self.app.action_scroll_chat_down()
-            event.stop()
-            return
         if self.disabled:
             if event.key == "escape":
                 self.post_message(self.Cancelled())

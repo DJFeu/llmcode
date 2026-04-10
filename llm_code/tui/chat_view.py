@@ -250,22 +250,18 @@ class ChatScrollView(VerticalScroll):
         if self._auto_scroll:
             self.scroll_end(animate=False)
 
-    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
-        """Detect user-initiated scroll-up to pause auto-scroll.
+    def on_scroll_up(self) -> None:
+        self._auto_scroll = False
 
-        Only pauses on upward scroll (user browsing history).
-        Does NOT resume on downward scroll — that's handled by
-        ``resume_auto_scroll()`` (called at turn end) or ``add_entry``
-        (which checks ``_auto_scroll`` before scrolling). This avoids
-        the bug where ``scroll_end()`` inside ``add_entry`` triggers
-        this watcher, which then re-enables auto-scroll and defeats
-        the user's intent to stay scrolled up.
-        """
-        if self.max_scroll_y <= 0:
-            return
-        if new_value < old_value:
-            # Scrolled up — pause auto-scroll
-            self._auto_scroll = False
+    def on_mouse_scroll_up(self, event) -> None:
+        """Mouse wheel scroll up — pause auto-scroll so the user can read history."""
+        self._auto_scroll = False
+
+    def on_mouse_scroll_down(self, event) -> None:
+        """Mouse wheel scroll down — resume auto-scroll if at bottom."""
+        # Check if we've scrolled to the very bottom
+        if self.scroll_offset.y >= self.max_scroll_y - 2:
+            self._auto_scroll = True
 
     def pause_auto_scroll(self) -> None:
         """Disable auto-scroll (e.g. when user pages up to read history)."""

@@ -298,10 +298,10 @@ class LLMCodeTUI(App):  # noqa: E302
     CSS = APP_CSS
     BINDINGS = [
         Binding("ctrl+d", "quit_app", "Quit"),
-        Binding("pageup", "scroll_chat_up", "Scroll Up", priority=True),
-        Binding("pagedown", "scroll_chat_down", "Scroll Down", priority=True),
-        Binding("shift+up", "scroll_chat_up", "Scroll Up", priority=True),
-        Binding("shift+down", "scroll_chat_down", "Scroll Down", priority=True),
+        Binding("pageup", "scroll_chat_up", "Scroll Up"),
+        Binding("pagedown", "scroll_chat_down", "Scroll Down"),
+        Binding("shift+up", "scroll_chat_up", "Scroll Up"),
+        Binding("shift+down", "scroll_chat_down", "Scroll Down"),
         # priority=True overrides Textual's screen-level shift+tab → focus_previous
         Binding("shift+tab", "cycle_agent", "Cycle Agent", priority=True),
         Binding("ctrl+y", "cycle_agent", "Cycle Agent"),  # alternate keybinding
@@ -1414,35 +1414,12 @@ class LLMCodeTUI(App):  # noqa: E302
         self.push_screen(QuickOpenScreen())
 
     def on_key(self, event: "events.Key") -> None:
-        """Global key handler — scroll, quick open, verbose toggle."""
-        # Scroll keys — handled here because InputBar may swallow bindings
-        if event.key in ("shift+up", "up+shift"):
-            self.action_scroll_chat_up()
-            event.prevent_default()
-            event.stop()
-            return
-        if event.key in ("shift+down", "down+shift"):
-            self.action_scroll_chat_down()
-            event.prevent_default()
-            event.stop()
-            return
-        if event.key == "pageup":
-            self.action_scroll_chat_up()
-            event.prevent_default()
-            event.stop()
-            return
-        if event.key == "pagedown":
-            self.action_scroll_chat_down()
-            event.prevent_default()
-            event.stop()
-            return
-        # Ctrl+P — Quick Open
+        """Handle Ctrl+P quick open, Ctrl+V verbose toggle."""
         if event.key == "ctrl+p":
             self._open_quick_open()
             event.prevent_default()
             event.stop()
             return
-        # Ctrl+V — toggle verbose on last error ToolBlock
         if event.key == "ctrl+v":
             if self._toggle_last_error_verbose():
                 event.prevent_default()
@@ -1619,10 +1596,7 @@ class LLMCodeTUI(App):  # noqa: E302
                             # dispatch the call; TUI just records the
                             # fact for the empty-response diagnostic.
                             _saw_tool_call_this_turn = True
-                    # Scroll to bottom only if auto-scroll is still active
-                    # (user hasn't scrolled up with mouse/keyboard).
-                    if chat._auto_scroll:
-                        chat.scroll_end(animate=False)
+                    chat.resume_auto_scroll()
 
                 elif isinstance(event, StreamThinkingDelta):
                     spinner.phase = "thinking"
@@ -2062,12 +2036,13 @@ class LLMCodeTUI(App):  # noqa: E302
         """Scroll chat view up by one page."""
         chat = self.query_one(ChatScrollView)
         chat.scroll_page_up(animate=False)
-        chat._auto_scroll = False
+        chat.pause_auto_scroll()
 
     def action_scroll_chat_down(self) -> None:
         """Scroll chat view down by one page."""
         chat = self.query_one(ChatScrollView)
         chat.scroll_page_down(animate=False)
+        chat.resume_auto_scroll()
 
     async def _graceful_exit(self) -> None:
         """Dream consolidation + cancel background tasks + exit."""
