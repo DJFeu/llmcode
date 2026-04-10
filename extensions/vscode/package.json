@@ -1,0 +1,56 @@
+{
+  "name": "llmcode",
+  "displayName": "LLMCode",
+  "description": "AI coding agent powered by local LLMs",
+  "version": "0.1.0",
+  "publisher": "djfeu",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["AI", "Programming Languages"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "LLMCode",
+      "properties": {
+        "llmcode.bridgePort": { "type": "number", "default": 9876, "description": "Port for llmcode IDE bridge server" },
+        "llmcode.autoConnect": { "type": "boolean", "default": true, "description": "Auto-connect to bridge server on startup" },
+        "llmcode.autoSpawn": { "type": "boolean", "default": true, "description": "Auto-spawn llmcode --serve for chat panel" },
+        "llmcode.serverUrl": { "type": "string", "default": "", "description": "Manual remote server URL (e.g. ws://host:8765)" },
+        "llmcode.pythonPath": { "type": "string", "default": "", "description": "Path to llmcode binary or Python interpreter" }
+      }
+    },
+    "commands": [
+      { "command": "llmcode.connect", "title": "LLMCode: Connect to Bridge" },
+      { "command": "llmcode.disconnect", "title": "LLMCode: Disconnect" },
+      { "command": "llmcode.openChat", "title": "LLMCode: Open Chat" },
+      { "command": "llmcode.askAboutSelection", "title": "LLMCode: Ask About Selection" }
+    ],
+    "menus": {
+      "editor/context": [{ "command": "llmcode.askAboutSelection", "when": "editorHasSelection", "group": "llmcode" }]
+    },
+    "viewsContainers": {
+      "activitybar": [{ "id": "llmcode", "title": "LLMCode", "icon": "$(hubot)" }]
+    },
+    "views": {
+      "llmcode": [{ "type": "webview", "id": "llmcode.chatView", "name": "Chat" }]
+    },
+    "keybindings": [{ "command": "llmcode.openChat", "key": "ctrl+shift+l", "mac": "cmd+shift+l" }]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "package": "npx @vscode/vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.5.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^3.0.0"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}
