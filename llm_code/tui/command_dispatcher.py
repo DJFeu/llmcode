@@ -1538,7 +1538,7 @@ class CommandDispatcher:
 
         chat = self._app.query_one(ChatScrollView)
         try:
-            from llm_code.runtime.memory_lint import lint_memory
+            from llm_code.runtime.memory_validator import lint_memory
             result = lint_memory(memory_dir=self._app._memory._dir, cwd=self._app._cwd)
             report = result.format_report()
             if not result.stale and not result.coverage_gaps and not result.old:
@@ -1554,7 +1554,7 @@ class CommandDispatcher:
         chat = self._app.query_one(ChatScrollView)
         chat.add_entry(AssistantText("Running deep memory lint..."))
         try:
-            from llm_code.runtime.memory_lint import lint_memory_deep
+            from llm_code.runtime.memory_validator import lint_memory_deep
             provider = self._app._runtime._provider if self._app._runtime else None
             result = await lint_memory_deep(
                 memory_dir=self._app._memory._dir,
@@ -1571,7 +1571,7 @@ class CommandDispatcher:
 
         chat = self._app.query_one(ChatScrollView)
         try:
-            from llm_code.runtime.memory_lint import lint_memory
+            from llm_code.runtime.memory_validator import lint_memory
             result = lint_memory(memory_dir=self._app._memory._dir, cwd=self._app._cwd)
             if not result.stale:
                 chat.add_entry(AssistantText("No stale references to fix."))

@@ -19,7 +19,7 @@ def _setup_memory(tmp_path: Path, entries: dict) -> Path:
 
 
 def test_stale_reference_detected(tmp_path: Path):
-    from llm_code.runtime.memory_lint import lint_memory
+    from llm_code.runtime.memory_validator import lint_memory
 
     now = datetime.now(timezone.utc).isoformat()
     memory_dir = _setup_memory(tmp_path, {
@@ -37,7 +37,7 @@ def test_stale_reference_detected(tmp_path: Path):
 
 
 def test_no_stale_when_file_exists(tmp_path: Path):
-    from llm_code.runtime.memory_lint import lint_memory
+    from llm_code.runtime.memory_validator import lint_memory
 
     now = datetime.now(timezone.utc).isoformat()
     cwd = tmp_path / "project"
@@ -56,7 +56,7 @@ def test_no_stale_when_file_exists(tmp_path: Path):
 
 
 def test_coverage_gaps_detected(tmp_path: Path):
-    from llm_code.runtime.memory_lint import lint_memory
+    from llm_code.runtime.memory_validator import lint_memory
 
     now = datetime.now(timezone.utc).isoformat()
     cwd = tmp_path / "project"
@@ -77,7 +77,7 @@ def test_coverage_gaps_detected(tmp_path: Path):
 
 
 def test_old_entries_detected(tmp_path: Path):
-    from llm_code.runtime.memory_lint import lint_memory
+    from llm_code.runtime.memory_validator import lint_memory
 
     old_date = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
     memory_dir = _setup_memory(tmp_path, {
@@ -91,7 +91,7 @@ def test_old_entries_detected(tmp_path: Path):
 
 
 def test_old_entries_not_flagged_if_recent(tmp_path: Path):
-    from llm_code.runtime.memory_lint import lint_memory
+    from llm_code.runtime.memory_validator import lint_memory
 
     now = datetime.now(timezone.utc).isoformat()
     memory_dir = _setup_memory(tmp_path, {
@@ -105,7 +105,7 @@ def test_old_entries_not_flagged_if_recent(tmp_path: Path):
 
 
 def test_internal_keys_skipped(tmp_path: Path):
-    from llm_code.runtime.memory_lint import lint_memory
+    from llm_code.runtime.memory_validator import lint_memory
 
     old_date = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
     memory_dir = _setup_memory(tmp_path, {
@@ -120,7 +120,7 @@ def test_internal_keys_skipped(tmp_path: Path):
 
 
 def test_lint_result_summary(tmp_path: Path):
-    from llm_code.runtime.memory_lint import MemoryLintResult, StaleReference
+    from llm_code.runtime.memory_validator import MemoryLintResult, StaleReference
 
     result = MemoryLintResult(
         stale=(StaleReference(key="k", reference="f.py", line=1),),
@@ -135,7 +135,7 @@ def test_lint_result_summary(tmp_path: Path):
 
 
 def test_lint_empty_memory(tmp_path: Path):
-    from llm_code.runtime.memory_lint import lint_memory
+    from llm_code.runtime.memory_validator import lint_memory
 
     memory_dir = _setup_memory(tmp_path, {})
     cwd = tmp_path / "project"
@@ -150,7 +150,7 @@ def test_lint_empty_memory(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_deep_lint_detects_contradictions(tmp_path: Path):
-    from llm_code.runtime.memory_lint import lint_memory_deep
+    from llm_code.runtime.memory_validator import lint_memory_deep
 
     now = datetime.now(timezone.utc).isoformat()
     memory_dir = _setup_memory(tmp_path, {
@@ -171,7 +171,7 @@ async def test_deep_lint_detects_contradictions(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_deep_lint_skips_without_provider(tmp_path: Path):
-    from llm_code.runtime.memory_lint import lint_memory_deep
+    from llm_code.runtime.memory_validator import lint_memory_deep
 
     now = datetime.now(timezone.utc).isoformat()
     memory_dir = _setup_memory(tmp_path, {
@@ -186,7 +186,7 @@ async def test_deep_lint_skips_without_provider(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_deep_lint_handles_llm_failure(tmp_path: Path):
-    from llm_code.runtime.memory_lint import lint_memory_deep
+    from llm_code.runtime.memory_validator import lint_memory_deep
 
     now = datetime.now(timezone.utc).isoformat()
     memory_dir = _setup_memory(tmp_path, {

@@ -1,4 +1,7 @@
 """Cross-session memory: MemoryStore for persistent key-value memory with session summaries."""
+# NOTE: The dataclass was renamed from MemoryEntry → KVMemoryEntry to resolve
+# the name collision with memory_layers.MemoryEntry.  The old name is kept as
+# a deprecated alias at module level (see bottom of file).
 from __future__ import annotations
 
 import hashlib
@@ -12,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class MemoryEntry:
+class KVMemoryEntry:
     key: str
     value: str
     created_at: str
@@ -94,11 +97,11 @@ class MemoryStore:
         entries = {k: v["value"] for k, v in data.items() if not k.startswith("_")}
         return entries if entries else None
 
-    def get_all(self) -> dict[str, MemoryEntry]:
-        """Return all entries as a mapping of key -> MemoryEntry."""
+    def get_all(self) -> dict[str, KVMemoryEntry]:
+        """Return all entries as a mapping of key -> KVMemoryEntry."""
         data = self._load()
         return {
-            k: MemoryEntry(
+            k: KVMemoryEntry(
                 key=k,
                 value=v["value"],
                 created_at=v.get("created_at", ""),
@@ -109,7 +112,7 @@ class MemoryStore:
             for k, v in data.items()
         }
 
-    def find_related(self, key: str) -> list[MemoryEntry]:
+    def find_related(self, key: str) -> list[KVMemoryEntry]:
         """Return entries linked to the given key (bidirectional)."""
         all_entries = self.get_all()
         entry = all_entries.get(key)
@@ -124,7 +127,7 @@ class MemoryStore:
 
         return [all_entries[k] for k in sorted(related_keys) if k in all_entries]
 
-    def find_by_tag(self, tag: str) -> list[MemoryEntry]:
+    def find_by_tag(self, tag: str) -> list[KVMemoryEntry]:
         """Return all entries matching a tag."""
         return [
             e for e in self.get_all().values()
@@ -184,3 +187,7 @@ class MemoryStore:
 
     def _save(self, data: dict) -> None:
         self._memory_file.write_text(json.dumps(data, indent=2))
+
+
+# Backward compat — old name kept as deprecated alias
+MemoryEntry = KVMemoryEntry  # Deprecated alias
