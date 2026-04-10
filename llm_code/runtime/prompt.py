@@ -300,6 +300,23 @@ class SystemPromptBuilder:
                 priority=21,
             ))
 
+        # Composable prompt snippets (conditional enrichment)
+        try:
+            from llm_code.runtime.prompt_snippets import BUILTIN_SNIPPETS, compose_system_prompt
+            snippet_text = compose_system_prompt(
+                BUILTIN_SNIPPETS,
+                is_local=is_local_model,
+                force_xml=not native_tools,
+            )
+            if snippet_text.strip():
+                sections.append(PromptSection(
+                    content=f"## Snippets\n\n{snippet_text}",
+                    scope="session",
+                    priority=25,
+                ))
+        except Exception:
+            pass
+
         # Incomplete tasks from prior sessions (cross-session persistence)
         if task_manager is not None:
             from llm_code.task.manager import build_incomplete_tasks_prompt

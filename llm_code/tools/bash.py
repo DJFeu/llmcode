@@ -503,6 +503,22 @@ class BashTool(Tool):
                 metadata={"dangerous": True, "rule_ids": list(result.rule_ids)},
             )
 
+        # Check execution policy (layered allow/deny/prompt rules)
+        # Runs after classify_command so built-in safety has priority.
+        try:
+            from llm_code.runtime.exec_policy import load_default_policy
+            _policy = load_default_policy()
+            _decision, _reason = _policy.evaluate(command)
+            if _decision == "deny":
+                return ToolResult(
+                    output=f"Command blocked by exec policy: {command}"
+                    + (f"\nReason: {_reason}" if _reason else ""),
+                    is_error=True,
+                    metadata={"exec_policy": "deny"},
+                )
+        except Exception:
+            pass
+
         if use_pty:
             return self._run_pty(command, timeout or 30)
         return self._run(command, timeout)

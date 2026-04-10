@@ -1033,6 +1033,25 @@ class ConversationRuntime:
                     model=self._active_model,
                 )
 
+            # Intent-based tool visibility for local models
+            if _is_local and tool_defs:
+                try:
+                    from llm_code.tools.tool_visibility import visible_tools_for_turn
+                    all_names = frozenset(t.name for t in tool_defs)
+                    visible_names = visible_tools_for_turn(all_names, user_input)
+                    if visible_names is not None:
+                        tool_defs = tuple(t for t in tool_defs if t.name in visible_names)
+                except Exception:
+                    pass  # Fall through to full tool set
+
+            # Distill tool descriptions for small local models
+            if _is_local and tool_defs and getattr(self._model_profile, "is_small_model", False):
+                try:
+                    from llm_code.tools.tool_distill import distill_definitions
+                    tool_defs = distill_definitions(tool_defs, compact=True)
+                except Exception:
+                    pass
+
             # Forced-text mode for local models: after tool results,
             # strip ALL tools so the model is physically unable to call
             # tools and must generate a text response instead.

@@ -348,6 +348,21 @@ class ToolExecutionPipeline:
             )
             raise
         tool_result = self.budget_result(tool_result, call.id)
+
+        # Parse permission denials for user guidance
+        if tool_result.is_error and tool_result.output and call.name == "bash":
+            try:
+                from llm_code.runtime.denial_parser import parse_denial, format_denial_hint
+                denial = parse_denial(tool_result.output)
+                if denial:
+                    tool_result = ToolResult(
+                        output=tool_result.output + format_denial_hint(denial),
+                        is_error=True,
+                        metadata=tool_result.metadata,
+                    )
+            except Exception:
+                pass
+
         _tool_duration_ms = (time.monotonic() - _tool_start) * 1000
         rt._telemetry.trace_tool(
             tool_name=call.name,

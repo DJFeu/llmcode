@@ -378,6 +378,14 @@ class RuntimeInitializer:
             except ImportError:
                 pass
 
+        # Load user-defined agent roles from .llm-code/agents/*.md
+        try:
+            from llm_code.tools.agent_loader import load_all_agents
+            self._app._user_agent_roles = load_all_agents(self._app._cwd)
+        except Exception as exc:
+            logger.warning("agent_loader: %r", exc)
+            self._app._user_agent_roles = {}
+
         # Build project index
         self._app._project_index = None
         try:
