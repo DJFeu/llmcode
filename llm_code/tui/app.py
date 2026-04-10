@@ -446,20 +446,20 @@ class LLMCodeTUI(App):  # noqa: E302
             "   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝",
         ]
 
-        # Gradient: bright gold (#FFD700) → warm amber (#E8A317) → burnt orange (#CC5500)
+        # Gradient: bright cyan (#7DF9FF) → deep blue (#0A50A0)
         gradient_colors = [
-            (255, 223, 50),   # bright gold
-            (255, 215, 0),    # gold
-            (250, 200, 0),    # warm gold
-            (245, 185, 10),   # gold-amber
-            (240, 170, 20),   # amber
-            (235, 155, 25),   # warm amber
-            (225, 138, 30),   # amber-orange
-            (215, 120, 30),   # deep amber
-            (205, 105, 25),   # orange-amber
-            (195, 90, 15),    # burnt amber
-            (185, 78, 10),    # burnt orange
-            (175, 68, 5),     # deep burnt orange
+            (125, 249, 255),  # bright cyan
+            (110, 235, 250),  # light cyan
+            (95, 215, 245),   # cyan
+            (82, 200, 240),   # cyan-blue
+            (70, 185, 235),   # sky blue
+            (58, 168, 228),   # medium blue
+            (48, 152, 220),   # blue
+            (38, 136, 212),   # deeper blue
+            (30, 120, 200),   # royal blue
+            (22, 105, 188),   # deep blue
+            (15, 90, 175),    # navy blue
+            (10, 80, 160),    # deep navy
         ]
 
         model = self._config.model if self._config else "(not set)"

@@ -1,62 +1,26 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 280">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 580 280">
   <defs>
-    <linearGradient id="gold-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" style="stop-color:#FFD700"/>
-      <stop offset="35%" style="stop-color:#F0AA14"/>
-      <stop offset="70%" style="stop-color:#CC7000"/>
-      <stop offset="100%" style="stop-color:#AF4500"/>
+    <linearGradient id="g" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#7DF9FF"/>
+      <stop offset="25%" style="stop-color:#5BC8F0"/>
+      <stop offset="50%" style="stop-color:#3AA0E0"/>
+      <stop offset="75%" style="stop-color:#1E78C8"/>
+      <stop offset="100%" style="stop-color:#0A50A0"/>
     </linearGradient>
-    <linearGradient id="gold-glow" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" style="stop-color:#FFE866;stop-opacity:0.6"/>
-      <stop offset="100%" style="stop-color:#CC7000;stop-opacity:0"/>
-    </linearGradient>
-    <filter id="glow">
-      <feGaussianBlur stdDeviation="2" result="blur"/>
-      <feMerge>
-        <feMergeNode in="blur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
   </defs>
-
-  <!-- Background -->
-  <rect width="720" height="280" rx="12" fill="#0d1117"/>
-
-  <!-- Glow effect behind text -->
-  <text x="360" y="115" text-anchor="middle"
-        font-family="'Cascadia Code','JetBrains Mono','Fira Code',monospace"
-        font-size="72" font-weight="900" letter-spacing="6"
-        fill="url(#gold-glow)" filter="url(#glow)">
-    LLM
-  </text>
-  <text x="360" y="215" text-anchor="middle"
-        font-family="'Cascadia Code','JetBrains Mono','Fira Code',monospace"
-        font-size="72" font-weight="900" letter-spacing="6"
-        fill="url(#gold-glow)" filter="url(#glow)">
-    CODE
-  </text>
-
-  <!-- Main gradient text -->
-  <text x="360" y="115" text-anchor="middle"
-        font-family="'Cascadia Code','JetBrains Mono','Fira Code',monospace"
-        font-size="72" font-weight="900" letter-spacing="6"
-        fill="url(#gold-gradient)">
-    LLM
-  </text>
-  <text x="360" y="215" text-anchor="middle"
-        font-family="'Cascadia Code','JetBrains Mono','Fira Code',monospace"
-        font-size="72" font-weight="900" letter-spacing="6"
-        fill="url(#gold-gradient)">
-    CODE
-  </text>
-
-  <!-- Subtle top highlight line -->
-  <line x1="160" y1="58" x2="560" y2="58" stroke="#FFD700" stroke-width="1.5" opacity="0.4"/>
-
-  <!-- Version badge -->
-  <text x="360" y="255" text-anchor="middle"
-        font-family="'Cascadia Code','JetBrains Mono',monospace"
-        font-size="14" fill="#8b949e" letter-spacing="4">
-    CODING AGENT RUNTIME
+  <rect width="580" height="280" rx="10" fill="#0d1117"/>
+  <text fill="url(#g)" font-family="monospace" font-size="19" font-weight="bold" xml:space="preserve">
+    <tspan x="30" y="38"> ██╗      ██╗      ███╗   ███╗</tspan>
+    <tspan x="30" y="58"> ██║      ██║      ████╗ ████║</tspan>
+    <tspan x="30" y="78"> ██║      ██║      ██╔████╔██║</tspan>
+    <tspan x="30" y="98"> ██║      ██║      ██║╚██╔╝██║</tspan>
+    <tspan x="30" y="118"> ███████╗ ███████╗ ██║ ╚═╝ ██║</tspan>
+    <tspan x="30" y="138"> ╚══════╝ ╚══════╝ ╚═╝     ╚═╝</tspan>
+    <tspan x="30" y="168">  ██████╗  ██████╗  ██████╗  ███████╗</tspan>
+    <tspan x="30" y="188"> ██╔════╝ ██╔═══██╗ ██╔══██╗ ██╔════╝</tspan>
+    <tspan x="30" y="208"> ██║      ██║   ██║ ██║  ██║ █████╗</tspan>
+    <tspan x="30" y="228"> ██║      ██║   ██║ ██║  ██║ ██╔══╝</tspan>
+    <tspan x="30" y="248"> ╚██████╗ ╚██████╔╝ ██████╔╝ ███████╗</tspan>
+    <tspan x="30" y="268">  ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝</tspan>
   </text>
 </svg>
