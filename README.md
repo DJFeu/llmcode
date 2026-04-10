@@ -16,7 +16,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-4944%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-4955%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/cold%20start-~400ms-brightgreen" alt="Cold start">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
   <img src="https://img.shields.io/pypi/v/llmcode-cli" alt="PyPI">
@@ -130,34 +130,50 @@ llmcode --resume              # Resume from checkpoint
 
 ## How it compares
 
-llmcode is **deeply influenced by Claude Code's architecture** and borrows proven patterns from [opencode](https://github.com/anomalyco/opencode). Here's where it lands:
+llmcode is **deeply influenced by Claude Code's architecture**, borrows proven patterns from [opencode](https://github.com/anomalyco/opencode), and adopts ideas from [Qwen Code](https://github.com/QwenLM/qwen-code) (Alibaba's Gemini CLI fork for Qwen models).
 
-| Feature | llmcode | opencode | Claude Code |
-|---------|:-------:|:--------:|:-----------:|
-| Open source | ✅ MIT | ✅ MIT | ❌ |
-| Language | Python | TypeScript | TypeScript |
-| Local model first | ✅ | ⚠️ | ❌ |
-| AGENTS.md (industry std) + CLAUDE.md fallback | ✅ | ✅ | CLAUDE.md only |
-| LLM-driven `/init` | ✅ | ✅ | ✅ |
-| Per-model system prompts | ✅ (9) | ✅ (7) | N/A |
-| **Qwen / Llama / DeepSeek tuned prompts** | ✅ | ❌ | ❌ |
-| Custom slash commands | ✅ | ✅ | ✅ |
-| Tab agent cycling | ✅ | ✅ | ❌ |
-| Skill router (auto match) | **3-tier** | manual | ❌ |
-| Memory system | **5-layer** | basic | basic |
-| Multi-agent coordinator | **synthesis-first** | task tool | ❌ |
-| Specialist personas (Sisyphus / Oracle / Atlas / …) | ✅ **9 built-in** | ⚠️ | ❌ |
-| Context overlap detection | ✅ | ❌ | ❌ |
-| Diminishing returns auto-stop | ✅ | ❌ | ❌ |
-| Subagent resume (task_id) | ✅ | ✅ | ❌ |
-| Plugin compatible with Claude Code ecosystem | ✅ | ✅ | ✅ |
-| Cold start | **~400ms** | unknown | 600ms+ |
-| MCP servers | ✅ | ✅ | ✅ |
-| YOLO mode | ✅ | ✅ | ✅ |
+| Feature | llmcode | Qwen Code | opencode | Claude Code |
+|---------|:-------:|:---------:|:--------:|:-----------:|
+| Open source | ✅ MIT | ✅ Apache-2.0 | ✅ MIT | ❌ |
+| Language | Python | TypeScript | TypeScript | TypeScript |
+| Local model first | ✅ | ✅ (Qwen) | ⚠️ | ❌ |
+| Default model | any | Qwen3-Coder | any | Claude |
+| Free tier | self-hosted | 1000 req/day | self-hosted | ❌ |
+| Per-model system prompts | ✅ (9) | ⚠️ (Qwen only) | ✅ (7) | N/A |
+| **Qwen / Llama / DeepSeek tuned prompts** | ✅ | Qwen only | ❌ | ❌ |
+| Model profile system (TOML) | ✅ | ❌ | ❌ | ❌ |
+| Skill router (auto match) | **3-tier** | manual | manual | ❌ |
+| Memory system | **5-layer** | basic | basic | basic |
+| Multi-agent coordinator | **synthesis-first** | Arena pattern | task tool | ❌ |
+| Arena parallel agents | ✅ | ✅ | ❌ | ❌ |
+| Specialist personas | ✅ **9 built-in** | ❌ | ⚠️ | ❌ |
+| Plan mode (model-driven) | ✅ (tools) | ✅ (tool) | ❌ | ❌ |
+| Docker sandbox | ✅ | ✅ | ❌ | ❌ |
+| PTY (interactive shell) | ✅ | ✅ (node-pty) | ❌ | ❌ |
+| Context overlap detection | ✅ | ❌ | ❌ | ❌ |
+| Diminishing returns auto-stop | ✅ | ❌ | ❌ | ❌ |
+| Prompt caching (Anthropic) | ✅ | ❌ | ❌ | ✅ |
+| Signed thinking round-trip | ✅ | ❌ | ❌ | ✅ |
+| IDE extensions | ❌ | ✅ (VS Code / Zed / JetBrains) | ❌ | ✅ (VS Code) |
+| Messaging channels | ❌ | ✅ (Telegram / WeChat / DingTalk) | ❌ | ❌ |
+| i18n (UI level) | CJK support | ✅ (6+ languages) | ❌ | ❌ |
+| MCP servers | ✅ | ✅ | ✅ | ✅ |
+| Plugin ecosystem | ✅ (Claude Code compat) | ✅ | ✅ | ✅ |
+| Cold start | **~400ms** | unknown | unknown | 600ms+ |
+| Voice input | ✅ (Whisper/Anthropic/Google) | ❌ | ❌ | ❌ |
+| Computer use | ✅ | ❌ | ❌ | ✅ |
+| Notebook tools | ✅ | ❌ | ❌ | ❌ |
+| YOLO mode | ✅ | ✅ | ✅ | ✅ |
 
-**Where llmcode is uniquely strong**: 5-layer memory, synthesis-first multi-agent, diminishing returns detection, Qwen/Llama prompt tuning, Python-native integration.
+### Where each tool shines
 
-**Where opencode is stronger**: Desktop & IDE variants, much wider community, more mature.
+**llmcode** — 5-layer memory, synthesis-first multi-agent, diminishing returns detection, per-model prompt tuning for 9 model families, Python-native integration, declarative model profiles with TOML overrides, Anthropic prompt caching + signed thinking.
+
+**Qwen Code** — Best if you use Qwen models exclusively: free 1000 req/day via Qwen OAuth, IDE extensions (VS Code/Zed/JetBrains), messaging channel deployment (Telegram/WeChat/DingTalk), full i18n. Based on Google Gemini CLI.
+
+**opencode** — Wider community, more mature, TypeScript ecosystem native.
+
+**Claude Code** — Most polished UX, deepest Claude integration, but closed-source and cloud-only.
 
 ---
 
@@ -205,7 +221,7 @@ See [docs/coordinator.md](docs/coordinator.md) for the full tutorial.
 | **File I/O** | read_file, write_file, edit_file, multi_edit (with resolve_path workspace boundary check) |
 | **Search** | glob_search, grep_search, tool_search |
 | **Web** | web_search (DuckDuckGo / Brave / Tavily / SearXNG backends), web_fetch |
-| **Execution** | bash (21-point security), agent (sub-agents with tier-based role routing: build / plan / explore / verify / general) |
+| **Execution** | bash (21-point security + Docker sandbox + PTY mode), agent (sub-agents with tier-based role routing: build / plan / explore / verify / general), enter_plan_mode, exit_plan_mode |
 | **LSP** | lsp_hover, lsp_document_symbol, lsp_workspace_symbol, lsp_go_to_definition, lsp_find_references, lsp_go_to_implementation, lsp_call_hierarchy, lsp_diagnostics (auto-detects 25+ language servers via walk-up root finder) |
 | **Git** | git_status, git_diff, git_log, git_commit, git_push, git_stash, git_branch |
 | **Notebook** | notebook_read, notebook_edit |
@@ -249,6 +265,8 @@ Native httpx-based provider for Anthropic's Messages API:
 - **Environment variable filtering** — sensitive vars replaced with `[FILTERED]`
 - **File protection** — `.env`, SSH keys, `*.pem` blocked on write
 - **Workspace boundary checks** — file tools refuse paths outside the project tree
+- **Docker sandbox** — optional container isolation for bash commands (Docker/Podman auto-detected, configurable image/network/memory limits)
+- **Plugin permissions gate** — blocks plugins requesting subprocess/fs_write/env unless `--force`
 
 ### Terminal UI
 
