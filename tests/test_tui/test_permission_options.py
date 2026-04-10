@@ -45,15 +45,14 @@ class TestSessionAllowlist:
         # Build a minimal stub that exercises the helper methods without
         # constructing the full Conversation object (which has heavy deps).
         from llm_code.runtime.conversation import ConversationRuntime
+        from llm_code.runtime.permission_manager import PermissionManager
+        from unittest.mock import MagicMock
 
         rt = ConversationRuntime.__new__(ConversationRuntime)
-        rt._session_allowed_tools = set()
-        rt._session_allowed_exact = set()
-        rt._session_allowed_prefixes = set()
-        rt._session_allowed_path_roots = set()
         class _Ctx:
             cwd = "/work/proj"
         rt._context = _Ctx()
+        rt._perm_mgr = PermissionManager(MagicMock(), MagicMock(), context=_Ctx())
         return rt
 
     def test_record_always_kind_for_bash_adds_prefix(self) -> None:

@@ -364,17 +364,12 @@ class ConversationRuntime:
                         self._pending_skill_mcp_spawns.append((_sk.name, _srv))
         except Exception as _exc:  # pragma: no cover - defensive
             logger.warning("skill MCP spawn queue build failed: %s", _exc)
-        # Callback for MCP approval requests from non-root agents.
-        # When None, request_mcp_approval auto-denies (CLI-safe default).
-        self._mcp_approval_callback: Any = None
-        # Event sink for out-of-band MCP approval prompts. TUI installs this
-        # via set_mcp_event_sink to receive StreamMCPApprovalRequest events
-        # raised from request_mcp_approval (called by McpServerManager).
-        self._mcp_event_sink: Any = None
-        self._mcp_approval_future: "asyncio.Future[str] | None" = None
-        self._mcp_approval_pending: bool = False
-        # In-session allowlist for "always allow this server" responses.
-        self._mcp_approved_servers: set[str] = set()
+        # Permission manager — centralises MCP approval, session allowlists,
+        # and interactive permission prompts.
+        from llm_code.runtime.permission_manager import PermissionManager
+        self._perm_mgr = PermissionManager(
+            permission_policy, session, context=context,
+        )
         self._memory_store = memory_store
         self._task_manager = task_manager
         self._project_index = project_index
@@ -414,16 +409,7 @@ class ConversationRuntime:
             self._harness.disable("auto_commit")
         if hasattr(config, "lsp_auto_diagnose") and not config.lsp_auto_diagnose:
             self._harness.disable("lsp_diagnose")
-        self._permission_future: asyncio.Future[str] | None = None
-        # Per-session in-memory permission allowlist for "always" responses.
-        # Tools added to _session_allowed_tools skip the prompt entirely.
-        # _session_allowed_exact contains (tool_name, args_preview) tuples for
-        # "always allow this exact" choices. _session_allowed_prefixes contains
-        # bash-command prefixes (e.g. "git ") that auto-allow.
-        self._session_allowed_tools: set[str] = set()
-        self._session_allowed_exact: set[tuple[str, str]] = set()
-        self._session_allowed_prefixes: set[str] = set()
-        self._session_allowed_path_roots: set[str] = set()
+        # _permission_future now lives on self._perm_mgr
         self._has_attempted_reactive_compact = False
         self._consecutive_compact_failures: int = 0
         self._compaction_in_flight: bool = False
@@ -481,6 +467,57 @@ class ConversationRuntime:
     def analysis_context(self, value: str | None) -> None:
         self._harness.analysis_context = value
 
+    # Back-compat properties delegating to PermissionManager so existing
+    # tests and TUI code that access these attributes directly keep working.
+
+    @property
+    def _mcp_approved_servers(self) -> set[str]:
+        return self._perm_mgr._mcp_approved_servers
+
+    @_mcp_approved_servers.setter
+    def _mcp_approved_servers(self, value: set[str]) -> None:
+        self._perm_mgr._mcp_approved_servers = value
+
+    @property
+    def _mcp_approval_pending(self) -> bool:
+        return self._perm_mgr._mcp_approval_pending
+
+    @_mcp_approval_pending.setter
+    def _mcp_approval_pending(self, value: bool) -> None:
+        self._perm_mgr._mcp_approval_pending = value
+
+    @property
+    def _session_allowed_tools(self) -> set[str]:
+        return self._perm_mgr._session_allowed_tools
+
+    @_session_allowed_tools.setter
+    def _session_allowed_tools(self, value: set[str]) -> None:
+        self._perm_mgr._session_allowed_tools = value
+
+    @property
+    def _session_allowed_exact(self) -> set[tuple[str, str]]:
+        return self._perm_mgr._session_allowed_exact
+
+    @_session_allowed_exact.setter
+    def _session_allowed_exact(self, value: set[tuple[str, str]]) -> None:
+        self._perm_mgr._session_allowed_exact = value
+
+    @property
+    def _session_allowed_prefixes(self) -> set[str]:
+        return self._perm_mgr._session_allowed_prefixes
+
+    @_session_allowed_prefixes.setter
+    def _session_allowed_prefixes(self, value: set[str]) -> None:
+        self._perm_mgr._session_allowed_prefixes = value
+
+    @property
+    def _session_allowed_path_roots(self) -> set[str]:
+        return self._perm_mgr._session_allowed_path_roots
+
+    @_session_allowed_path_roots.setter
+    def _session_allowed_path_roots(self, value: set[str]) -> None:
+        self._perm_mgr._session_allowed_path_roots = value
+
     @property
     def dialogs(self) -> Any:
         """The ``Dialogs`` backend for this runtime.
@@ -534,105 +571,22 @@ class ConversationRuntime:
         except Exception:
             pass
 
+    # ------------------------------------------------------------------
+    # Delegated to PermissionManager
+    # ------------------------------------------------------------------
+
     def set_mcp_approval_callback(self, callback: Any) -> None:
-        """Install a callback used to approve non-root MCP spawns."""
-        self._mcp_approval_callback = callback
+        self._perm_mgr.set_mcp_approval_callback(callback)
 
     def set_mcp_event_sink(self, sink: Any) -> None:
-        """Install a sink callable that receives out-of-band MCP events.
-
-        The sink is called as ``sink(event)`` where event is a
-        :class:`StreamMCPApprovalRequest`. It must mount a UI widget and
-        eventually resolve the approval by calling
-        :meth:`send_mcp_approval_response`.
-        """
-        self._mcp_event_sink = sink
+        self._perm_mgr.set_mcp_event_sink(sink)
 
     def send_mcp_approval_response(self, response: str) -> None:
-        """Resolve a pending MCP approval prompt with 'allow', 'always', or 'deny'.
-
-        Safe to call from Textual ``on_key`` since the runtime and the widget
-        live on the same asyncio event loop.
-        """
-        fut = self._mcp_approval_future
-        if fut is not None and not fut.done():
-            fut.set_result(response)
+        self._perm_mgr.send_mcp_approval_response(response)
 
     async def request_mcp_approval(self, request: Any) -> bool:
-        """Ask the attached UI to approve *request*; default-deny if none.
+        return await self._perm_mgr.request_mcp_approval(request)
 
-        Behavior:
-          * If a custom callback was installed via ``set_mcp_approval_callback``,
-            defer to it (backwards compatible).
-          * Otherwise yield a StreamMCPApprovalRequest to the installed event
-            sink and suspend on a future until the user responds.
-          * If no sink is installed, default-deny (CLI-safe).
-          * A server approved with "always" is cached per-session and
-            auto-approved on subsequent requests.
-        """
-        # Legacy callback path (tests + custom integrations).
-        callback = self._mcp_approval_callback
-        if callback is not None:
-            try:
-                return bool(await callback(request))
-            except Exception:  # noqa: BLE001
-                return False
-
-        # Extract a server name from the request shape (MCPApprovalRequest uses
-        # server_names tuple; stream event uses a single server_name).
-        server_name = ""
-        owner_agent_id = ""
-        description = ""
-        if hasattr(request, "server_names") and request.server_names:
-            server_name = request.server_names[0]
-        elif hasattr(request, "server_name"):
-            server_name = request.server_name
-        if hasattr(request, "agent_name"):
-            owner_agent_id = request.agent_name
-        elif hasattr(request, "owner_agent_id"):
-            owner_agent_id = request.owner_agent_id
-        if hasattr(request, "reason"):
-            description = request.reason or ""
-
-        # In-session allowlist short-circuit.
-        if server_name and server_name in self._mcp_approved_servers:
-            return True
-
-        sink = self._mcp_event_sink
-        if sink is None:
-            return False
-
-        from llm_code.api.types import StreamMCPApprovalRequest
-        event = StreamMCPApprovalRequest(
-            server_name=server_name,
-            owner_agent_id=owner_agent_id,
-            command="",
-            description=description,
-        )
-        try:
-            sink(event)
-        except Exception:  # noqa: BLE001
-            logger.warning("mcp approval sink raised", exc_info=True)
-            return False
-
-        loop = asyncio.get_running_loop()
-        self._mcp_approval_future = loop.create_future()
-        self._mcp_approval_pending = True
-        try:
-            response = await asyncio.wait_for(
-                self._mcp_approval_future, timeout=120,
-            )
-        except asyncio.TimeoutError:
-            response = "deny"
-        finally:
-            self._mcp_approval_future = None
-            self._mcp_approval_pending = False
-
-        if response in ("allow", "always"):
-            if response == "always" and server_name:
-                self._mcp_approved_servers.add(server_name)
-            return True
-        return False
 
     def _fire_hook(self, event: str, context: dict | None = None) -> None:
         """Fire a hook event if the hook runner supports the generic fire() method."""
@@ -721,22 +675,7 @@ class ConversationRuntime:
     def is_session_allowed(
         self, tool_name: str, args_preview: str, validated_args: dict | None = None,
     ) -> bool:
-        """Return True if a tool call is pre-approved by the in-session allowlist."""
-        if tool_name in self._session_allowed_tools:
-            return True
-        if (tool_name, args_preview) in self._session_allowed_exact:
-            return True
-        if tool_name == "bash" and validated_args is not None:
-            cmd = str(validated_args.get("command", "")).strip()
-            for prefix in self._session_allowed_prefixes:
-                if cmd.startswith(prefix):
-                    return True
-        if tool_name in ("edit_file", "write_file", "multi_edit") and validated_args is not None:
-            path = str(validated_args.get("path") or validated_args.get("file_path") or "")
-            for root in self._session_allowed_path_roots:
-                if path.startswith(root):
-                    return True
-        return False
+        return self._perm_mgr.is_session_allowed(tool_name, args_preview, validated_args)
 
     def record_permission_choice(
         self,
@@ -745,43 +684,10 @@ class ConversationRuntime:
         args_preview: str,
         validated_args: dict | None = None,
     ) -> None:
-        """Persist an 'always' permission choice in the in-session allowlist.
-
-        ``choice`` is one of: 'always_kind', 'always_exact'.
-        For bash 'always_kind' also records the first command token as a prefix
-        rule. For file edits 'always_kind' records the workspace root.
-        """
-        if choice == "always_kind":
-            # File edit tools record a path-root scope rather than blanket allow,
-            # so an "always" choice in /work/proj does not also allow edits in /other.
-            if tool_name not in ("edit_file", "write_file", "multi_edit"):
-                self._session_allowed_tools.add(tool_name)
-            if tool_name == "bash" and validated_args is not None:
-                cmd = str(validated_args.get("command", "")).strip()
-                first = cmd.split()[0] if cmd else ""
-                if first:
-                    self._session_allowed_prefixes.add(first + " ")
-            if tool_name in ("edit_file", "write_file", "multi_edit"):
-                try:
-                    self._session_allowed_path_roots.add(str(self._context.cwd))
-                except Exception:
-                    pass
-        elif choice == "always_exact":
-            self._session_allowed_exact.add((tool_name, args_preview))
+        self._perm_mgr.record_permission_choice(choice, tool_name, args_preview, validated_args)
 
     def send_permission_response(self, response: str, *, edited_args: dict | None = None) -> None:
-        """Resolve the pending permission prompt.
-
-        ``response`` is one of ``allow``, ``deny``, ``always_kind``,
-        ``always_exact``, or ``edit``. When ``response`` is ``edit``,
-        ``edited_args`` must contain the modified tool arguments; the
-        runtime will re-validate and execute with the new args.
-        """
-        if self._permission_future is not None and not self._permission_future.done():
-            if response == "edit" and edited_args is not None:
-                self._permission_future.set_result(f"edit:{__import__('json').dumps(edited_args)}")
-            else:
-                self._permission_future.set_result(response)
+        self._perm_mgr.send_permission_response(response, edited_args=edited_args)
 
     async def _spawn_pending_skill_mcp_servers(self) -> None:
         """Spawn on-demand MCP servers declared by loaded skills.
@@ -2138,14 +2044,14 @@ class ConversationRuntime:
                 )
 
                 loop = asyncio.get_running_loop()
-                self._permission_future = loop.create_future()
+                self._perm_mgr._permission_future = loop.create_future()
                 try:
-                    response = await asyncio.wait_for(self._permission_future, timeout=300)
+                    response = await asyncio.wait_for(self._perm_mgr._permission_future, timeout=300)
                 except asyncio.TimeoutError:
                     response = "deny"
                     logger.warning("Permission prompt for '%s' timed out (300s), auto-denying", call.name)
                 finally:
-                    self._permission_future = None
+                    self._perm_mgr._permission_future = None
 
                 if response.startswith("edit:"):
                     # User edited the tool args — parse and replace
