@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.15.1 — SSE Streaming, Docker Sandbox, PTY, Plan Mode Tools, Arena Pattern
+
+### New Features
+- **AnthropicProvider real SSE streaming** — `_AnthropicLiveStreamIterator` reads events via httpx `aiter_lines()` as they arrive, instead of downloading the entire response first
+- **Docker sandbox** — `DockerSandbox` class with Docker/Podman auto-detection, container lifecycle, and `SandboxConfig` (image, network, memory/CPU limits). Wired into `BashTool._run()` as optional isolation layer
+- **PTY runner** — `run_pty()` via ptyprocess for interactive commands (git rebase -i, etc.) with optional pyte screen rendering. `BashTool` gains `pty: true` input parameter
+- **Plan mode tools** — `enter_plan_mode` / `exit_plan_mode` tools let the model control plan→act transitions programmatically
+- **Arena pattern** — `AgentBackend` Protocol + `ArenaManager` for parallel agent coordination with pluggable backends (subprocess, tmux, worktree)
+- **Profile TOML hot-reload** — `ProfileRegistry.reload_if_changed()` stats directory mtime, called automatically from `get_profile()`
+- **Marketplace search** — filter input, category grouping headers, stats bar
+
+### Fixed
+- **Scroll regression** — reverted all experimental scroll changes (watch_scroll_y, priority bindings, key_* handlers, InputBar dispatch) back to v1.15.0 baseline. Shift+Up/Down, PageUp/PageDown, and mouse wheel (Warp native) all work correctly again
+
+### Tests
+- 11 new tests: ChatScrollView auto-scroll, permission dialog choices, settings write-back validation, edit-args encoding
+
 ## v1.15.0 — Profile System Phase 2, Prompt Caching, Mouse Scroll, 11 TODO Resolutions
 
 ### Profile System Deep Wiring
