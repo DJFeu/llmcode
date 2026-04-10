@@ -305,8 +305,8 @@ def test_orchestrator_hook_dispatches_with_executor() -> None:
 
 
 def test_cmd_orchestrate_handler_exists() -> None:
-    """Verify _cmd_orchestrate is defined on the LLMCodeTUI class."""
-    from llm_code.tui.app import LLMCodeTUI
+    """Verify _cmd_orchestrate is defined on the CommandDispatcher class."""
+    from llm_code.tui.command_dispatcher import CommandDispatcher
 
-    assert hasattr(LLMCodeTUI, "_cmd_orchestrate")
-    assert callable(getattr(LLMCodeTUI, "_cmd_orchestrate"))
+    assert hasattr(CommandDispatcher, "_cmd_orchestrate")
+    assert callable(getattr(CommandDispatcher, "_cmd_orchestrate"))

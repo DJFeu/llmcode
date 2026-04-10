@@ -27,8 +27,8 @@ def test_profile_command_registered():
 
 
 def test_app_has_cmd_profile_handler():
-    from llm_code.tui.app import LLMCodeTUI
-    assert hasattr(LLMCodeTUI, "_cmd_profile")
+    from llm_code.tui.command_dispatcher import CommandDispatcher
+    assert hasattr(CommandDispatcher, "_cmd_profile")
 
 
 def test_query_profiler_format_breakdown_empty():

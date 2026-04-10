@@ -190,12 +190,12 @@ def test_execute_tool_with_streaming_catches_cancelled_error() -> None:
     this is the same defensive pattern used by test_wave2_1c."""
     import inspect
 
-    from llm_code.runtime.conversation import ConversationRuntime
+    from llm_code.runtime.tool_pipeline import ToolExecutionPipeline
 
-    src = inspect.getsource(ConversationRuntime._execute_tool_with_streaming)
+    src = inspect.getsource(ToolExecutionPipeline.execute_with_streaming)
     assert "except asyncio.CancelledError" in src
     # The yield-then-raise order: the raise must come after the yield
-    idx_yield = src.find('ToolResultBlock(\n                tool_use_id=call.id,\n                content=f"Tool \'{call.name}\' execution was cancelled.')
+    idx_yield = src.find("Tool '{call.name}' execution was cancelled.")
     idx_raise = src.find("raise", idx_yield if idx_yield >= 0 else 0)
     assert idx_raise > idx_yield >= 0
     # tool_cancelled hook is fired in the handler

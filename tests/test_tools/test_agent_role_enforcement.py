@@ -195,6 +195,8 @@ def test_dispatch_blocks_disallowed_tool_even_if_registry_leaks() -> None:
     reg.register(_StubTool("read_file"))
     reg.register(_StubTool("bash"))  # leaked!
 
+    from llm_code.runtime.tool_pipeline import ToolExecutionPipeline
+
     # Bypass __init__ — we only need the dispatch path + a couple of attrs.
     runtime = ConversationRuntime.__new__(ConversationRuntime)
     runtime._tool_registry = reg
@@ -202,6 +204,9 @@ def test_dispatch_blocks_disallowed_tool_even_if_registry_leaks() -> None:
 
     # Stub the hook firing so it doesn't blow up on a missing hook runner.
     runtime._fire_hook = lambda *a, **k: None
+
+    # Wire up the tool pipeline (required after architecture refactoring).
+    runtime._tool_pipeline = ToolExecutionPipeline(runtime)
 
     call = ParsedToolCall(id="t1", name="bash", args={}, source="native")
 
