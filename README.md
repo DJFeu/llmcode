@@ -121,53 +121,62 @@ llmcode --resume              # Resume from checkpoint
 
 ## How it compares
 
-llmcode is **deeply influenced by Claude Code's architecture**, borrows proven patterns from [opencode](https://github.com/anomalyco/opencode), and adopts ideas from [Qwen Code](https://github.com/QwenLM/qwen-code) (Alibaba's Gemini CLI fork for Qwen models).
+llmcode is **deeply influenced by Claude Code's architecture**, borrows proven patterns from [Codex CLI](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [opencode](https://github.com/anomalyco/opencode), and [Qwen Code](https://github.com/QwenLM/qwen-code).
 
-| Feature | llmcode | Claude Code | Qwen Code | opencode |
-|---------|:-------:|:-----------:|:---------:|:--------:|
-| Open source | ✅ | ❌ | ✅ | ✅ |
-| Language | Python | TypeScript | TypeScript | TypeScript |
-| Local model first | ✅ | ❌ | ✅ | ⚠️ |
-| Default model | any | Claude | Qwen3-Coder | any |
-| Free tier | self-hosted | ❌ | 1000 req/day | self-hosted |
-| Per-model system prompts | ✅ | N/A | ⚠️ | ✅ |
-| **Qwen / Llama / DeepSeek tuned prompts** | ✅ | ❌ | ⚠️ | ❌ |
-| Model profile system (TOML) | ✅ | ❌ | ❌ | ❌ |
-| Skill router (auto match) | **3-tier** | ❌ | manual | manual |
-| Memory system | **5-layer** | basic | basic | basic |
-| **Agent tool permission model** | **6-stage** | 6-stage | basic | basic |
-| **User-defined agents (Markdown)** | ✅ | ✅ | ❌ | ❌ |
-| **Parallel fork with cache sharing** | ✅ | ✅ | ❌ | ❌ |
-| **Agent memory persistence** | **3-scope** | 3-scope | ❌ | ❌ |
-| **Git worktree isolation** | ✅ | ✅ | ❌ | ❌ |
-| Multi-agent coordinator | **synthesis-first** | ❌ | Arena pattern | task tool |
-| Arena parallel agents | ✅ | ❌ | ✅ | ❌ |
-| Specialist personas | ✅ | ❌ | ❌ | ⚠️ |
-| Plan mode | ✅ | ❌ | ✅ | ❌ |
-| Docker sandbox | ✅ | ❌ | ✅ | ❌ |
-| PTY (interactive shell) | ✅ | ❌ | ✅ | ❌ |
-| Context overlap detection | ✅ | ❌ | ❌ | ❌ |
-| Diminishing returns auto-stop | ✅ | ❌ | ❌ | ❌ |
-| Prompt caching (Anthropic) | ✅ | ✅ | ❌ | ❌ |
-| Signed thinking round-trip | ✅ | ✅ | ❌ | ❌ |
-| IDE extensions | ✅ | ✅ | ✅ | ❌ |
-| i18n (UI level) | ⚠️ | ❌ | ✅ | ❌ |
-| MCP servers | ✅ | ✅ | ✅ | ✅ |
-| Plugin ecosystem | ✅ | ✅ | ✅ | ✅ |
-| Voice input | ✅ | ❌ | ❌ | ❌ |
-| Computer use | ✅ | ✅ | ❌ | ❌ |
-| Notebook tools | ✅ | ❌ | ❌ | ❌ |
-| YOLO mode | ✅ | ✅ | ✅ | ✅ |
+| Feature | llmcode | Claude Code | Codex CLI | Gemini CLI | Qwen Code | opencode |
+|---------|:-------:|:-----------:|:---------:|:----------:|:---------:|:--------:|
+| Open source | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ |
+| Language | Python | TypeScript | Rust+TS | TypeScript | TypeScript | TypeScript |
+| Local model first | ✅ | ❌ | ❌ | ❌ | ✅ | ⚠️ |
+| Default model | any | Claude | GPT/o-series | Gemini | Qwen3-Coder | any |
+| Free tier | self-hosted | ❌ | ❌ | ✅ | 1000 req/day | self-hosted |
+| Per-model system prompts | ✅ | N/A | ❌ | ❌ | ⚠️ | ✅ |
+| **Qwen/Llama/DeepSeek tuned** | ✅ | ❌ | ❌ | ❌ | ⚠️ | ❌ |
+| Model profile system (TOML) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Skill router (auto match) | **3-tier** | ❌ | ❌ | manual | manual | manual |
+| Memory system | **5-layer** | basic | ❌ | basic | basic | basic |
+| **Agent permission model** | **6-stage** | 6-stage | trait-based | policy-based | basic | basic |
+| **User-defined agents (.md)** | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ |
+| **Fork agents + cache sharing** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Agent memory persistence** | **3-scope** | 3-scope | ❌ | ❌ | ❌ | ❌ |
+| **Git worktree isolation** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| **Exec policy rules (.rules)** | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| **Sandbox denial learning** | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| **Per-turn tool visibility** | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| **Tool desc distillation** | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| **Snippet-composable prompt** | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| **Skill extraction** | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| **Approval session cache** | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| Guardian subagent | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Multi-agent coordinator | **synthesis** | ❌ | ❌ | ❌ | Arena | task tool |
+| Specialist personas | ✅ | ❌ | ❌ | ❌ | ❌ | ⚠️ |
+| Plan mode | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ |
+| Docker sandbox | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ |
+| PTY (interactive shell) | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Prompt caching (Anthropic) | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Signed thinking round-trip | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Extension/plugin system | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
+| Theme system (15+) | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| IDE extensions | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ |
+| MCP servers | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Voice input | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Computer use | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Notebook tools | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| YOLO mode | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ### Where each tool shines
 
-**llmcode** — 6-stage agent permission model (borrowed from Claude Code), parallel fork agents with prompt-cache sharing, user-defined agents via Markdown frontmatter, 3-scope agent memory, 5-layer memory, synthesis-first multi-agent, diminishing returns detection, per-model prompt tuning for 9 model families, Python-native integration, declarative model profiles with TOML overrides, Anthropic prompt caching + signed thinking.
+**llmcode** — Python-native, local-model-first. Aggregates the best patterns from every competitor: 6-stage agent permissions + fork cache (Claude Code), execution policy rules + approval cache (Codex), denial learning + snippet prompts + skill extraction (Gemini CLI). Plus unique: 5-layer memory, synthesis-first multi-agent, per-model prompt tuning for 9 families, model profiles (TOML).
 
-**Qwen Code** — Best if you use Qwen models exclusively: free 1000 req/day via Qwen OAuth, IDE extensions (VS Code/Zed/JetBrains), messaging channel deployment (Telegram/WeChat/DingTalk), full i18n. Based on Google Gemini CLI.
+**Claude Code** — Most polished UX, deepest Claude integration, closed-source and cloud-only.
+
+**Codex CLI** — Rust core for performance, trait-based sandbox with Guardian subagent for risk assessment. OpenAI-only.
+
+**Gemini CLI** — 15+ themes, extension manifest with hot-swapping, denial learning, skill extraction. Google-only.
+
+**Qwen Code** — Best for Qwen models: free 1000 req/day, IDE extensions, messaging deployment (Telegram/WeChat/DingTalk), full i18n. Based on Gemini CLI.
 
 **opencode** — Wider community, more mature, TypeScript ecosystem native.
-
-**Claude Code** — Most polished UX, deepest Claude integration, but closed-source and cloud-only.
 
 ---
 
