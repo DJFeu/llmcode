@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Python-native coding agent runtime tuned for local LLMs</strong><br>
-  5-layer memory · synthesis-first multi-agent · per-model prompts for Qwen / Llama / DeepSeek
+  6-stage agent permissions · fork-cache parallel agents · 5-layer memory · per-model prompts for Qwen / Llama / DeepSeek
 </p>
 
 <p align="center">
@@ -20,7 +20,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/tests-4970%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-5160%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/cold%20start-~400ms-brightgreen" alt="Cold start">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
   <img src="https://img.shields.io/pypi/v/llmcode-cli" alt="PyPI">
@@ -40,6 +40,8 @@ If you check any of these boxes:
 - You don't want **another Node.js runtime** in your stack (you already have Python)
 - You've tried tools tuned for Claude/GPT and watched smaller models drown in the system prompt
 - You need **multi-agent coordination that doesn't over-spawn** on local models
+- You want **user-defined agents** via Markdown files — no code changes needed
+- You want **parallel fork agents** with prompt-cache sharing (40-60% token savings on Anthropic)
 - You want **persistent project memory** that survives across sessions
 - You care about **CJK / multi-language** terminal handling
 
@@ -133,6 +135,11 @@ llmcode is **deeply influenced by Claude Code's architecture**, borrows proven p
 | Model profile system (TOML) | ✅ | ❌ | ❌ | ❌ |
 | Skill router (auto match) | **3-tier** | ❌ | manual | manual |
 | Memory system | **5-layer** | basic | basic | basic |
+| **Agent tool permission model** | **6-stage** | 6-stage | basic | basic |
+| **User-defined agents (Markdown)** | ✅ | ✅ | ❌ | ❌ |
+| **Parallel fork with cache sharing** | ✅ | ✅ | ❌ | ❌ |
+| **Agent memory persistence** | **3-scope** | 3-scope | ❌ | ❌ |
+| **Git worktree isolation** | ✅ | ✅ | ❌ | ❌ |
 | Multi-agent coordinator | **synthesis-first** | ❌ | Arena pattern | task tool |
 | Arena parallel agents | ✅ | ❌ | ✅ | ❌ |
 | Specialist personas | ✅ | ❌ | ❌ | ⚠️ |
@@ -154,7 +161,7 @@ llmcode is **deeply influenced by Claude Code's architecture**, borrows proven p
 
 ### Where each tool shines
 
-**llmcode** — 5-layer memory, synthesis-first multi-agent, diminishing returns detection, per-model prompt tuning for 9 model families, Python-native integration, declarative model profiles with TOML overrides, Anthropic prompt caching + signed thinking.
+**llmcode** — 6-stage agent permission model (borrowed from Claude Code), parallel fork agents with prompt-cache sharing, user-defined agents via Markdown frontmatter, 3-scope agent memory, 5-layer memory, synthesis-first multi-agent, diminishing returns detection, per-model prompt tuning for 9 model families, Python-native integration, declarative model profiles with TOML overrides, Anthropic prompt caching + signed thinking.
 
 **Qwen Code** — Best if you use Qwen models exclusively: free 1000 req/day via Qwen OAuth, IDE extensions (VS Code/Zed/JetBrains), messaging channel deployment (Telegram/WeChat/DingTalk), full i18n. Based on Google Gemini CLI.
 
@@ -188,6 +195,45 @@ This is llmcode's core focus. Local models behave very differently from Claude /
 Plus typed memory with `MEMORY.md` index, 25KB hard limit, and content validation that rejects derivable content (git logs, code dumps, file path lists).
 
 See [docs/memory.md](docs/memory.md) for the full guide.
+
+### Agent System (claude-code inspired)
+
+Architecture borrowed from claude-code's sourcemap — 6-phase design for production-grade agent orchestration:
+
+**6-stage tool permission model** — MCP bypass → global deny → custom agent deny → async allow-list → teammate extras → coordinator mode. Pure function, no global state. Built-in agents keep the `agent` tool (depth-guarded); user-defined agents have it blocked at Stage 4.
+
+**Parallel fork with cache sharing** — `fork_directives` spawns N children in parallel. All children share a byte-identical API request prefix (system prompt + history + placeholder tool_results), so Anthropic's prompt cache is hit for children 2–N. Provider-agnostic: other providers work correctly without cache savings. Recursion guard via `<fork-boilerplate>` tag detection.
+
+**User-defined agents** — Drop a `.md` file in `~/.llm-code/agents/` or `.llm-code/agents/`:
+
+```yaml
+---
+name: security-auditor
+description: Security-focused code reviewer
+tools:
+  - read_file
+  - grep_search
+  - bash
+disallowed_tools:
+  - write_file
+---
+
+You are a security auditor. Analyze code for OWASP Top 10...
+```
+
+Cascade: built-in → user-global → project-local (later shadows earlier).
+
+**3-scope agent memory** — Agents can persist learnings across sessions:
+
+| Scope | Path | Lifetime |
+|-------|------|----------|
+| user | `~/.llm-code/agent-memory/<agent>/` | Cross-project |
+| project | `.llm-code/agent-memory/<agent>/` | In VCS |
+| local | `.llm-code/agent-memory-local/<agent>/` | Gitignored |
+
+**contextvars isolation** — Python `contextvars.ContextVar` prevents concurrent background agents from cross-contaminating telemetry and state (equivalent to claude-code's `AsyncLocalStorage`).
+
+**Git worktree isolation** — Agents with `isolation: worktree` run in a `git worktree add` copy. Dirty worktrees are preserved with path+branch returned to the parent; clean ones are auto-removed.
 
 ### Coordinator with synthesis-first
 
@@ -257,10 +303,9 @@ Native httpx-based provider for Anthropic's Messages API:
 
 ### Terminal UI
 
-- **Native text selection** — `mouse=False` preserves terminal text selection; use Shift+Up/Down and PageUp/PageDown for scrollback
+- **Mouse wheel scrolling** — `mouse=True` enables native scroll inside ChatScrollView; hold Option (macOS) or Shift (Linux) for text selection
 - **Cmd+V auto-detect** — text via bracketed paste, image via clipboard fallback
 - **Shift+Tab cycles agents** — BUILD → PLAN → SUGGEST → BUILD
-- **Mouse wheel scrolling** — scroll up to browse history (auto-scroll pauses), scroll back down to resume
 - **PageUp/Down + Shift+↑/↓** — scrollback navigation
 - **`/yolo`** — toggle auto-accept
 - **`/init`** — generate `AGENTS.md` from repo analysis
@@ -419,7 +464,7 @@ pip install llmcode-cli[treesitter]     # Tree-sitter multi-language repo map
 ## Architecture
 
 ```
-llm_code/               29,000+ lines Python
+llm_code/               48,000+ lines Python
 ├── api/                Provider abstraction (OpenAI-compat + Anthropic)
 ├── cli/                CLI entry point, TUI launcher, oneshot modes (-x/-q)
 │   └── templates/      LLM-driven command templates (init.md, etc)
@@ -444,7 +489,7 @@ llm_code/               29,000+ lines Python
 ├── ide/                IDE bridge (WebSocket JSON-RPC)
 ├── swarm/              Multi-agent coordinator (synthesis-first)
 └── utils/              Notebook, diff, hyperlinks, search
-tests/                  3,696 tests across 270+ files
+tests/                  5,160+ tests across 418 files
 ```
 
 ---
@@ -456,7 +501,7 @@ git clone https://github.com/DJFeu/llmcode
 cd llmcode
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest                  # 3,696 tests
+pytest                  # 5,160+ tests
 ruff check llm_code/    # lint
 ```
 
