@@ -217,9 +217,7 @@ class RuntimeInitializer:
         # Register cron tools
         try:
             from llm_code.cron.storage import CronStorage
-            from llm_code.tools.cron_create import CronCreateTool
-            from llm_code.tools.cron_list import CronListTool
-            from llm_code.tools.cron_delete import CronDeleteTool
+            from llm_code.tools.cron_tools import CronCreateTool, CronDeleteTool, CronListTool
             cron_storage = CronStorage(self._app._cwd / ".llmcode" / "scheduled_tasks.json")
             self._app._cron_storage = cron_storage
             for tool in (CronCreateTool(cron_storage), CronListTool(cron_storage), CronDeleteTool(cron_storage)):
@@ -235,10 +233,10 @@ class RuntimeInitializer:
         try:
             if self._app._config.swarm.enabled:
                 from llm_code.swarm.manager import SwarmManager
-                from llm_code.tools.swarm_create import SwarmCreateTool
-                from llm_code.tools.swarm_list import SwarmListTool
-                from llm_code.tools.swarm_message import SwarmMessageTool
-                from llm_code.tools.swarm_delete import SwarmDeleteTool
+                from llm_code.tools.swarm_tools import (
+                    SwarmCreateTool, SwarmDeleteTool,
+                    SwarmListTool, SwarmMessageTool,
+                )
                 from llm_code.swarm.coordinator import Coordinator
                 from llm_code.tools.coordinator_tool import CoordinatorTool
 
@@ -277,9 +275,7 @@ class RuntimeInitializer:
             from llm_code.task.manager import TaskLifecycleManager
             from llm_code.task.verifier import Verifier
             from llm_code.task.diagnostics import DiagnosticsEngine
-            from llm_code.tools.task_plan import TaskPlanTool
-            from llm_code.tools.task_verify import TaskVerifyTool
-            from llm_code.tools.task_close import TaskCloseTool
+            from llm_code.tools.task_tools import TaskCloseTool, TaskPlanTool, TaskVerifyTool
 
             task_dir = self._app._cwd / ".llmcode" / "tasks"
             diag_dir = self._app._cwd / ".llmcode" / "diagnostics"
