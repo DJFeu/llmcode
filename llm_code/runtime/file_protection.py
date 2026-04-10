@@ -3,9 +3,20 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+
+
+def _normalize_path_case(path: str) -> str:
+    """Normalize path case on case-insensitive filesystems (macOS/Windows).
+
+    Prevents bypasses like '.cLauDe/Settings.json' on macOS HFS+/APFS.
+    """
+    if sys.platform in ("darwin", "win32", "cygwin"):
+        return path.lower()
+    return path
 
 
 # Glob patterns for dangerous / credential files.
@@ -62,9 +73,13 @@ class FileProtectionResult:
 
 
 def _matches_any(name: str, patterns: tuple[str, ...]) -> bool:
-    """Return True if *name* matches at least one glob pattern."""
+    """Return True if *name* matches at least one glob pattern.
+
+    Normalizes case on case-insensitive filesystems before matching.
+    """
+    normalized = _normalize_path_case(name)
     for pattern in patterns:
-        if fnmatch.fnmatch(name, pattern):
+        if fnmatch.fnmatch(normalized, pattern):
             return True
     return False
 
@@ -72,11 +87,11 @@ def _matches_any(name: str, patterns: tuple[str, ...]) -> bool:
 def _is_under_blocked_prefix(path: str) -> bool:
     """Return True if the resolved path sits under a always-blocked directory."""
     try:
-        resolved = str(Path(path).resolve())
+        resolved = _normalize_path_case(str(Path(path).resolve()))
     except Exception:
-        resolved = path
+        resolved = _normalize_path_case(path)
     for prefix in _BLOCK_PATH_PREFIXES:
-        if resolved.startswith(prefix):
+        if resolved.startswith(_normalize_path_case(prefix)):
             return True
     return False
 

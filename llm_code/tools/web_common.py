@@ -5,9 +5,29 @@ import dataclasses
 import ipaddress
 import json
 import re
+import socket
 import time
 from collections import OrderedDict
 from urllib.parse import urlparse
+
+# Ports associated with dangerous internal services that should never be
+# accessed via web-fetch tools.
+_DANGEROUS_PORTS: frozenset[int] = frozenset({
+    22,     # SSH
+    23,     # Telnet
+    25,     # SMTP
+    110,    # POP3
+    143,    # IMAP
+    445,    # SMB
+    3306,   # MySQL
+    5432,   # PostgreSQL
+    6379,   # Redis
+    27017,  # MongoDB
+    9200,   # Elasticsearch
+    2375,   # Docker API
+    2376,   # Docker TLS
+    11211,  # Memcached
+})
 
 
 @dataclasses.dataclass(frozen=True)
@@ -107,6 +127,14 @@ def classify_url(url: str) -> UrlSafetyResult:
 
     # Check port
     port = parsed.port
+
+    # Block dangerous service ports (SSH, database, etc.)
+    if port is not None and port in _DANGEROUS_PORTS:
+        return UrlSafetyResult(
+            classification="blocked",
+            reasons=(f"dangerous service port {port}",),
+        )
+
     if is_ip and port is None:
         # IP-only URL without port (needs confirm)
         return UrlSafetyResult(
@@ -121,6 +149,36 @@ def classify_url(url: str) -> UrlSafetyResult:
 
     # All checks passed
     return UrlSafetyResult(classification="safe", reasons=())
+
+
+def resolve_and_verify_host(hostname: str) -> tuple[bool, str]:
+    """DNS rebinding defense: resolve hostname and verify the IP is safe.
+
+    Resolves the hostname to an IP address and checks that the resolved IP
+    is not a private/loopback address.  Callers should invoke this
+    **immediately before** making the HTTP request (after ``classify_url``
+    has already approved the URL) so that a DNS record that changes between
+    classification time and request time is caught.
+
+    Returns:
+        A ``(safe, reason)`` tuple.  ``safe`` is True when the resolved IP
+        is acceptable; ``reason`` explains why it was rejected when False.
+    """
+    try:
+        # DNS rebinding defense: re-resolve after classification to ensure
+        # IP hasn't changed to an internal address.
+        results = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        if not results:
+            return False, f"DNS resolution failed for {hostname}"
+        ip_str = results[0][4][0]
+        ip = ipaddress.ip_address(ip_str)
+        if ip.is_private or ip.is_loopback:
+            return False, (
+                f"DNS rebinding detected: {hostname} resolved to private/loopback IP {ip_str}"
+            )
+        return True, ""
+    except (socket.gaierror, OSError) as exc:
+        return False, f"DNS resolution failed for {hostname}: {exc}"
 
 
 @dataclasses.dataclass(frozen=True)
