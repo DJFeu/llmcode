@@ -2,7 +2,7 @@
 path and the runtime dispatch path consume."""
 from __future__ import annotations
 
-from llm_code.streaming.stream_parser import (
+from llm_code.tui.stream_parser import (
     StreamEventKind,
     StreamParser,
 )
@@ -295,7 +295,7 @@ def test_flush_salvage_emits_warning_log(caplog) -> None:
     import logging
     p = StreamParser()
     p.feed("<tool_call>data that would have been lost")
-    with caplog.at_level(logging.WARNING, logger="llm_code.streaming.stream_parser"):
+    with caplog.at_level(logging.WARNING, logger="llm_code.tui.stream_parser"):
         p.flush()
     assert any(
         "unterminated <tool_call>" in r.message for r in caplog.records
@@ -306,7 +306,7 @@ def test_flush_unterminated_think_also_emits_warning(caplog) -> None:
     import logging
     p = StreamParser()
     p.feed("<think>never closed")
-    with caplog.at_level(logging.WARNING, logger="llm_code.streaming.stream_parser"):
+    with caplog.at_level(logging.WARNING, logger="llm_code.tui.stream_parser"):
         p.flush()
     assert any(
         "unterminated <think>" in r.message for r in caplog.records

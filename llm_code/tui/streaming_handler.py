@@ -116,7 +116,7 @@ class StreamingHandler:
         # runtime dispatch path (llm_code.streaming.stream_parser). Emits
         # TEXT / THINKING / TOOL_CALL events that we route into the TUI
         # widgets below. Replaced ~110 lines of inline tag parsing.
-        from llm_code.streaming.stream_parser import StreamEventKind, StreamParser
+        from llm_code.tui.stream_parser import StreamEventKind, StreamParser
         # Auto-detect implicit thinking: if the runtime's config has
         # thinking mode enabled, the vLLM chat template likely injects
         # <think>\n into the assistant prompt prefix so only the
