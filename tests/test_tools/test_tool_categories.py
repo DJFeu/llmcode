@@ -1,12 +1,9 @@
 """Tests for multi-stage agent tool filtering (tool_categories.py)."""
 from __future__ import annotations
 
-import pytest
-
 from llm_code.tools.tool_categories import (
     ALL_AGENT_DISALLOWED,
     ASYNC_AGENT_ALLOWED,
-    CUSTOM_AGENT_DISALLOWED,
     MCP_TOOL_PREFIX,
     TEAMMATE_EXTRA_ALLOWED,
     filter_tools_for_agent,

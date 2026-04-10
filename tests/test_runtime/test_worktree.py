@@ -5,8 +5,6 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from llm_code.runtime.worktree import (
     bump_mtime,
     cleanup_worktree,
@@ -73,7 +71,6 @@ class TestCleanupWorktree:
 
 class TestBumpMtime:
     def test_bumps_existing(self, tmp_path: Path) -> None:
-        import os
         import time
 
         d = tmp_path / "wt"

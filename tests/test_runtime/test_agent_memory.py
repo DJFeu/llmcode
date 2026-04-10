@@ -7,7 +7,6 @@ import pytest
 
 from llm_code.runtime.agent_memory import (
     MEMORY_TOOLS,
-    MemoryScope,
     _sanitise_name,
     inject_memory_tools,
     resolve_memory_dir,

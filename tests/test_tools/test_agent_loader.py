@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from llm_code.tools.agent_loader import (
     _frontmatter_to_role,
     _load_agents_from_dir,
