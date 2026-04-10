@@ -1,0 +1,169 @@
+# Default execution policy rules.
+# Format: one rule per block, separated by blank lines.
+# Fields: pattern (glob), decision (allow|deny|prompt), after (optional), reason (optional)
+#
+# Rules are evaluated first-match-wins.
+# "deny" rules are immutable — session amendments cannot override them.
+
+# === Always safe (read-only / informational) ===
+pattern = cat *
+decision = allow
+
+pattern = ls *
+decision = allow
+
+pattern = head *
+decision = allow
+
+pattern = tail *
+decision = allow
+
+pattern = wc *
+decision = allow
+
+pattern = echo *
+decision = allow
+
+pattern = pwd
+decision = allow
+
+pattern = which *
+decision = allow
+
+pattern = type *
+decision = allow
+
+pattern = file *
+decision = allow
+
+pattern = stat *
+decision = allow
+
+pattern = du *
+decision = allow
+
+pattern = df *
+decision = allow
+
+pattern = env
+decision = allow
+
+pattern = whoami
+decision = allow
+
+pattern = date
+decision = allow
+
+pattern = uname *
+decision = allow
+
+# === Dev tooling (safe) ===
+pattern = python --version*
+decision = allow
+
+pattern = python3 --version*
+decision = allow
+
+pattern = node --version*
+decision = allow
+
+pattern = npm --version*
+decision = allow
+
+pattern = pip --version*
+decision = allow
+
+pattern = git status*
+decision = allow
+
+pattern = git diff*
+decision = allow
+
+pattern = git log*
+decision = allow
+
+pattern = git branch*
+decision = allow
+
+pattern = git show*
+decision = allow
+
+pattern = git remote -v*
+decision = allow
+
+pattern = ruff check*
+decision = allow
+
+pattern = ruff format*
+decision = allow
+
+pattern = black *
+decision = allow
+
+pattern = isort *
+decision = allow
+
+pattern = mypy *
+decision = allow
+
+pattern = pytest*
+decision = allow
+
+pattern = cargo check*
+decision = allow
+
+pattern = cargo test*
+decision = allow
+
+pattern = go test*
+decision = allow
+
+pattern = go vet*
+decision = allow
+
+# === Safe after a prerequisite ===
+pattern = git commit*
+after = git add*
+decision = allow
+
+pattern = git push*
+after = git commit*
+decision = prompt
+reason = Push requires explicit confirmation even after commit
+
+# === Always dangerous (immutable deny) ===
+pattern = rm -rf /*
+decision = deny
+reason = Recursive deletion of root filesystem
+
+pattern = rm -rf ~*
+decision = deny
+reason = Recursive deletion of home directory
+
+pattern = rm -rf .*
+decision = deny
+reason = Recursive deletion of hidden files (includes .git)
+
+pattern = dd if=*of=/dev/*
+decision = deny
+reason = Raw device write
+
+pattern = mkfs*
+decision = deny
+reason = Filesystem format
+
+pattern = chmod -R 777*
+decision = deny
+reason = World-writable permissions on entire tree
+
+pattern = curl * | sh
+decision = deny
+reason = Pipe-to-shell execution
+
+pattern = curl * | bash
+decision = deny
+reason = Pipe-to-shell execution
+
+pattern = wget * | sh
+decision = deny
+reason = Pipe-to-shell execution
