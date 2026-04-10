@@ -39,7 +39,7 @@ class TestCmdMode:
 
     def _make_app(self) -> MagicMock:
         """Create a mock app with necessary attributes for _cmd_mode."""
-        from llm_code.tui.app import LLMCodeTUI
+        from llm_code.tui.command_dispatcher import CommandDispatcher
 
         # We import the method and bind it to a mock to avoid full Textual init
         app = MagicMock()
@@ -67,8 +67,9 @@ class TestCmdMode:
         app._runtime = MagicMock()
         app._runtime._permissions = PermissionPolicy(mode=PermissionMode.WORKSPACE_WRITE)
 
-        # Bind the real _cmd_mode method
-        app._cmd_mode = LLMCodeTUI._cmd_mode.__get__(app, type(app))
+        # Create real dispatcher pointing to mock app
+        dispatcher = CommandDispatcher(app)
+        app._cmd_mode = dispatcher._cmd_mode
 
         return app, status, chat
 

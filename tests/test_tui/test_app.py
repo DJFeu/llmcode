@@ -63,9 +63,9 @@ async def test_app_boots_and_accepts_input():
 async def test_slash_help():
     """Test that /help dispatches to _cmd_help (modal rendering tested manually)."""
     app = LLMCodeTUI()
-    # Verify the handler method exists and is callable
-    assert hasattr(app, "_cmd_help")
-    assert callable(app._cmd_help)
+    # Verify the handler method exists on the dispatcher and is callable
+    assert hasattr(app._cmd_dispatcher, "_cmd_help")
+    assert callable(app._cmd_dispatcher._cmd_help)
 
 
 @pytest.mark.asyncio

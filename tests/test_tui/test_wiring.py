@@ -50,8 +50,9 @@ def test_settings_command_registered():
 
 
 def test_settings_handler_exists():
-    """LLMCodeTUI has a _cmd_settings handler."""
-    assert callable(getattr(LLMCodeTUI, "_cmd_settings", None))
+    """CommandDispatcher has a _cmd_settings handler."""
+    from llm_code.tui.command_dispatcher import CommandDispatcher
+    assert callable(getattr(CommandDispatcher, "_cmd_settings", None))
 
 
 # ──────────────────────── Task 3: RateLimitBar wiring ────────────────────────

@@ -16,13 +16,13 @@ class TestAnalyzeCommandAttrs:
 
     def test_cmd_analyze_exists(self) -> None:
         app = LLMCodeTUI()
-        assert hasattr(app, "_cmd_analyze")
-        assert callable(app._cmd_analyze)
+        assert hasattr(app._cmd_dispatcher, "_cmd_analyze")
+        assert callable(app._cmd_dispatcher._cmd_analyze)
 
     def test_cmd_diff_check_exists(self) -> None:
         app = LLMCodeTUI()
-        assert hasattr(app, "_cmd_diff_check")
-        assert callable(app._cmd_diff_check)
+        assert hasattr(app._cmd_dispatcher, "_cmd_diff_check")
+        assert callable(app._cmd_dispatcher._cmd_diff_check)
 
     def test_analysis_context_initialized_none(self) -> None:
         app = LLMCodeTUI()
@@ -30,13 +30,13 @@ class TestAnalyzeCommandAttrs:
 
     def test_run_analyze_method_exists(self) -> None:
         app = LLMCodeTUI()
-        assert hasattr(app, "_run_analyze")
-        assert asyncio.iscoroutinefunction(app._run_analyze)
+        assert hasattr(app._cmd_dispatcher, "_run_analyze")
+        assert asyncio.iscoroutinefunction(app._cmd_dispatcher._run_analyze)
 
     def test_run_diff_check_method_exists(self) -> None:
         app = LLMCodeTUI()
-        assert hasattr(app, "_run_diff_check")
-        assert asyncio.iscoroutinefunction(app._run_diff_check)
+        assert hasattr(app._cmd_dispatcher, "_run_diff_check")
+        assert asyncio.iscoroutinefunction(app._cmd_dispatcher._run_diff_check)
 
 
 class TestAnalyzeCommandRegistration:
@@ -90,7 +90,7 @@ async def test_run_analyze_no_violations(tmp_path: Path) -> None:
             "llm_code.analysis.engine.run_analysis",
             return_value=clean_result,
         ):
-            await app._run_analyze("")
+            await app._cmd_dispatcher._run_analyze("")
 
         await pilot.pause()
 
@@ -128,7 +128,7 @@ async def test_run_analyze_with_violations(tmp_path: Path) -> None:
             "llm_code.analysis.engine.run_analysis",
             return_value=result,
         ):
-            await app._run_analyze("")
+            await app._cmd_dispatcher._run_analyze("")
 
         await pilot.pause()
 
@@ -172,7 +172,7 @@ async def test_run_analyze_propagates_to_runtime(tmp_path: Path) -> None:
             "llm_code.analysis.engine.run_analysis",
             return_value=result,
         ):
-            await app._run_analyze("")
+            await app._cmd_dispatcher._run_analyze("")
 
         await pilot.pause()
 
@@ -201,7 +201,7 @@ async def test_run_analyze_clears_runtime_on_no_violations(tmp_path: Path) -> No
             "llm_code.analysis.engine.run_analysis",
             return_value=clean_result,
         ):
-            await app._run_analyze("")
+            await app._cmd_dispatcher._run_analyze("")
 
         await pilot.pause()
 
@@ -218,7 +218,7 @@ async def test_run_analyze_handles_exception(tmp_path: Path) -> None:
             "llm_code.analysis.engine.run_analysis",
             side_effect=RuntimeError("disk error"),
         ):
-            await app._run_analyze("")
+            await app._cmd_dispatcher._run_analyze("")
 
         await pilot.pause()
 
@@ -238,7 +238,7 @@ async def test_run_diff_check_no_changes(tmp_path: Path) -> None:
             "llm_code.analysis.engine.run_diff_check",
             return_value=([], []),
         ):
-            await app._run_diff_check("")
+            await app._cmd_dispatcher._run_diff_check("")
 
         await pilot.pause()
 
@@ -275,7 +275,7 @@ async def test_run_diff_check_new_and_fixed(tmp_path: Path) -> None:
             "llm_code.analysis.engine.run_diff_check",
             return_value=([new_v], [fixed_v]),
         ):
-            await app._run_diff_check("")
+            await app._cmd_dispatcher._run_diff_check("")
 
         await pilot.pause()
 
@@ -298,7 +298,7 @@ async def test_run_diff_check_handles_exception(tmp_path: Path) -> None:
             "llm_code.analysis.engine.run_diff_check",
             side_effect=RuntimeError("git not found"),
         ):
-            await app._run_diff_check("")
+            await app._cmd_dispatcher._run_diff_check("")
 
         await pilot.pause()
 
