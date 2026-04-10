@@ -50,6 +50,11 @@ class ModelProfile:
     thinking_extra_body_format: str = "chat_template_kwargs"  # or "anthropic_native"
     default_thinking_budget: int = 10000
 
+    # ── Sampling ──────────────────────────────────────────────────────
+    default_temperature: float = -1.0  # -1 = use config; >=0 = model-specific default
+    reasoning_effort: str = ""  # "" = use default; "low" | "medium" | "high" | "max"
+    is_small_model: bool = False  # nano/mini/flash/haiku — reduced thinking
+
     # ── Pricing (per 1M tokens) ───────────────────────────────────────
     price_input: float = 0.0  # 0 = unknown / free
     price_output: float = 0.0
@@ -81,6 +86,8 @@ _BUILTIN_PROFILES: dict[str, ModelProfile] = {
         reasoning_field="reasoning_content",
         thinking_extra_body_format="chat_template_kwargs",
         default_thinking_budget=16384,
+        default_temperature=0.55,
+        reasoning_effort="medium",
         is_local=True,
         context_window=131072,
     ),
@@ -95,6 +102,8 @@ _BUILTIN_PROFILES: dict[str, ModelProfile] = {
         reasoning_field="reasoning_content",
         thinking_extra_body_format="chat_template_kwargs",
         default_thinking_budget=10000,
+        default_temperature=0.55,
+        reasoning_effort="medium",
         is_local=True,
         context_window=131072,
     ),
@@ -109,6 +118,8 @@ _BUILTIN_PROFILES: dict[str, ModelProfile] = {
         reasoning_field="reasoning_content",
         thinking_extra_body_format="chat_template_kwargs",
         default_thinking_budget=8192,
+        default_temperature=0.55,
+        reasoning_effort="medium",
         is_local=True,
         context_window=32768,
     ),
@@ -122,6 +133,7 @@ _BUILTIN_PROFILES: dict[str, ModelProfile] = {
         supports_images=True,
         thinking_extra_body_format="anthropic_native",
         default_thinking_budget=10000,
+        reasoning_effort="high",
         price_input=15.00,
         price_output=75.00,
         max_output_tokens=16384,
@@ -135,6 +147,7 @@ _BUILTIN_PROFILES: dict[str, ModelProfile] = {
         supports_images=True,
         thinking_extra_body_format="anthropic_native",
         default_thinking_budget=10000,
+        reasoning_effort="medium",
         price_input=3.00,
         price_output=15.00,
         max_output_tokens=16384,
@@ -148,6 +161,8 @@ _BUILTIN_PROFILES: dict[str, ModelProfile] = {
         supports_images=True,
         thinking_extra_body_format="anthropic_native",
         default_thinking_budget=8000,
+        reasoning_effort="low",
+        is_small_model=True,
         price_input=0.80,
         price_output=4.00,
         max_output_tokens=8192,
@@ -164,6 +179,8 @@ _BUILTIN_PROFILES: dict[str, ModelProfile] = {
         implicit_thinking=True,
         reasoning_field="reasoning_content",
         thinking_extra_body_format="chat_template_kwargs",
+        default_temperature=0.6,
+        reasoning_effort="high",
         price_input=0.55,
         price_output=2.19,
         context_window=128000,
@@ -196,6 +213,7 @@ _BUILTIN_PROFILES: dict[str, ModelProfile] = {
         native_tools=True,
         supports_reasoning=False,
         supports_images=True,
+        is_small_model=True,
         price_input=0.15,
         price_output=0.60,
         max_output_tokens=16384,
@@ -207,6 +225,8 @@ _BUILTIN_PROFILES: dict[str, ModelProfile] = {
         native_tools=True,
         supports_reasoning=True,
         reasoning_field="reasoning",
+        default_temperature=1.0,
+        reasoning_effort="high",
         price_input=2.00,
         price_output=8.00,
         context_window=200000,
@@ -217,6 +237,8 @@ _BUILTIN_PROFILES: dict[str, ModelProfile] = {
         native_tools=True,
         supports_reasoning=True,
         reasoning_field="reasoning",
+        default_temperature=1.0,
+        reasoning_effort="medium",
         price_input=0.50,
         price_output=2.00,
         context_window=200000,
@@ -263,12 +285,20 @@ _FAMILY_DEFAULTS: dict[str, ModelProfile] = {
         implicit_thinking=True,
         reasoning_field="reasoning_content",
         thinking_extra_body_format="chat_template_kwargs",
+        default_temperature=0.55,
         is_local=True,
         context_window=131072,
     ),
 }
 
 _DEFAULT_PROFILE = ModelProfile(name="(default)")
+
+
+def _detect_small_model(model_name: str) -> bool:
+    """Detect if a model is a small/lightweight variant by name patterns."""
+    name_lower = model_name.lower()
+    small_patterns = ("mini", "nano", "flash", "haiku", "small", "lite", "tiny")
+    return any(p in name_lower for p in small_patterns)
 
 
 # ── TOML loading ──────────────────────────────────────────────────────
@@ -299,7 +329,8 @@ def _profile_from_dict(data: dict[str, Any], base: ModelProfile | None = None) -
         "thinking": ("thinking_extra_body_format", "default_thinking_budget"),
         "pricing": ("price_input", "price_output"),
         "limits": ("max_output_tokens", "context_window"),
-        "deployment": ("is_local", "unlimited_token_upgrade"),
+        "sampling": ("default_temperature", "reasoning_effort"),
+        "deployment": ("is_local", "unlimited_token_upgrade", "is_small_model"),
         "routing": ("tier_c_model",),
     }
     for key, value in data.items():
@@ -417,23 +448,29 @@ class ProfileRegistry:
 
         # 1. Exact match
         if key in self._profiles:
-            return self._profiles[key]
+            result = self._profiles[key]
+        else:
+            # 2. Prefix match (longest prefix wins)
+            best_match: str = ""
+            for profile_key in self._profiles:
+                if key.startswith(profile_key) and len(profile_key) > len(best_match):
+                    best_match = profile_key
+            if best_match:
+                result = self._profiles[best_match]
+            else:
+                # 3. Family defaults
+                result = _DEFAULT_PROFILE
+                for family_prefix, family_profile in _FAMILY_DEFAULTS.items():
+                    if key.startswith(family_prefix):
+                        result = family_profile
+                        break
 
-        # 2. Prefix match (longest prefix wins)
-        best_match: str = ""
-        for profile_key in self._profiles:
-            if key.startswith(profile_key) and len(profile_key) > len(best_match):
-                best_match = profile_key
-        if best_match:
-            return self._profiles[best_match]
+        # Auto-detect small model by name if not already flagged
+        if not result.is_small_model and _detect_small_model(key):
+            from dataclasses import replace
+            result = replace(result, is_small_model=True)
 
-        # 3. Family defaults
-        for family_prefix, family_profile in _FAMILY_DEFAULTS.items():
-            if key.startswith(family_prefix):
-                return family_profile
-
-        # 4. Default
-        return _DEFAULT_PROFILE
+        return result
 
     def list_profiles(self) -> dict[str, ModelProfile]:
         """Return all registered profiles (built-in + user)."""

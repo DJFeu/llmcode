@@ -120,6 +120,29 @@ def _apply_thinking_budget_cap(
     return min(budget, cap)
 
 
+def _apply_profile_budget_adjustments(budget: int, profile: Any) -> int:
+    """Scale thinking budget by reasoning_effort and cap for small models."""
+    if profile is None:
+        return budget
+
+    # Scale thinking budget by reasoning effort from profile
+    if getattr(profile, "reasoning_effort", ""):
+        effort_scale = {
+            "low": 0.25,
+            "medium": 0.5,
+            "high": 1.0,
+            "max": 2.0,
+        }
+        scale = effort_scale.get(profile.reasoning_effort, 1.0)
+        budget = int(budget * scale)
+
+    # Auto-downgrade thinking for small models
+    if getattr(profile, "is_small_model", False):
+        budget = min(budget, 4096)  # Cap at 4K for small models
+
+    return budget
+
+
 def build_thinking_extra_body(
     thinking_config,
     *,
@@ -167,6 +190,7 @@ def build_thinking_extra_body(
             base_budget=budget,
             max_budget=131072 if is_local else None,
         )
+        budget = _apply_profile_budget_adjustments(budget, profile)
         budget = _apply_thinking_budget_cap(budget, max_output_tokens=max_output_tokens)
         return _wrap(True, budget)
     if mode == "disabled":
@@ -181,6 +205,7 @@ def build_thinking_extra_body(
                 base_budget=budget,
                 max_budget=131072,
             )
+            budget = _apply_profile_budget_adjustments(budget, profile)
             budget = _apply_thinking_budget_cap(budget, max_output_tokens=max_output_tokens)
             return _wrap(True, budget)
         return _wrap(False)
@@ -1148,7 +1173,11 @@ class ConversationRuntime:
                 system=system_prompt,
                 tools=tool_defs if use_native else (),
                 max_tokens=_current_max_tokens,
-                temperature=self._config.temperature,
+                temperature=(
+                    self._model_profile.default_temperature
+                    if self._model_profile.default_temperature >= 0
+                    else self._config.temperature
+                ),
                 extra_body=build_thinking_extra_body(
                     self._config.thinking,
                     is_local=_is_local,
@@ -1265,7 +1294,11 @@ class ConversationRuntime:
                         system=system_prompt,
                         tools=(),
                         max_tokens=_current_max_tokens,
-                        temperature=self._config.temperature,
+                        temperature=(
+                            self._model_profile.default_temperature
+                            if self._model_profile.default_temperature >= 0
+                            else self._config.temperature
+                        ),
                         extra_body=build_thinking_extra_body(
                             self._config.thinking,
                             is_local=_is_local,
