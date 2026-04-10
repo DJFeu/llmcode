@@ -55,6 +55,22 @@ If you mostly use cloud APIs and don't need any of the above, **opencode is more
 pip install llmcode-cli
 ```
 
+**Upgrade:**
+
+```bash
+# From terminal
+pip install --upgrade llmcode-cli
+
+# Or from inside llmcode TUI
+/update
+```
+
+llmcode checks for updates automatically on startup (background, cached 6 hours). When a new version is available you'll see:
+
+```
+Update available: 1.17.0 → 1.18.0 (run /update)
+```
+
 > **`llmcode: command not found`?** pip installs scripts to `~/.local/bin` (Linux/macOS) or `%APPDATA%\Python\Scripts` (Windows). Add it to your PATH:
 > ```bash
 > export PATH="$HOME/.local/bin:$PATH"
@@ -315,6 +331,8 @@ Native httpx-based provider for Anthropic's Messages API:
 - **Cmd+V auto-detect** — text via bracketed paste, image via clipboard fallback
 - **Shift+Tab cycles agents** — BUILD → PLAN → SUGGEST → BUILD
 - **PageUp/Down + Shift+↑/↓** — scrollback navigation
+- **`/update`** — check PyPI + upgrade in-place (auto-check on startup, cached 6h)
+- **`/theme <name>`** — switch color theme (default, dracula, monokai, tokyo-night, github-dark, solarized-dark, nord, gruvbox)
 - **`/yolo`** — toggle auto-accept
 - **`/init`** — generate `AGENTS.md` from repo analysis
 - **`/copy`** — copy last response to clipboard
