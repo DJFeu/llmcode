@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
+import typing
 from typing import TYPE_CHECKING
 
 from filelock import FileLock
@@ -78,6 +80,25 @@ class DreamTask:
         if len(user_messages) < dream_config.min_turns:
             return ""
 
+        # Guard: time-based — skip if last run was < 24h ago
+        last_run_str = memory_store.recall("_dream_last_run")
+        if last_run_str:
+            try:
+                last_run = datetime.fromisoformat(last_run_str)
+                hours_since = (datetime.now(timezone.utc) - last_run).total_seconds() / 3600
+                if hours_since < 24:
+                    logger.debug("DreamTask skipped: only %.1fh since last run", hours_since)
+                    return ""
+            except (ValueError, TypeError):
+                pass  # proceed if unparseable
+
+        # Guard: session count — skip if < 5 sessions since last consolidation
+        session_count = memory_store.recall("_dream_session_count")
+        count = int(session_count) if session_count and session_count.isdigit() else 0
+        if count < 5:
+            logger.debug("DreamTask skipped: only %d sessions (need 5)", count)
+            return ""
+
         # Build transcript from session messages
         transcript_parts: list[str] = []
         for msg in session.messages:
@@ -115,6 +136,7 @@ class DreamTask:
             if hasattr(block, "text"):
                 summary_parts.append(block.text)
         summary = "\n".join(summary_parts)
+        summary = self._normalize_dates(summary)
 
         if not summary.strip():
             return ""
@@ -135,12 +157,82 @@ class DreamTask:
             datetime.now(timezone.utc).isoformat(),
         )
 
+        # Reset session counter after successful consolidation
+        memory_store.store("_dream_session_count", "0")
+
+        # Prune MEMORY.md to stay within limits
+        self._prune_memory_index(memory_store)
+
         logger.info(
             "DreamTask consolidated session to %s/%s.md",
             memory_store.consolidated_dir,
             today,
         )
         return summary
+
+    @staticmethod
+    def _normalize_dates(text: str) -> str:
+        """Convert relative date references to absolute ISO dates."""
+        today = datetime.now(timezone.utc)
+
+        replacements: dict[str, str | typing.Callable[[re.Match[str]], str]] = {
+            r"\byesterday\b": (today - timedelta(days=1)).strftime("%Y-%m-%d"),
+            r"\btoday\b": today.strftime("%Y-%m-%d"),
+            r"\b(\d+)\s+days?\s+ago\b": lambda m: (
+                today - timedelta(days=int(m.group(1)))
+            ).strftime("%Y-%m-%d"),
+        }
+
+        for pattern, replacement in replacements.items():
+            if callable(replacement):
+                text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+            else:
+                text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+
+        return text
+
+    @staticmethod
+    def _prune_memory_index(memory_store: "MemoryStore") -> None:
+        """Prune MEMORY.md to stay within 200 lines / 25KB."""
+        index_path = memory_store._dir.parent / "MEMORY.md"
+        if not index_path.exists():
+            return
+
+        content = index_path.read_text(encoding="utf-8", errors="replace")
+        lines = content.splitlines(keepends=True)
+
+        _MAX_LINES = 200
+        _MAX_BYTES = 25 * 1024  # 25KB
+
+        changed = False
+
+        # Prune by line count (keep first _MAX_LINES)
+        if len(lines) > _MAX_LINES:
+            logger.info("DreamTask prune: %d lines → %d", len(lines), _MAX_LINES)
+            lines = lines[:_MAX_LINES]
+            changed = True
+
+        # Prune by byte size
+        result = "".join(lines)
+        if len(result.encode("utf-8")) > _MAX_BYTES:
+            logger.info(
+                "DreamTask prune: %d bytes → %d",
+                len(result.encode("utf-8")),
+                _MAX_BYTES,
+            )
+            while len("".join(lines).encode("utf-8")) > _MAX_BYTES and lines:
+                lines.pop()
+            changed = True
+
+        if changed:
+            index_path.write_text("".join(lines), encoding="utf-8")
+
+    @staticmethod
+    def increment_session_count(memory_store: "MemoryStore") -> None:
+        """Increment the session counter for trigger logic."""
+        current = memory_store.recall("_dream_session_count")
+        count = int(current) if current and current.isdigit() else 0
+        memory_store.store("_dream_session_count", str(count + 1))
 
     @staticmethod
     def _extract_episodes(
