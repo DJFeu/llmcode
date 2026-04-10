@@ -10,7 +10,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
-from pydantic import ValidationError
 
 from llm_code.logging import get_logger
 from llm_code.api.types import (
@@ -20,14 +19,12 @@ from llm_code.api.types import (
     StreamCompactionDone,
     StreamCompactionStart,
     StreamMessageStop,
-    StreamPermissionRequest,
     StreamTextDelta,
     StreamServerToolBlock,
     StreamThinkingDelta,
     StreamThinkingSignature,
     StreamToolExecResult,
     StreamToolExecStart,
-    StreamToolProgress,
     StreamToolUseInputDelta,
     StreamToolUseStart,
     TextBlock,
@@ -40,10 +37,9 @@ from llm_code.api.content_order import validate_assistant_content_order
 from llm_code.runtime.compressor import ContextCompressor
 from llm_code.runtime.cost_tracker import BudgetExceededError
 from llm_code.runtime._retry_tracker import RecentToolCallTracker
-from llm_code.runtime.permissions import PermissionOutcome
 from llm_code.runtime.streaming_executor import StreamingToolExecutor
 from llm_code.runtime.telemetry import Telemetry, _truncate_for_attribute, get_noop_telemetry
-from llm_code.tools.base import PermissionLevel, ToolResult
+from llm_code.tools.base import ToolResult
 from llm_code.tools.parsing import ParsedToolCall, parse_tool_calls
 
 if TYPE_CHECKING:

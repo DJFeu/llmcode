@@ -6,11 +6,17 @@ for backward compatibility.
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from pydantic import BaseModel
 
 from llm_code.task.manager import TaskLifecycleManager
 from llm_code.task.types import TaskStatus
 from llm_code.tools.base import PermissionLevel, Tool, ToolResult
+
+if TYPE_CHECKING:
+    from llm_code.task.diagnostics import DiagnosticsEngine
+    from llm_code.task.verifier import Verifier
 
 
 # ---------------------------------------------------------------------------

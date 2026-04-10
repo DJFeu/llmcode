@@ -7,7 +7,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from llm_code.logging import get_logger
 
@@ -123,7 +123,6 @@ class CommandDispatcher:
         from textual.containers import VerticalScroll
         from textual.widgets import Static
         from rich.text import Text as RichText
-        from llm_code.tui.chat_view import ChatScrollView
         from llm_code.tui.input_bar import InputBar
 
         skills = self._app._skills

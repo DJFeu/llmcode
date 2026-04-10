@@ -2,7 +2,6 @@
 """LLMCodeTUI — Textual fullscreen app composing all widgets."""
 from __future__ import annotations
 
-import os
 import re
 import shutil
 import subprocess
@@ -13,7 +12,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 
-from llm_code.tui.chat_view import ChatScrollView, UserMessage, AssistantText, SkillBadge
+from llm_code.tui.chat_view import ChatScrollView, UserMessage, AssistantText
 from llm_code.tui.header_bar import HeaderBar
 from llm_code.tui.input_bar import InputBar
 from llm_code.tui.status_bar import StatusBar
