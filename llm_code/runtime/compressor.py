@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
 from typing import TYPE_CHECKING
 
 from llm_code.api.types import (
@@ -22,15 +23,27 @@ _log = logging.getLogger(__name__)
 
 _SUMMARIZE_SYSTEM_PROMPT = """\
 You are a context compression agent. Given conversation messages from a coding \
-session, produce a concise summary preserving:
+session, produce a structured summary organized into these dimensions:
 
-1. What files were read, created, or modified (exact paths)
-2. Key decisions made and their rationale
-3. Current state of the task (what's done, what's pending)
-4. Any errors encountered and how they were resolved
+1. **Primary Request and Intent** — What the user originally asked for and why
+2. **Key Technical Concepts** — Technologies, patterns, algorithms discussed
+3. **Files and Code Sections** — Exact paths of files read, created, or modified
+4. **Errors and Fixes** — Errors encountered and how they were resolved
+5. **Problem Solving Process** — Key decisions made and alternatives considered
+6. **User Preferences** — Explicit user requests, style preferences, constraints
+7. **Pending Tasks** — What remains to be done, open questions
+8. **Current Work Summary** — What has been accomplished so far
+9. **Suggested Next Steps** — Logical continuation of the work
 
-Be factual. Use bullet points. Do not include code blocks unless critical.
+Be factual and concise. Use bullet points within each dimension. \
+Omit dimensions that have no relevant content. \
+Do not include code blocks unless they capture a critical decision.
 """
+
+
+_POST_COMPACT_MAX_FILES = 5
+_POST_COMPACT_MAX_TOKENS_PER_FILE = 5000
+_POST_COMPACT_TOKEN_BUDGET = 50000
 
 
 class ContextCompressor:
@@ -59,6 +72,17 @@ class ContextCompressor:
         self._provider = provider
         self._summarize_model = summarize_model
         self._max_summary_tokens = max_summary_tokens
+        self._recent_files: list[str] = []  # ordered by access time, most recent last
+
+    # ------------------------------------------------------------------
+    # File access tracking
+    # ------------------------------------------------------------------
+
+    def record_file_access(self, path: str) -> None:
+        """Record that a file was accessed (read or written)."""
+        if path in self._recent_files:
+            self._recent_files.remove(path)
+        self._recent_files.append(path)
 
     # ------------------------------------------------------------------
     # Cache tracking
@@ -92,18 +116,20 @@ class ContextCompressor:
 
         session = self._snip_compact(session)
         if session.estimated_tokens() <= max_tokens:
-            return session
+            return self._ensure_pair_integrity(session)
 
         session = self._micro_compact(session)
         if session.estimated_tokens() <= max_tokens:
-            return session
+            return self._ensure_pair_integrity(session)
 
         session = self._context_collapse(session, keep_recent=6)
         if session.estimated_tokens() <= max_tokens:
-            return session
+            session = self._ensure_pair_integrity(session)
+            return self._restore_recent_files(session)
 
         session = self._auto_compact(session, keep_recent=4)
-        return session
+        session = self._ensure_pair_integrity(session)
+        return self._restore_recent_files(session)
 
     async def compress_async(self, session: Session, max_tokens: int) -> Session:
         """Async compress with optional Level 5 LLM summarization."""
@@ -111,6 +137,58 @@ class ContextCompressor:
         if self._provider is not None:
             result = await self._llm_summarize(result)
         return result
+
+    # ------------------------------------------------------------------
+    # Post-compact file restoration
+    # ------------------------------------------------------------------
+
+    def _restore_recent_files(self, session: Session) -> Session:
+        """Restore content of recently accessed files after compaction.
+
+        Reads up to 5 files (5K tokens each, 50K total budget) and appends
+        them as a context restoration message.
+        """
+        if not self._recent_files:
+            return session
+
+        files_to_restore = self._recent_files[-_POST_COMPACT_MAX_FILES:]
+        restored_parts: list[str] = []
+        total_tokens = 0
+
+        for path in reversed(files_to_restore):  # most recent first
+            if total_tokens >= _POST_COMPACT_TOKEN_BUDGET:
+                break
+            try:
+                if not os.path.isfile(path):
+                    continue
+                with open(path, "r", errors="replace") as f:
+                    content = f.read()
+                # Estimate tokens (rough: 4 chars per token)
+                file_tokens = len(content) // 4
+                if file_tokens > _POST_COMPACT_MAX_TOKENS_PER_FILE:
+                    max_chars = _POST_COMPACT_MAX_TOKENS_PER_FILE * 4
+                    content = content[:max_chars] + "\n[... truncated]"
+                    file_tokens = _POST_COMPACT_MAX_TOKENS_PER_FILE
+                total_tokens += file_tokens
+                restored_parts.append(f"### {path}\n```\n{content}\n```")
+            except (OSError, UnicodeDecodeError):
+                continue
+
+        if not restored_parts:
+            return session
+
+        restoration_text = (
+            "[Post-compact context restoration — recently accessed files]\n\n"
+            + "\n\n".join(restored_parts)
+        )
+        restoration_msg = Message(
+            role="user",
+            content=(TextBlock(text=restoration_text),),
+        )
+
+        messages = list(session.messages)
+        messages.append(restoration_msg)
+        return dataclasses.replace(session, messages=tuple(messages))
 
     # ------------------------------------------------------------------
     # Level 5 (async only)
@@ -443,3 +521,48 @@ class ContextCompressor:
             session,
             messages=preserved_cached + (summary_msg,) + recent,
         )
+
+    # ------------------------------------------------------------------
+    # Pair integrity
+    # ------------------------------------------------------------------
+
+    def _ensure_pair_integrity(self, session: Session) -> Session:
+        """Ensure every ToolUseBlock has a matching ToolResultBlock and vice versa.
+
+        Removes orphaned blocks to prevent API invariant violations.
+        """
+        # Collect all tool_use ids and tool_result ids
+        use_ids: set[str] = set()
+        result_ids: set[str] = set()
+        for msg in session.messages:
+            for block in msg.content:
+                if isinstance(block, ToolUseBlock):
+                    use_ids.add(block.id)
+                elif isinstance(block, ToolResultBlock):
+                    result_ids.add(block.tool_use_id)
+
+        # Find orphans
+        orphan_uses = use_ids - result_ids      # tool_use without result
+        orphan_results = result_ids - use_ids   # tool_result without use
+
+        if not orphan_uses and not orphan_results:
+            return session
+
+        _log.warning(
+            "Pair integrity fix: %d orphan tool_use, %d orphan tool_result",
+            len(orphan_uses), len(orphan_results),
+        )
+
+        new_messages: list[Message] = []
+        for msg in session.messages:
+            new_blocks: list = []
+            for block in msg.content:
+                if isinstance(block, ToolUseBlock) and block.id in orphan_uses:
+                    continue
+                if isinstance(block, ToolResultBlock) and block.tool_use_id in orphan_results:
+                    continue
+                new_blocks.append(block)
+            if new_blocks:
+                new_messages.append(dataclasses.replace(msg, content=tuple(new_blocks)))
+
+        return dataclasses.replace(session, messages=tuple(new_messages))

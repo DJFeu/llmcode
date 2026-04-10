@@ -217,7 +217,7 @@ class TestProgressiveStopping:
     def test_stops_early_when_snip_sufficient(self, compressor: ContextCompressor) -> None:
         """compress() stops at level 1 when snip reduces below threshold."""
         long_content = "x" * 8000  # ~2000 tokens when 4chars/token
-        msgs = [_tool_result_msg("t1", long_content)]
+        msgs = [_tool_use_msg("t1", "some_tool", {}), _tool_result_msg("t1", long_content)]
         session = _make_session(msgs)
 
         # After snip, tokens will drop to ~500; set threshold at 1000 so snip is enough
@@ -225,7 +225,8 @@ class TestProgressiveStopping:
         result = compressor.compress(session, threshold)
 
         # Result should have truncated tool result (snip was applied)
-        block = result.messages[0].content[0]
+        # messages[0] is the tool_use (assistant), messages[1] is the tool_result (user)
+        block = result.messages[1].content[0]
         assert isinstance(block, ToolResultBlock)
         assert len(block.content) <= 2000
 

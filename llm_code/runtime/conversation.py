@@ -54,6 +54,9 @@ if TYPE_CHECKING:
     from llm_code.tools.registry import ToolRegistry
 
 
+_MAX_CONSECUTIVE_COMPACT_FAILURES = 3
+
+
 def _build_prompt_preview(messages, max_chars: int = 2000) -> str:
     """Build a short preview of the most recent user/assistant turns."""
     if not messages:
@@ -397,6 +400,7 @@ class ConversationRuntime:
         self._session_allowed_prefixes: set[str] = set()
         self._session_allowed_path_roots: set[str] = set()
         self._has_attempted_reactive_compact = False
+        self._consecutive_compact_failures: int = 0
         self._compaction_in_flight: bool = False
         from llm_code.runtime.query_profiler import QueryProfiler
         self._query_profiler = QueryProfiler()
@@ -1291,9 +1295,11 @@ class ConversationRuntime:
                 elif (
                     ("413" in _exc_str or "prompt too long" in _exc_str.lower())
                     and not self._has_attempted_reactive_compact
+                    and self._consecutive_compact_failures < _MAX_CONSECUTIVE_COMPACT_FAILURES
                 ):
                     logger.warning("Prompt too long; compacting context and retrying")
                     self._has_attempted_reactive_compact = True
+                    self._consecutive_compact_failures += 1
                     # helper fires pre_compact + session_compact + post_compact
                     self._compact_with_todo_preserve(
                         self._config.compact_after_tokens // 2,
@@ -1301,6 +1307,16 @@ class ConversationRuntime:
                     )
                     _close_llm_span_with_error(exc)
                     continue  # retry this iteration of the turn loop
+                elif (
+                    ("413" in _exc_str or "prompt too long" in _exc_str.lower())
+                    and self._consecutive_compact_failures >= _MAX_CONSECUTIVE_COMPACT_FAILURES
+                ):
+                    logger.error(
+                        "Circuit breaker: %d consecutive compact failures, not retrying",
+                        self._consecutive_compact_failures,
+                    )
+                    _close_llm_span_with_error(exc)
+                    raise
                 else:
                     # Layer 3: model fallback — track consecutive provider errors
                     self._consecutive_failures += 1
@@ -1428,8 +1444,9 @@ class ConversationRuntime:
                     pass
                 _close_llm_span_ok()
 
-            # Reset consecutive failure counter on successful stream
+            # Reset consecutive failure counters on successful stream
             self._consecutive_failures = 0
+            self._consecutive_compact_failures = 0
             self._fire_hook("http_response", {"model": self._active_model, "status": "ok"})
 
             # Prompt cache hit/miss events based on compressor state
@@ -2236,6 +2253,12 @@ class ConversationRuntime:
                     )
         except Exception:
             pass  # Never block tool flow for harness failure
+
+        # 7c. Track file accesses for post-compact restoration
+        if call.name in ("read_file", "write_file", "edit_file") and not tool_result.is_error:
+            _path = call.input.get("path", "") or call.input.get("file_path", "")
+            if _path:
+                self._compressor.record_file_access(_path)
 
         # 8. Emit tool execution result event
         if self._vcr_recorder is not None:
