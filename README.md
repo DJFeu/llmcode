@@ -132,36 +132,33 @@ llmcode --resume              # Resume from checkpoint
 
 llmcode is **deeply influenced by Claude Code's architecture**, borrows proven patterns from [opencode](https://github.com/anomalyco/opencode), and adopts ideas from [Qwen Code](https://github.com/QwenLM/qwen-code) (Alibaba's Gemini CLI fork for Qwen models).
 
-| Feature | llmcode | Qwen Code | opencode | Claude Code |
-|---------|:-------:|:---------:|:--------:|:-----------:|
-| Open source | ✅ MIT | ✅ Apache-2.0 | ✅ MIT | ❌ |
+| Feature | llmcode | Claude Code | Qwen Code | opencode |
+|---------|:-------:|:-----------:|:---------:|:--------:|
+| Open source | ✅ MIT | ❌ | ✅ Apache-2.0 | ✅ MIT |
 | Language | Python | TypeScript | TypeScript | TypeScript |
-| Local model first | ✅ | ✅ (Qwen) | ⚠️ | ❌ |
-| Default model | any | Qwen3-Coder | any | Claude |
-| Free tier | self-hosted | 1000 req/day | self-hosted | ❌ |
-| Per-model system prompts | ✅ (9) | ⚠️ (Qwen only) | ✅ (7) | N/A |
-| **Qwen / Llama / DeepSeek tuned prompts** | ✅ | Qwen only | ❌ | ❌ |
+| Local model first | ✅ | ❌ | ✅ (Qwen) | ⚠️ |
+| Default model | any | Claude | Qwen3-Coder | any |
+| Free tier | self-hosted | ❌ | 1000 req/day | self-hosted |
+| Per-model system prompts | ✅ (9) | N/A | ⚠️ (Qwen only) | ✅ (7) |
+| **Qwen / Llama / DeepSeek tuned prompts** | ✅ | ❌ | Qwen only | ❌ |
 | Model profile system (TOML) | ✅ | ❌ | ❌ | ❌ |
-| Skill router (auto match) | **3-tier** | manual | manual | ❌ |
+| Skill router (auto match) | **3-tier** | ❌ | manual | manual |
 | Memory system | **5-layer** | basic | basic | basic |
-| Multi-agent coordinator | **synthesis-first** | Arena pattern | task tool | ❌ |
-| Arena parallel agents | ✅ | ✅ | ❌ | ❌ |
-| Specialist personas | ✅ **9 built-in** | ❌ | ⚠️ | ❌ |
-| Plan mode (model-driven) | ✅ (tools) | ✅ (tool) | ❌ | ❌ |
-| Docker sandbox | ✅ | ✅ | ❌ | ❌ |
-| PTY (interactive shell) | ✅ | ✅ (node-pty) | ❌ | ❌ |
+| Multi-agent coordinator | **synthesis-first** | ❌ | Arena pattern | task tool |
+| Arena parallel agents | ✅ | ❌ | ✅ | ❌ |
+| Specialist personas | ✅ **9 built-in** | ❌ | ❌ | ⚠️ |
+| Plan mode (model-driven) | ✅ (tools) | ❌ | ✅ (tool) | ❌ |
+| Docker sandbox | ✅ | ❌ | ✅ | ❌ |
+| PTY (interactive shell) | ✅ | ❌ | ✅ (node-pty) | ❌ |
 | Context overlap detection | ✅ | ❌ | ❌ | ❌ |
 | Diminishing returns auto-stop | ✅ | ❌ | ❌ | ❌ |
-| Prompt caching (Anthropic) | ✅ | ❌ | ❌ | ✅ |
-| Signed thinking round-trip | ✅ | ❌ | ❌ | ✅ |
-| IDE extensions | ❌ | ✅ (VS Code / Zed / JetBrains) | ❌ | ✅ (VS Code) |
-| Messaging channels | ❌ | ✅ (Telegram / WeChat / DingTalk) | ❌ | ❌ |
-| i18n (UI level) | CJK support | ✅ (6+ languages) | ❌ | ❌ |
+| Prompt caching (Anthropic) | ✅ | ✅ | ❌ | ❌ |
+| Signed thinking round-trip | ✅ | ✅ | ❌ | ❌ |
+| i18n (UI level) | CJK support | ❌ | ✅ (6+ languages) | ❌ |
 | MCP servers | ✅ | ✅ | ✅ | ✅ |
 | Plugin ecosystem | ✅ (Claude Code compat) | ✅ | ✅ | ✅ |
-| Cold start | **~400ms** | unknown | unknown | 600ms+ |
 | Voice input | ✅ (Whisper/Anthropic/Google) | ❌ | ❌ | ❌ |
-| Computer use | ✅ | ❌ | ❌ | ✅ |
+| Computer use | ✅ | ✅ | ❌ | ❌ |
 | Notebook tools | ✅ | ❌ | ❌ | ❌ |
 | YOLO mode | ✅ | ✅ | ✅ | ✅ |
 
