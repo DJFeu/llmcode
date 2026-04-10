@@ -30,7 +30,7 @@
 
 ## Why llmcode?
 
-There are several great open-source AI coding agents now ([opencode](https://github.com/anomalyco/opencode), Aider, Continue, etc). llmcode exists for a specific niche they don't fully serve:
+There are several great open-source AI coding agents now ([Claude Code](https://github.com/anthropics/claude-code), [opencode](https://github.com/anomalyco/opencode), [Aider](https://github.com/Aider-AI/aider), [Codex CLI](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), etc). llmcode exists for a specific niche they don't fully serve:
 
 > **You want a Claude Code-style coding agent that runs your own model on your own GPU, written in Python so it integrates with your existing Python LLM stack, with deep optimization for the smaller models you'll actually run locally.**
 
