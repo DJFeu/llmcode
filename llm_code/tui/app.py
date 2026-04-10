@@ -432,33 +432,34 @@ class LLMCodeTUI(App):  # noqa: E302
         chat = self.query_one(ChatScrollView)
 
         logo_lines = [
-            "  ██      ██      ███   ███",
-            "  ██      ██      ████ ████",
-            "  ██      ██      █████████",
-            "  ██      ██      ██ ███ ██",
-            "  ███████ ███████ ██  █  ██",
-            "",
-            "   ██████  ██████  █████  ███████",
-            "  ██      ██    ██ ██  ██ ██",
-            "  ██      ██    ██ ██  ██ █████",
-            "  ██      ██    ██ ██  ██ ██",
-            "   ██████  ██████  █████  ███████",
+            "  ██╗     ██╗     ███╗   ███╗",
+            "  ██║     ██║     ████╗ ████║",
+            "  ██║     ██║     ██╔████╔██║",
+            "  ██║     ██║     ██║╚██╔╝██║",
+            "  ███████╗███████╗██║ ╚═╝ ██║",
+            "  ╚══════╝╚══════╝╚═╝     ╚═╝",
+            "   ██████╗ ██████╗ ██████╗ ███████╗",
+            "  ██╔════╝██╔═══██╗██╔══██╗██╔════╝",
+            "  ██║     ██║   ██║██║  ██║█████╗",
+            "  ██║     ██║   ██║██║  ██║██╔══╝",
+            "  ╚██████╗╚██████╔╝██████╔╝███████╗",
+            "   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝",
         ]
 
         # Gradient: bright cyan (#7DF9FF) → deep navy (#0A4BA0)
-        # 11 lines, line 5 is blank separator (skipped)
         gradient_colors = [
             (125, 249, 255),  # bright cyan
             (105, 230, 248),  # light cyan
             (85, 205, 240),   # cyan
             (65, 180, 232),   # sky blue
             (48, 155, 222),   # blue
-            None,             # blank line
+            (42, 148, 220),   # blue-medium
             (38, 138, 215),   # medium blue
             (30, 120, 205),   # deeper blue
             (22, 105, 192),   # royal blue
             (15, 88, 178),    # deep blue
             (10, 75, 160),    # navy
+            (8, 65, 145),     # deep navy
         ]
 
         model = self._config.model if self._config else "(not set)"
@@ -471,11 +472,7 @@ class LLMCodeTUI(App):  # noqa: E302
 
         text = RichText()
         for i, line in enumerate(logo_lines):
-            color = gradient_colors[i]
-            if color is None:
-                text.append("\n")
-                continue
-            r, g, b = color
+            r, g, b = gradient_colors[i]
             text.append(line + "\n", style=Style(color=Color.from_rgb(r, g, b), bold=True))
         text.append("\n")
         for label, value in [
