@@ -206,26 +206,12 @@ def _register_core_tools(registry: "ToolRegistry", config: "RuntimeConfig") -> N
     IDEBridge, LspManager, etc.) are intentionally NOT registered here
     — the TUI boot path registers those separately after this helper
     runs.
+
+    Uses the centralized ``builtin.get_builtin_tools()`` registry so
+    adding a new core tool requires only a single entry there.
     """
     from llm_code.tools.bash import BashTool
-    from llm_code.tools.edit_file import EditFileTool
-    from llm_code.tools.git_tools import (
-        GitBranchTool,
-        GitCommitTool,
-        GitDiffTool,
-        GitLogTool,
-        GitPushTool,
-        GitStashTool,
-        GitStatusTool,
-    )
-    from llm_code.tools.glob_search import GlobSearchTool
-    from llm_code.tools.grep_search import GrepSearchTool
-    from llm_code.tools.notebook_edit import NotebookEditTool
-    from llm_code.tools.notebook_read import NotebookReadTool
-    from llm_code.tools.read_file import ReadFileTool
-    from llm_code.tools.web_fetch import WebFetchTool
-    from llm_code.tools.web_search import WebSearchTool
-    from llm_code.tools.write_file import WriteFileTool
+    from llm_code.tools.builtin import get_builtin_tools
 
     base_url = config.provider_base_url or ""
     is_local = any(
@@ -234,38 +220,19 @@ def _register_core_tools(registry: "ToolRegistry", config: "RuntimeConfig") -> N
     )
     bash_timeout = 0 if is_local else 30  # 0 = no timeout for local models
 
-    for tool in (
-        ReadFileTool(),
-        WriteFileTool(),
-        EditFileTool(),
-        BashTool(
-            default_timeout=bash_timeout,
-            compress_output=config.output_compression,
-            sandbox=_make_sandbox(config),
-        ),
-        GlobSearchTool(),
-        GrepSearchTool(),
-        NotebookReadTool(),
-        NotebookEditTool(),
-        WebFetchTool(),
-        WebSearchTool(),
-    ):
-        try:
-            registry.register(tool)
-        except ValueError:
-            pass
+    # BashTool needs special constructor args — build it separately.
+    bash_kwargs = dict(
+        default_timeout=bash_timeout,
+        compress_output=config.output_compression,
+        sandbox=_make_sandbox(config),
+    )
 
-    for cls in (
-        GitStatusTool,
-        GitDiffTool,
-        GitLogTool,
-        GitCommitTool,
-        GitPushTool,
-        GitStashTool,
-        GitBranchTool,
-    ):
+    for name, cls in get_builtin_tools().items():
         try:
-            registry.register(cls())
+            if cls is BashTool:
+                registry.register(cls(**bash_kwargs))
+            else:
+                registry.register(cls())
         except ValueError:
             pass
 
