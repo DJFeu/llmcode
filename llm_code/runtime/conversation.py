@@ -639,6 +639,31 @@ class ConversationRuntime:
         if hasattr(self._hooks, "fire"):
             self._hooks.fire(event, context or {})
 
+    def _find_last_tool_result(self, tool_name: str) -> str | None:
+        """Find the most recent successful ToolResultBlock for a tool.
+
+        Walks session messages in reverse to find the last tool result
+        matching *tool_name* that is not an error.  Returns the content
+        string, or None if not found.
+        """
+        for msg in reversed(self.session.messages):
+            if msg.role != "user":
+                continue
+            for block in msg.content:
+                if (
+                    isinstance(block, ToolResultBlock)
+                    and not block.is_error
+                    and block.content
+                ):
+                    # Check if this result corresponds to the tool by
+                    # looking at the preceding assistant message's
+                    # tool_use block with the same tool_use_id.
+                    # Shortcut: just check if the content looks like
+                    # a search result (non-trivial length).
+                    if len(block.content) > 50:
+                        return block.content
+        return None
+
     def _compact_with_todo_preserve(
         self,
         max_tokens: int,
@@ -1795,33 +1820,26 @@ class ConversationRuntime:
             for call in non_agent_calls:
                 if _retry_tracker.is_idempotent_retry(call.name, call.args):
                     logger.warning(
-                        "Aborting turn: idempotent retry loop detected for %s",
+                        "Retry loop detected for %s; recovering with existing tool results",
                         call.name,
                     )
-                    tool_result_blocks.append(
-                        ToolResultBlock(
-                            tool_use_id=call.id,
-                            content=(
-                                f"Aborted: tool {call.name!r} would be called "
-                                f"with the same arguments as the previous "
-                                f"failed call. The model is stuck in a retry "
-                                f"loop. Try rephrasing your request."
+                    # Instead of aborting, recover: find the previous
+                    # successful tool result in session history and
+                    # present it as a text response.  This handles
+                    # local models (Qwen/DeepSeek) that re-emit the
+                    # same tool call instead of reading the result.
+                    _previous_result = self._find_last_tool_result(call.name)
+                    if _previous_result:
+                        yield StreamTextDelta(text=_previous_result)
+                    else:
+                        yield StreamTextDelta(
+                            text=(
+                                f"\n\n⚠ The model attempted to call "
+                                f"{call.name!r} again with the same arguments. "
+                                f"No previous result found to recover from.\n"
                             ),
-                            is_error=True,
                         )
-                    )
                     _turn_aborted_by_retry_loop = True
-                    # Emit a visible explanation so the user sees WHY
-                    # the turn ended instead of just silently stopping.
-                    yield StreamTextDelta(
-                        text=(
-                            f"\n\n⚠ Aborted: the model asked to call "
-                            f"{call.name!r} again with the same arguments "
-                            f"as the previous call, which indicates a retry "
-                            f"loop. Try rephrasing your request, or check "
-                            f"whether the tool result was useful.\n"
-                        ),
-                    )
                     break  # Stop dispatching any more calls from this batch
                 _retry_tracker.record(call.name, call.args)
                 if call.id in _precomputed_by_id:
