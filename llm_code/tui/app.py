@@ -500,6 +500,18 @@ class LLMCodeTUI(App):  # noqa: E302
         banner.styles.height = "auto"
         chat.add_entry(banner)
 
+        # Background version check (non-blocking, cached 6h)
+        async def _check_version() -> None:
+            try:
+                from llm_code.cli.updater import check_update_background
+                hint = await check_update_background()
+                if hint:
+                    chat.add_entry(AssistantText(f"  {hint}"))
+            except Exception:
+                pass
+
+        self.run_worker(_check_version(), name="version_check")
+
     @staticmethod
     def _is_safe_name(name: str) -> bool:
         """Validate skill/plugin name — alphanumeric, hyphens, underscores, dots only."""
@@ -2299,6 +2311,32 @@ class LLMCodeTUI(App):  # noqa: E302
 
     def _cmd_clear(self, args: str) -> None:
         self.query_one(ChatScrollView).remove_children()
+
+    def _cmd_update(self, args: str) -> None:
+        """Check for updates and optionally upgrade in-place."""
+        chat = self.query_one(ChatScrollView)
+
+        async def _do_update() -> None:
+            from llm_code.cli.updater import check_update, run_upgrade
+            chat.add_entry(AssistantText("Checking for updates..."))
+            info = await check_update()
+            if info is None:
+                chat.add_entry(AssistantText("Already on the latest version."))
+                return
+            current, latest = info
+            chat.add_entry(AssistantText(
+                f"Update available: {current} → {latest}\n"
+                f"Running: pip install --upgrade llmcode-cli"
+            ))
+            ok, output = await run_upgrade()
+            if ok:
+                chat.add_entry(AssistantText(
+                    f"✓ Updated to {latest}. Restart llmcode to use the new version."
+                ))
+            else:
+                chat.add_entry(AssistantText(f"✗ Update failed:\n{output}"))
+
+        self.run_worker(_do_update(), name="update")
 
     def _cmd_theme(self, args: str) -> None:
         """Switch TUI color theme."""
