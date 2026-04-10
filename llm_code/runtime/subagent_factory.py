@@ -40,11 +40,19 @@ def make_subagent_runtime(
     """
     effective_role = role if role is not None else BUILD_ROLE
 
-    # Whitelist filter:
-    #   * allowed_tools is None  -> unrestricted full inheritance
-    #   * allowed_tools == set() -> deny-all
-    #   * non-empty set          -> strict whitelist
-    child_registry = parent._tool_registry.filtered(effective_role.allowed_tools)
+    # Multi-stage tool filtering:
+    #   Stage 1: MCP tools bypass all checks
+    #   Stage 2: (plan-mode bypass — handled elsewhere)
+    #   Stage 3: ALL_AGENT_DISALLOWED global deny-list
+    #   Stage 4: CUSTOM_AGENT_DISALLOWED for user-defined agents
+    #   Stage 5: ASYNC_AGENT_ALLOWED positive filter (background agents)
+    #   + role.allowed_tools whitelist + role.disallowed_tools deny
+    child_registry = parent._tool_registry.filtered(
+        effective_role.allowed_tools,
+        disallowed=effective_role.disallowed_tools,
+        is_builtin=effective_role.is_builtin,
+        is_async=effective_role.is_async,
+    )
 
     # Recursion-depth fix: the inherited "agent" tool instance is shared with
     # the parent, so its _current_depth is still the parent's. Replace it with

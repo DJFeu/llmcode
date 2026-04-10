@@ -194,7 +194,8 @@ def main(
     # Textual fullscreen TUI (default and only UI mode)
     from llm_code.tui.app import LLMCodeTUI
     app = LLMCodeTUI(config=config, cwd=cwd, budget=budget, initial_mode=cli_mode)
-    app.run(mouse=False)  # No mouse capture → native terminal text selection works
+    app.run(mouse=True)  # Mouse capture ON → scroll wheel works in ChatScrollView
+    # Text selection: hold Option (macOS) or Shift (Linux) to bypass mouse capture
 
 
 _OLLAMA_DEFAULT_URL = "http://localhost:11434"

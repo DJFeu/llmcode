@@ -15,6 +15,13 @@ class AgentRole:
     #   frozenset({…}) -> strict whitelist
     allowed_tools: frozenset[str] | None
     model_key: str  # key in config.model_routing
+    # Explicit deny-list applied *after* all other filtering.
+    # Useful for agent frontmatter ``disallowed_tools:`` field.
+    disallowed_tools: frozenset[str] | None = None
+    # Whether this role is a built-in (affects Stage 4 filtering).
+    is_builtin: bool = True
+    # Whether this role runs asynchronously (background).
+    is_async: bool = False
 
 
 EXPLORE_ROLE = AgentRole(

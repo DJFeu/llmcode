@@ -72,30 +72,70 @@ class ToolRegistry:
         return tuple(self._tools.values())
 
     def filtered(
-        self, allowed: set[str] | frozenset[str] | None
+        self,
+        allowed: set[str] | frozenset[str] | None,
+        *,
+        disallowed: frozenset[str] | None = None,
+        is_builtin: bool = True,
+        is_async: bool = False,
+        is_teammate: bool = False,
     ) -> "ToolRegistry":
-        """Return a new ToolRegistry filtered by *allowed*.
+        """Return a new ToolRegistry filtered by *allowed* and agent context.
 
-        Sentinel convention:
-          * ``None``           -> unrestricted; new registry contains every
+        Sentinel convention for *allowed*:
+          * ``None``           -> unrestricted; new registry starts from every
             tool the parent has (full clone of references).
           * ``frozenset()``    -> deny-all; new registry is empty.
           * non-empty set      -> strict whitelist; only listed names that
             exist in the parent are included.
 
+        When *is_builtin*, *is_async*, or *is_teammate* are specified, an
+        additional multi-stage filter is applied via
+        :func:`~llm_code.tools.tool_categories.filter_tools_for_agent`.
+        This implements the six-stage permission model borrowed from
+        claude-code (MCP bypass → global deny → custom deny → async allow
+        → teammate extras).
+
+        *disallowed* is an optional explicit deny-set applied **after** all
+        other filtering (agent frontmatter ``disallowed_tools``).
+
         The returned registry is always a fresh ``ToolRegistry`` instance;
-        mutating it does not affect the parent. Tool instances themselves
+        mutating it does not affect the parent.  Tool instances themselves
         are shared by reference.
         """
+        from llm_code.tools.tool_categories import filter_tools_for_agent
+
         child = ToolRegistry()
+
+        # Step 1: apply role whitelist (sentinel convention)
         if allowed is None:
-            for tool in self._tools.values():
-                child._tools[tool.name] = tool
+            candidates = dict(self._tools)
+        elif not allowed:
+            # deny-all sentinel
             return child
-        for name in allowed:
-            tool = self._tools.get(name)
+        else:
+            candidates = {
+                name: self._tools[name]
+                for name in allowed
+                if name in self._tools
+            }
+
+        # Step 2: multi-stage agent filter (pure function, no mutation)
+        surviving = filter_tools_for_agent(
+            frozenset(candidates),
+            is_builtin=is_builtin,
+            is_async=is_async,
+            is_teammate=is_teammate,
+        )
+
+        # Step 3: explicit disallowed set (from agent frontmatter)
+        for name in surviving:
+            if disallowed and name in disallowed:
+                continue
+            tool = candidates.get(name)
             if tool is not None:
                 child._tools[name] = tool
+
         return child
 
     def definitions(

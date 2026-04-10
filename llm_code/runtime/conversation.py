@@ -1883,6 +1883,25 @@ class ConversationRuntime:
                 )
                 self.session = self.session.add_message(tool_result_msg)
 
+                # Local model nudge: some quantized models (Qwen INT4,
+                # DeepSeek, etc.) generate end_turn immediately after
+                # receiving tool results instead of producing a
+                # substantive response.  Append a short user-role
+                # reminder so the model continues with a real answer.
+                if _is_local:
+                    _nudge = Message(
+                        role="user",
+                        content=(TextBlock(
+                            text=(
+                                "Above are the tool results. Now give a "
+                                "complete, detailed answer to the user's "
+                                "original question based on these results. "
+                                "Do NOT call any more tools — answer directly."
+                            ),
+                        ),),
+                    )
+                    self.session = self.session.add_message(_nudge)
+
                 # Compact after tool results to prevent context overflow
                 est = self.session.estimated_tokens()
                 if est > _context_limit:

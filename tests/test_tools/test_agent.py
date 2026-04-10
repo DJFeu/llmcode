@@ -56,18 +56,26 @@ def test_is_concurrency_safe():
     assert tool.is_concurrency_safe({}) is True
 
 
-def test_input_schema_has_task_required():
+def test_input_schema_has_task_property():
     tool = AgentTool(runtime_factory=lambda m: None)
     schema = tool.input_schema
-    assert "task" in schema["required"]
     assert "task" in schema["properties"]
+
+
+def test_input_schema_has_fork_directives_property():
+    tool = AgentTool(runtime_factory=lambda m: None)
+    schema = tool.input_schema
+    assert "fork_directives" in schema["properties"]
+    assert schema["properties"]["fork_directives"]["type"] == "array"
 
 
 def test_input_schema_has_optional_model():
     tool = AgentTool(runtime_factory=lambda m: None)
     schema = tool.input_schema
     assert "model" in schema["properties"]
-    assert "model" not in schema["required"]
+    # Neither task nor fork_directives are in required (mutually exclusive,
+    # validated at runtime in execute())
+    assert "required" not in schema or "model" not in schema.get("required", [])
 
 
 def test_depth_limit():
