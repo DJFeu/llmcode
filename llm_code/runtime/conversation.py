@@ -2261,7 +2261,7 @@ class ConversationRuntime:
 
         # 7c. Track file accesses for post-compact restoration
         if call.name in ("read_file", "write_file", "edit_file") and not tool_result.is_error:
-            _path = call.input.get("path", "") or call.input.get("file_path", "")
+            _path = call.args.get("path", "") or call.args.get("file_path", "")
             if _path:
                 self._compressor.record_file_access(_path)
 

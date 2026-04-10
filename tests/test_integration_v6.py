@@ -52,7 +52,10 @@ def test_compression_progressive() -> None:
     # Add a text message first so there are enough messages
     text_msg = Message(role="user", content=(TextBlock(text="test"),))
     session = session.add_message(text_msg)
-    # Add a message with a very long tool result
+    # Add assistant message with matching tool_use, then user message with tool_result
+    from llm_code.api.types import ToolUseBlock
+    tool_use_msg = Message(role="assistant", content=(ToolUseBlock(id="t1", name="read_file", input={"path": "/tmp/f"}),))
+    session = session.add_message(tool_use_msg)
     long_result = "x" * 10000
     msg = Message(role="user", content=(ToolResultBlock(tool_use_id="t1", content=long_result),))
     session = session.add_message(msg)
@@ -61,7 +64,8 @@ def test_compression_progressive() -> None:
     # Use a max_tokens lower than estimated_tokens to force compression
     compressed = compressor.compress(session, max_tokens=100)
     # Snip should have truncated the result
-    result_content = compressed.messages[1].content[0]
+    # messages: [0]=text, [1]=tool_use, [2]=tool_result
+    result_content = compressed.messages[2].content[0]
     assert hasattr(result_content, "content")
     assert len(result_content.content) <= 600  # 500 + truncation notice
 
