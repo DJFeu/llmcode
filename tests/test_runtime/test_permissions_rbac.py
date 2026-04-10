@@ -2,8 +2,7 @@
 from __future__ import annotations
 
 
-from llm_code.enterprise.auth import AuthIdentity
-from llm_code.enterprise.rbac import RBACEngine
+from llm_code.runtime.enterprise import AuthIdentity, RBACEngine
 from llm_code.runtime.permissions import PermissionMode, PermissionOutcome, PermissionPolicy
 from llm_code.tools.base import PermissionLevel
 

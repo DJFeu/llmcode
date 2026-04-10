@@ -2,8 +2,7 @@
 from __future__ import annotations
 
 
-from llm_code.enterprise.auth import AuthIdentity
-from llm_code.enterprise.rbac import DEFAULT_ROLES, RBACEngine, Role
+from llm_code.runtime.enterprise import AuthIdentity, DEFAULT_ROLES, RBACEngine, Role
 
 
 class TestRole:

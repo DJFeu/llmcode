@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from llm_code.enterprise.audit import (
+from llm_code.runtime.enterprise import (
     AuditEvent,
     CompositeAuditLogger,
     FileAuditLogger,

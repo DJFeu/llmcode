@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from llm_code.enterprise.auth import AuthIdentity, AuthProvider
+from llm_code.runtime.enterprise import AuthIdentity, AuthProvider
 
 
 class TestAuthIdentity:

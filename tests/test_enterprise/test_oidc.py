@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from llm_code.enterprise.oidc import OIDCConfig, OIDCProvider
+from llm_code.runtime.enterprise import OIDCConfig, OIDCProvider
 
 
 class TestOIDCConfig:
