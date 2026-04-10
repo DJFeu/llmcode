@@ -147,7 +147,6 @@ llmcode is **deeply influenced by Claude Code's architecture**, borrows proven p
 | **Snippet-composable prompt** | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ |
 | **Skill extraction** | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ |
 | **Approval session cache** | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ |
-| Guardian subagent | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
 | Multi-agent coordinator | **synthesis** | ❌ | ❌ | ❌ | Arena | task tool |
 | Specialist personas | ✅ | ❌ | ❌ | ❌ | ❌ | ⚠️ |
 | Plan mode | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ |
@@ -156,7 +155,7 @@ llmcode is **deeply influenced by Claude Code's architecture**, borrows proven p
 | Prompt caching (Anthropic) | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Signed thinking round-trip | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Extension/plugin system | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
-| Theme system (15+) | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| Theme system | **8** | ❌ | ❌ | **15+** | ❌ | ❌ |
 | IDE extensions | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ |
 | MCP servers | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Voice input | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |

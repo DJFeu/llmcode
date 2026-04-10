@@ -1,26 +1,38 @@
-"""Color constants and Textual CSS for the fullscreen TUI."""
+"""Color constants and Textual CSS for the fullscreen TUI.
+
+Supports theme switching via ``apply_theme(name)``.  The active theme's
+color map is accessible via ``COLORS`` (module-level dict, mutated in
+place so existing references stay valid).
+"""
 from __future__ import annotations
 
-# Semantic color map — values are Rich/Textual style strings
-COLORS: dict[str, str] = {
-    "prompt": "bold cyan",
-    "tool_name": "bold cyan",
-    "tool_line": "dim",
-    "tool_args": "dim",
-    "success": "bold green",
-    "error": "bold red",
-    "diff_add": "green",
-    "diff_del": "red",
-    "thinking": "#cc7a00",
-    "warning": "yellow",
-    "spinner": "blue",
-    "dim": "dim",
-    "bash_cmd": "white on #2a2a3a",
-    "agent": "bold cyan",
-    "shortcut_key": "bold",
-}
+from llm_code.tui.themes import DEFAULT, Theme, get_theme
 
-# Textual CSS applied to the App
+# Active semantic color map — values are Rich/Textual style strings.
+# Mutated in-place by apply_theme() so all importers see the update.
+COLORS: dict[str, str] = dict(DEFAULT.colors)
+
+# Current theme (mutable module state)
+_active_theme: Theme = DEFAULT
+
+
+def apply_theme(name: str) -> Theme:
+    """Switch the active theme by name.  Returns the applied Theme."""
+    global _active_theme
+    theme = get_theme(name)
+    _active_theme = theme
+    COLORS.clear()
+    COLORS.update(theme.colors)
+    return theme
+
+
+def get_active_theme() -> Theme:
+    """Return the currently active theme."""
+    return _active_theme
+
+
+# Textual CSS applied to the App (uses Textual CSS variables which
+# are overridden at runtime by the theme's accent/surface colors).
 APP_CSS = """
 Screen {
     layout: vertical;

@@ -2300,6 +2300,25 @@ class LLMCodeTUI(App):  # noqa: E302
     def _cmd_clear(self, args: str) -> None:
         self.query_one(ChatScrollView).remove_children()
 
+    def _cmd_theme(self, args: str) -> None:
+        """Switch TUI color theme."""
+        from llm_code.tui.theme import apply_theme
+        from llm_code.tui.themes import list_themes
+
+        chat = self.query_one(ChatScrollView)
+        name = args.strip()
+
+        if not name:
+            available = list_themes()
+            chat.add_entry(AssistantText(
+                f"Available themes: {', '.join(available)}\n"
+                f"Usage: /theme <name>"
+            ))
+            return
+
+        theme = apply_theme(name)
+        chat.add_entry(AssistantText(f"Theme switched to: {theme.display_name}"))
+
     def _cmd_model(self, args: str) -> None:
         chat = self.query_one(ChatScrollView)
         if args.strip() == "route":
