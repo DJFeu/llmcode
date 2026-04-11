@@ -1386,8 +1386,10 @@ class CommandDispatcher:
         )
         if cfg is None or not cfg.enabled:
             chat.add_entry(AssistantText(
-                "Voice not configured. Set `voice.enabled = true` in config.toml "
-                "and pick a backend (whisper | google | anthropic)."
+                "Voice not configured. Set `voice.enabled = true` in "
+                "config.json and pick a backend: `local` (on-device "
+                "faster-whisper, no server), `whisper` (HTTP endpoint), "
+                "`google`, or `anthropic`."
             ))
             return
 
@@ -1760,10 +1762,18 @@ class CommandDispatcher:
         elif sub == "resume":
             try:
                 session_id = rest or None
+                # Wave2-2: pass the live cost_tracker so its running
+                # token / cost totals pick up where the saved session
+                # left off instead of resetting to zero.
+                cost_tracker = self._app._cost_tracker
                 if session_id:
-                    session = recovery.load_checkpoint(session_id)
+                    session = recovery.load_checkpoint(
+                        session_id, cost_tracker=cost_tracker,
+                    )
                 else:
-                    session = recovery.detect_last_checkpoint()
+                    session = recovery.detect_last_checkpoint(
+                        cost_tracker=cost_tracker,
+                    )
                 if session is None:
                     chat.add_entry(AssistantText("No checkpoint found to resume."))
                     return

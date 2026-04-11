@@ -54,8 +54,23 @@ class CheckpointRecovery:
         logger.debug("Checkpoint saved: %s", path)
         return path
 
-    def load_checkpoint(self, session_id: str) -> "Session | None":
-        """Deserialize a checkpoint by *session_id*, or return None."""
+    def load_checkpoint(
+        self,
+        session_id: str,
+        *,
+        cost_tracker: "object | None" = None,
+    ) -> "Session | None":
+        """Deserialize a checkpoint by *session_id*, or return None.
+
+        When ``cost_tracker`` is provided and the checkpoint carries a
+        ``cost_tracker`` payload (written by a previous :meth:`save_checkpoint`
+        call), the tracker is restored in-place via
+        ``restore_from_dict`` so a resumed session continues from the
+        correct running token / cost total instead of resetting to zero.
+        Callers that don't care about cost continuity can omit the
+        argument — the old ``load_checkpoint(session_id)`` signature
+        still works.
+        """
         from llm_code.runtime.session import Session  # local import to avoid cycles
 
         path = self._dir / f"{session_id}.json"
@@ -64,16 +79,35 @@ class CheckpointRecovery:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             data.pop("checkpoint_saved_at", None)
+            cost_data = data.pop("cost_tracker", None)
             # Route through session_migration so older schema versions load
             try:
                 from llm_code.runtime.session_migration import load_and_migrate
                 data["messages"] = load_and_migrate(path)
             except Exception:  # pragma: no cover - defensive
                 pass
-            return Session.from_dict(data)
+            session = Session.from_dict(data)
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
             logger.warning("Failed to load checkpoint %s: %s", session_id, exc)
             return None
+
+        # Wave2-2: restore cost tracker running totals if the caller
+        # supplied one and the checkpoint was written with cost state.
+        if (
+            cost_tracker is not None
+            and cost_data is not None
+            and hasattr(cost_tracker, "restore_from_dict")
+        ):
+            try:
+                cost_tracker.restore_from_dict(cost_data)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug(
+                    "cost_tracker.restore_from_dict failed for %s: %s",
+                    session_id,
+                    exc,
+                )
+
+        return session
 
     def list_checkpoints(self) -> list[dict]:
         """Return checkpoint descriptors sorted by modification time (newest first).
@@ -149,9 +183,20 @@ class CheckpointRecovery:
     # Startup detection
     # ------------------------------------------------------------------
 
-    def detect_last_checkpoint(self) -> "Session | None":
-        """Return the most recently modified checkpoint session, or None."""
+    def detect_last_checkpoint(
+        self,
+        *,
+        cost_tracker: "object | None" = None,
+    ) -> "Session | None":
+        """Return the most recently modified checkpoint session, or None.
+
+        Forwards ``cost_tracker`` to :meth:`load_checkpoint` so the
+        caller can opt in to restoring the running cost total at the
+        same time as the session.
+        """
         entries = self.list_checkpoints()
         if not entries:
             return None
-        return self.load_checkpoint(entries[0]["session_id"])
+        return self.load_checkpoint(
+            entries[0]["session_id"], cost_tracker=cost_tracker
+        )

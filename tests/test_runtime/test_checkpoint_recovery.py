@@ -89,6 +89,93 @@ class TestCheckpointRecoverySaveLoad:
         assert loaded.total_usage.output_tokens == 50
 
 
+class TestCheckpointRecoveryCostTracker:
+    """Wave2-2: cost_tracker must survive a save/load round trip so a
+    resumed session continues from the correct running total instead
+    of resetting to zero."""
+
+    def _make_tracker(self, **overrides):
+        from llm_code.runtime.cost_tracker import CostTracker
+
+        tracker = CostTracker(model="claude-sonnet")
+        tracker.total_input_tokens = overrides.get("total_input_tokens", 1000)
+        tracker.total_output_tokens = overrides.get("total_output_tokens", 500)
+        tracker.total_cost_usd = overrides.get("total_cost_usd", 0.0125)
+        return tracker
+
+    def test_save_embeds_cost_tracker(self, tmp_path):
+        recovery = CheckpointRecovery(tmp_path / "checkpoints")
+        session = _make_session()
+        tracker = self._make_tracker()
+        path = recovery.save_checkpoint(session, cost_tracker=tracker)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert "cost_tracker" in data
+        assert data["cost_tracker"]["total_input_tokens"] == 1000
+        assert data["cost_tracker"]["total_output_tokens"] == 500
+        assert data["cost_tracker"]["total_cost_usd"] == 0.0125
+
+    def test_load_without_cost_tracker_returns_session_only(self, tmp_path):
+        """Backward compat: old `load_checkpoint(session_id)` signature
+        still works when no cost_tracker is supplied."""
+        recovery = CheckpointRecovery(tmp_path / "checkpoints")
+        session = _make_session()
+        recovery.save_checkpoint(session, cost_tracker=self._make_tracker())
+        loaded = recovery.load_checkpoint(session.id)
+        assert loaded is not None
+        assert loaded.id == session.id
+
+    def test_load_restores_cost_tracker(self, tmp_path):
+        from llm_code.runtime.cost_tracker import CostTracker
+
+        recovery = CheckpointRecovery(tmp_path / "checkpoints")
+        session = _make_session()
+        saved_tracker = self._make_tracker(
+            total_input_tokens=5000,
+            total_output_tokens=2500,
+            total_cost_usd=0.075,
+        )
+        recovery.save_checkpoint(session, cost_tracker=saved_tracker)
+
+        # Fresh tracker starts at zero.
+        fresh_tracker = CostTracker(model="claude-sonnet")
+        assert fresh_tracker.total_input_tokens == 0
+        loaded = recovery.load_checkpoint(session.id, cost_tracker=fresh_tracker)
+        assert loaded is not None
+        assert fresh_tracker.total_input_tokens == 5000
+        assert fresh_tracker.total_output_tokens == 2500
+        assert fresh_tracker.total_cost_usd == 0.075
+
+    def test_load_without_cost_data_leaves_tracker_alone(self, tmp_path):
+        """A checkpoint saved before cost_tracker support must not
+        corrupt a passed-in tracker."""
+        from llm_code.runtime.cost_tracker import CostTracker
+
+        recovery = CheckpointRecovery(tmp_path / "checkpoints")
+        session = _make_session()
+        # Save without cost_tracker — simulates a legacy checkpoint.
+        recovery.save_checkpoint(session)
+
+        fresh_tracker = CostTracker(model="claude-sonnet")
+        fresh_tracker.total_input_tokens = 42  # existing state
+        loaded = recovery.load_checkpoint(session.id, cost_tracker=fresh_tracker)
+        assert loaded is not None
+        assert fresh_tracker.total_input_tokens == 42  # unchanged
+
+    def test_detect_last_checkpoint_forwards_cost_tracker(self, tmp_path):
+        from llm_code.runtime.cost_tracker import CostTracker
+
+        recovery = CheckpointRecovery(tmp_path / "checkpoints")
+        session = _make_session()
+        saved_tracker = self._make_tracker()
+        recovery.save_checkpoint(session, cost_tracker=saved_tracker)
+
+        fresh_tracker = CostTracker(model="claude-sonnet")
+        loaded = recovery.detect_last_checkpoint(cost_tracker=fresh_tracker)
+        assert loaded is not None
+        assert loaded.id == session.id
+        assert fresh_tracker.total_input_tokens == 1000
+
+
 class TestCheckpointRecoveryList:
     def test_list_empty(self, tmp_path):
         recovery = CheckpointRecovery(tmp_path / "checkpoints")
