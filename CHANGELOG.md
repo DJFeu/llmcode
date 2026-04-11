@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.20.0 — Prompt History, Right-Arrow Autocomplete, Python 3.10+ Floor
+
+### New Features
+- **Shell-style prompt history** — submitted prompts are stored in `~/.llmcode/prompt_history.txt` (oldest-first so `tail` shows the newest) with bash / zsh `HISTCONTROL=ignoredups` semantics: consecutive duplicates collapse, empty entries are dropped, and the list is capped at 1000 entries with the oldest evicted first. In the InputBar, **↑ walks older** submissions, **↓ walks newer**, and stepping past the newest entry restores the composing draft you had before you started navigating. History is suppressed when the slash-command dropdown is open (those arrows are already claimed for dropdown nav), inside vim mode (j/k/gg/G own up/down there), and for multi-line buffers (arrow = cursor movement). Any keystroke or delete resets the history cursor so you can freely edit a recalled prompt.
+- **Right-arrow accepts dropdown completion** — when the `/`-command autocomplete dropdown is visible, `→` now commits the highlighted command just like `Enter` / `Tab`. The dropdown only appears before a space is typed, so there is no legitimate cursor-right movement to preempt.
+
+### Fixed / Compat
+- **Python 3.10+ is now the real floor** (was briefly advertised as 3.9+ in v1.19.0, but 3.9 couldn't actually run the codebase). Three independent 3.9 breakages turned up: module-level `TextValidator = Callable[[str], str | None]`, `ModalScreen[str | None]` class bases, and — the unfixable one — `asyncio.Queue() / Event() / Lock()` eagerly binding to the event loop inside sync `__init__` in `mcp/transport.py`, `lsp/client.py`, `runtime/tool_pipeline.py`, and several tests. Python 3.10 made those primitives lazy-bind, so 3.10 is the minimum. CI matrix, `requires-python`, classifiers, ruff `target-version`, README, and `docs/getting-started.md` all aligned on 3.10+. The CI matrix now covers `["3.10", "3.11", "3.12", "3.13"]` contiguously (the earlier skip of 3.10 was a typo).
+- **v1.19.0 `/voice`, `/help`, `/export`, HookDispatcher, FallbackChain, Phase 5 consolidations** — all the commits from v1.19.0 land in this release on top of a CI run that actually passes. (v1.19.0's CI was red against a Python 3.9 cell that could not load the codebase; the tag still exists but should be considered superseded.)
+
+### Tests
+- **5243 passing** (+15 vs v1.19.0): the 15 new tests are for `PromptHistory` — in-memory semantics, consecutive dedup, max_entries bound, persistence round-trip, oldest-first file layout, missing/unreadable file handling, cursor reset on edit, draft restore on ↓ past newest.
+
 ## v1.19.0 — Architecture Refactor Finish, /voice Wire, /help Modal Rewrite, Py3.9 Compat
 
 ### New Features
