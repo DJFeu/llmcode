@@ -258,44 +258,7 @@ def test_subagent_factory_raises_before_runtime_attached(
         assert isinstance(agent, AgentTool)
 
 
-# === Adapter parity with legacy LLMCodeTUI ===
-
-
-def test_field_map_covers_every_app_state_subsystem() -> None:
-    """Every subsystem field AppState populates via from_config must
-    appear in runtime_init._FIELD_MAP so the legacy TUI adapter keeps
-    full parity after the field-copy loop runs.
-
-    Any new subsystem added to AppState.from_config without a matching
-    _FIELD_MAP entry would cause the legacy TUI to silently stop
-    receiving that subsystem — this test is the safety net.
-    """
-    from llm_code.tui.runtime_init import _FIELD_MAP
-    mapped_state_fields = {state_field for _, state_field in _FIELD_MAP}
-    # Subsystem fields that the legacy TUI reads from LLMCodeTUI.
-    # (Live mutation state — input_tokens, loaded_plugins, etc. —
-    # stays on the TUI's own __init__ and does not need copying.)
-    expected = {
-        "runtime",
-        "cost_tracker",
-        "tool_reg",
-        "deferred_tool_manager",
-        "checkpoint_mgr",
-        "skills",
-        "memory",
-        "typed_memory",
-        "cron_storage",
-        "swarm_manager",
-        "task_manager",
-        "ide_bridge",
-        "lsp_manager",
-        "project_index",
-        "user_agent_roles",
-    }
-    missing = expected - mapped_state_fields
-    assert not missing, (
-        f"_FIELD_MAP is missing these AppState fields: {sorted(missing)}"
-    )
+# === Signature stability ===
 
 
 def test_app_state_from_config_signature_is_backwards_compatible() -> None:
@@ -338,51 +301,6 @@ def test_voice_state_is_mutable_post_construction() -> None:
     assert state.voice_active is False
 
 
-# === Placeholder for TUI adapter parity smoke test ===
-
-
-def test_legacy_tui_adapter_still_populates_private_attributes(
-    tmp_path: Path, minimal_config, stub_provider_client,
-) -> None:
-    """The RuntimeInitializer adapter must copy every AppState field
-    onto self._app._xxx exactly. Drive this through a fake LLMCodeTUI
-    stand-in that only has the attributes the adapter touches."""
-    from llm_code.tui.runtime_init import RuntimeInitializer
-
-    fake_app = SimpleNamespace(
-        _config=minimal_config,
-        _cwd=tmp_path,
-        _budget=None,
-        _runtime=None,
-        _cost_tracker=None,
-        _tool_reg=None,
-        _deferred_tool_manager=None,
-        _checkpoint_mgr=None,
-        _skills=None,
-        _memory=None,
-        _typed_memory=None,
-        _cron_storage=None,
-        _swarm_manager=None,
-        _task_manager=None,
-        _ide_bridge=None,
-        _lsp_manager=None,
-        _project_index=None,
-        _user_agent_roles={},
-        _dialogs=None,
-        _on_mcp_approval_event=lambda event: None,
-    )
-
-    # Patch TextualDialogs import so this test doesn't need a real
-    # Textual app context.
-    with patch(
-        "llm_code.tui.dialogs.textual_backend.TextualDialogs",
-        return_value=object(),
-    ):
-        init = RuntimeInitializer(fake_app)
-        init.initialize()
-
-    # Core subsystems populated on the fake app
-    assert fake_app._runtime is not None
-    assert fake_app._cost_tracker is not None
-    assert fake_app._tool_reg is not None
-    assert fake_app._deferred_tool_manager is not None
+# NOTE: The v1.x RuntimeInitializer adapter parity smoke test lived
+# here until M11.3 deleted tui/runtime_init.py entirely. AppState is
+# now the single source of truth and the M10.3 thin adapter is gone.
