@@ -1,4 +1,11 @@
-"""Test secret scanning integration for TUI output."""
+"""Test secret scanning integration for runtime output.
+
+Relocated from ``tests/test_tui/test_secret_redaction.py`` in M11.4.
+The tests are runtime-layer (they exercise
+``llm_code.runtime.secret_scanner.scan_output``) and have no TUI
+dependencies — they just happened to live under test_tui/ because
+that's where the v1.x boot path's redaction flow was wired up.
+"""
 from __future__ import annotations
 
 from llm_code.runtime.secret_scanner import scan_output
