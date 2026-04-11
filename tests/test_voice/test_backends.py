@@ -51,7 +51,7 @@ class TestGoogleSTT:
         engine = GoogleSTT(language_code="en-US")
         assert isinstance(engine, STTEngine)
 
-    @patch("llm_code.voice.stt_google._get_client")
+    @patch("llm_code.tools.voice._get_google_client")
     def test_transcribe_success(self, mock_get_client):
         mock_client = MagicMock()
         mock_response = MagicMock()
@@ -71,7 +71,7 @@ class TestGoogleSTT:
             result = engine.transcribe(_fake_pcm(), "en")
         assert result == "hello"
 
-    @patch("llm_code.voice.stt_google._get_client")
+    @patch("llm_code.tools.voice._get_google_client")
     def test_transcribe_empty_result(self, mock_get_client):
         mock_client = MagicMock()
         mock_response = MagicMock()
@@ -95,7 +95,7 @@ class TestAnthropicSTT:
         engine = AnthropicSTT(ws_url="wss://api.anthropic.com")
         assert isinstance(engine, STTEngine)
 
-    @patch("llm_code.voice.stt_anthropic._ws_transcribe")
+    @patch("llm_code.tools.voice._ws_transcribe")
     def test_transcribe_success(self, mock_ws):
         mock_ws.return_value = "hello from anthropic"
         engine = AnthropicSTT(ws_url="wss://api.anthropic.com")

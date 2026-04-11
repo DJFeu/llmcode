@@ -317,6 +317,8 @@ class LLMCodeTUI(App):  # noqa: E302
         self._loaded_plugins: dict[str, object] = {}  # name → LoadedPlugin handle
         self._plan_mode: bool = False
         self._voice_active = False
+        self._voice_recorder = None  # AudioRecorder | None — live during /voice on
+        self._voice_stt = None  # STTEngine | None — cached across toggles
         self._vcr_recorder = None
         self._interrupt_pending: bool = False
         self._last_interrupt_time: float = 0.0

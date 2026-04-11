@@ -7,7 +7,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from llm_code.logging import get_logger
 
@@ -1178,23 +1178,138 @@ class CommandDispatcher:
     # ── Voice ─────────────────────────────────────────────────────────
 
     def _cmd_voice(self, args: str) -> None:
-        from llm_code.tui.chat_view import ChatScrollView, AssistantText
+        """Start/stop microphone capture and run STT on the result.
+
+        `/voice on`  → detect recording backend, build STT engine from config,
+                      start the recorder and flip `_voice_active`.
+        `/voice off` → stop the recorder, dispatch a worker that transcribes
+                      the PCM in a thread and inserts the text into the input
+                      bar on the UI thread.
+        `/voice`     → report current status / backend / usage.
+        """
+        from llm_code.tui.chat_view import AssistantText, ChatScrollView
 
         chat = self._app.query_one(ChatScrollView)
         arg = args.strip().lower()
-        if arg == "on":
-            if self._app._config and getattr(self._app._config, 'voice', None) and self._app._config.voice.enabled:
-                self._app._voice_active = True
-                chat.add_entry(AssistantText("Voice input enabled"))
-            else:
-                chat.add_entry(AssistantText("Voice not configured. Set voice.enabled in config."))
-        elif arg == "off":
-            self._app._voice_active = False
-            chat.add_entry(AssistantText("Voice input disabled"))
-        else:
-            active = self._app._voice_active
+
+        cfg = (
+            getattr(self._app._config, "voice", None)
+            if self._app._config is not None
+            else None
+        )
+        if cfg is None or not cfg.enabled:
             chat.add_entry(AssistantText(
-                f"Voice: {'active' if active else 'inactive'}\nUsage: /voice [on|off]"
+                "Voice not configured. Set `voice.enabled = true` in config.toml "
+                "and pick a backend (whisper | google | anthropic)."
+            ))
+            return
+
+        if arg == "on":
+            if self._app._voice_active:
+                chat.add_entry(AssistantText("Voice already recording. Run `/voice off` to stop."))
+                return
+
+            try:
+                from llm_code.voice.recorder import AudioRecorder, detect_backend
+                backend = detect_backend()
+                recorder = AudioRecorder(backend=backend)
+            except Exception as exc:
+                chat.add_entry(AssistantText(f"Voice recorder init failed: {exc}"))
+                return
+
+            if self._app._voice_stt is None:
+                try:
+                    from llm_code.voice.stt import create_stt_engine
+                    self._app._voice_stt = create_stt_engine(cfg)
+                except Exception as exc:
+                    chat.add_entry(AssistantText(f"Voice STT init failed: {exc}"))
+                    return
+
+            try:
+                recorder.start()
+            except Exception as exc:
+                chat.add_entry(AssistantText(f"Voice recording failed to start: {exc}"))
+                return
+
+            self._app._voice_recorder = recorder
+            self._app._voice_active = True
+            chat.add_entry(AssistantText(
+                "🎤 Recording — run `/voice off` to stop and transcribe."
+            ))
+            return
+
+        if arg == "off":
+            recorder = self._app._voice_recorder
+            stt_engine = self._app._voice_stt
+            if not self._app._voice_active or recorder is None:
+                chat.add_entry(AssistantText("Voice is not recording."))
+                return
+
+            self._app._voice_active = False
+            self._app._voice_recorder = None
+
+            try:
+                audio_bytes = recorder.stop()
+            except Exception as exc:
+                chat.add_entry(AssistantText(f"Voice stop failed: {exc}"))
+                return
+
+            if not audio_bytes:
+                chat.add_entry(AssistantText("No audio captured."))
+                return
+
+            duration = len(audio_bytes) / (2 * 16000)  # 16-bit @ 16kHz
+            chat.add_entry(AssistantText(
+                f"🎤 Transcribing {duration:.1f}s of audio…"
+            ))
+            self._app.run_worker(
+                self._transcribe_voice(stt_engine, audio_bytes, cfg.language),
+                name="voice_transcribe",
+            )
+            return
+
+        # Bare `/voice` — status/help.
+        state = "recording 🎤" if self._app._voice_active else "idle"
+        chat.add_entry(AssistantText(
+            f"Voice: {state}\n"
+            f"Backend: {cfg.backend}\n"
+            f"Language: {cfg.language}\n"
+            f"Usage: /voice [on|off]"
+        ))
+
+    async def _transcribe_voice(
+        self,
+        stt_engine: "Any",
+        audio_bytes: bytes,
+        language: str,
+    ) -> None:
+        """Run blocking STT in a worker thread, then insert the transcript."""
+        import asyncio
+
+        from llm_code.tui.chat_view import AssistantText, ChatScrollView
+        from llm_code.tui.input_bar import InputBar
+
+        chat = self._app.query_one(ChatScrollView)
+
+        try:
+            text = await asyncio.to_thread(
+                stt_engine.transcribe, audio_bytes, language
+            )
+        except Exception as exc:
+            chat.add_entry(AssistantText(f"STT failed: {exc}"))
+            return
+
+        text = (text or "").strip()
+        if not text:
+            chat.add_entry(AssistantText("STT returned an empty transcript."))
+            return
+
+        try:
+            input_bar = self._app.query_one(InputBar)
+            input_bar.insert_text(text + " ")
+        except Exception as exc:
+            chat.add_entry(AssistantText(
+                f"Transcribed: {text}\n(Insertion failed: {exc})"
             ))
 
     # ── Cron ──────────────────────────────────────────────────────────
