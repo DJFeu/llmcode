@@ -343,6 +343,40 @@ class Telemetry:
         except Exception:
             pass
 
+    def record_fallback(
+        self,
+        *,
+        from_model: str,
+        to_model: str,
+        reason: str,
+    ) -> None:
+        """Record a model-fallback switch as an OTel span.
+
+        Wave2-3: emitted by ``ConversationRuntime`` when ``FallbackChain``
+        walks one step down because the active model exhausted its
+        retry budget. Complements the ``http_fallback`` hook — the hook
+        is for in-process observers (e.g. the TUI status bar), this
+        span is for external tracing backends (Jaeger, Honeycomb, etc.)
+        so operators can chart "how often am I falling back from Claude
+        to Haiku this week" without parsing logs.
+
+        ``reason`` is one of the FallbackChain kinds (``consecutive_
+        failures``, ``xml_mode``, …) and is kept as a plain string so
+        downstream attribute backends can facet on it.
+        """
+        if not self._enabled or self._tracer is None:
+            return
+        try:
+            with self._tracer.start_as_current_span(
+                "llm.fallback",
+                kind=self._SpanKind.INTERNAL,
+            ) as span:
+                span.set_attribute("llm.fallback.from", from_model)
+                span.set_attribute("llm.fallback.to", to_model)
+                span.set_attribute("llm.fallback.reason", reason)
+        except Exception:
+            pass
+
 
 # ---------------------------------------------------------------------------
 # Module-level singleton helpers

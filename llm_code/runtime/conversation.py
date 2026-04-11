@@ -1353,6 +1353,22 @@ class ConversationRuntime:
                                 "to": _next_model,
                             },
                         )
+                        # Wave2-3: emit an OTel span alongside the in-process
+                        # hook so external tracing backends can chart how
+                        # often the chain walks and which model-pairs are
+                        # involved.
+                        if self._telemetry is not None:
+                            try:
+                                self._telemetry.record_fallback(
+                                    from_model=self._active_model,
+                                    to_model=_next_model,
+                                    reason="consecutive_failures",
+                                )
+                            except Exception:
+                                logger.debug(
+                                    "telemetry.record_fallback skipped",
+                                    exc_info=True,
+                                )
                         logger.warning(
                             "3 consecutive provider errors; switching from %s → %s (chain: %s)",
                             self._active_model,

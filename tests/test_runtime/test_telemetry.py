@@ -55,6 +55,14 @@ class TestTelemetryNoop:
         t = self._noop()
         t.record_error("ProviderError", "timeout after 120s")
 
+    def test_record_fallback_is_noop(self) -> None:
+        t = self._noop()
+        # Wave2-3: must not raise even when telemetry is disabled, since
+        # ConversationRuntime calls this unconditionally on fallback.
+        t.record_fallback(
+            from_model="sonnet", to_model="haiku", reason="consecutive_failures"
+        )
+
     def test_noop_singleton(self) -> None:
         t = get_noop_telemetry()
         assert t._enabled is False
@@ -87,6 +95,9 @@ class TestTelemetryNoPackage:
         t.trace_tool("bash", 5.0, is_error=False)
         t.record_cost("gpt-4o", 100, 50, 0.001)
         t.record_error("Timeout", "took too long")
+        t.record_fallback(
+            from_model="sonnet", to_model="haiku", reason="consecutive_failures"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +254,28 @@ class TestTelemetryWithMockedOtel:
         t.record_error("E", long_msg)
         attrs = mock_error_counter.add.call_args[1]["attributes"]
         assert len(attrs["error.message"]) == 256
+
+    def test_record_fallback_sets_span_attributes(self) -> None:
+        """Wave2-3: `record_fallback` should open a `llm.fallback` span
+        with from/to/reason attributes so external tracing backends can
+        chart fallback frequency."""
+        t, mock_tracer, mock_span, _, _ = self._make_telemetry_with_mocks()
+        t.record_fallback(
+            from_model="claude-sonnet",
+            to_model="haiku",
+            reason="consecutive_failures",
+        )
+        mock_tracer.start_as_current_span.assert_called_once_with(
+            "llm.fallback",
+            kind="INTERNAL",
+        )
+        attr_calls = {
+            call.args[0]: call.args[1]
+            for call in mock_span.set_attribute.call_args_list
+        }
+        assert attr_calls["llm.fallback.from"] == "claude-sonnet"
+        assert attr_calls["llm.fallback.to"] == "haiku"
+        assert attr_calls["llm.fallback.reason"] == "consecutive_failures"
 
 
 # ---------------------------------------------------------------------------
