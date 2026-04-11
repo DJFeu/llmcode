@@ -336,6 +336,25 @@ class LLMCodeTUI(App):  # noqa: E302
         yield StatusBar(id="status-bar")
 
     def on_mount(self) -> None:
+        # Disable the terminal's "alternate scroll mode" (DECSET ?1007).
+        # Warp, iTerm2, and some other terminals enable ?1007 by default in
+        # alt-screen TUIs that don't hook mouse tracking (our case — we keep
+        # mouse=False to preserve native click-drag text selection). With ?1007
+        # on, scroll-wheel events are translated into bare Up/Down arrow key
+        # presses and delivered to the focused widget, which lands on the
+        # InputBar and rewinds command history (visibly: scroll-wheel-up pulls
+        # the previous `/voice`-style command back into the input and the chat
+        # view freezes). Turning ?1007 off makes the wheel a true no-op in alt
+        # screen, leaving keyboard scrolling (Shift+↑/↓, PageUp/Down, /scroll)
+        # as the supported paths. Restored on unmount so we don't strand the
+        # terminal in a non-default state.
+        try:
+            import sys
+
+            sys.__stdout__.write("\x1b[?1007l")
+            sys.__stdout__.flush()
+        except Exception:
+            pass
         self._init_runtime()
         header = self.query_one(HeaderBar)
         if self._config:
@@ -395,6 +414,19 @@ class LLMCodeTUI(App):  # noqa: E302
         signal.signal(signal.SIGINT, _sigint_handler)
         # Start MCP servers async
         self.run_worker(self._init_mcp(), name="init_mcp")
+
+    def on_unmount(self) -> None:
+        # Re-enable the terminal's "alternate scroll mode" (DECSET ?1007) so
+        # we don't strand the terminal in a non-default state after llmcode
+        # exits. Pairs with the ?1007l we emit in on_mount — see that comment
+        # for rationale. Errors are swallowed so teardown never blocks.
+        try:
+            import sys
+
+            sys.__stdout__.write("\x1b[?1007h")
+            sys.__stdout__.flush()
+        except Exception:
+            pass
 
     def _render_welcome(self) -> None:
         """Show styled welcome banner with gradient logo in chat area."""

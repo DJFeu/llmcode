@@ -194,8 +194,13 @@ def main(
     # Textual fullscreen TUI (default and only UI mode)
     from llm_code.tui.app import LLMCodeTUI
     app = LLMCodeTUI(config=config, cwd=cwd, budget=budget, initial_mode=cli_mode)
-    app.run(mouse=True)  # Mouse capture ON → scroll wheel works in ChatScrollView
-    # Text selection: hold Option (macOS) or Shift (Linux) to bypass mouse capture
+    # mouse=False preserves native terminal click-drag text selection (copy) —
+    # the most-requested UX in Warp / iTerm2. Tradeoff: app-level mouse scroll
+    # wheel is lost. Keyboard scrolling still works: Shift+Up/Down, PageUp/Down,
+    # /scroll. Opt in with `mouse = true` in config for terminals that need
+    # in-app wheel capture at the cost of losing native text selection.
+    _mouse = bool(getattr(config, "mouse", False))
+    app.run(mouse=_mouse)
 
 
 _OLLAMA_DEFAULT_URL = "http://localhost:11434"

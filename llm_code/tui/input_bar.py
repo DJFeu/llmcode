@@ -293,30 +293,16 @@ class InputBar(Widget):
                 self.refresh(layout=True)
                 return
 
-        # Shell-style history recall — ↑/↓ when the dropdown is hidden
-        # and the buffer is single-line (multi-line buffers reserve ↑/↓
-        # for intra-line navigation via keybindings). Also suppress in
-        # vim mode since vim's j/k/gg/G own up-and-down semantics there.
-        if (
-            event.key in ("up", "down")
-            and not self._show_dropdown
-            and self._vim_engine is None
-            and "\n" not in self.value
-        ):
-            if event.key == "up":
-                recalled = self._history.prev(current=self.value)
-            else:
-                recalled = self._history.next()
-            if recalled is not None:
-                self.value = recalled
-                self._cursor = len(self.value)
-                self.refresh(layout=True)
-                event.prevent_default()
-                event.stop()
-                return
-            # Nothing to recall in that direction — fall through so
-            # keybindings can still claim the key (e.g. history-absent
-            # scrollback behavior).
+        # Shell-style history recall is now bound to Ctrl+↑ / Ctrl+↓ via the
+        # keybinding action registry (history_prev / history_next), handled
+        # below in _handle_action. Bare ↑/↓ used to trigger recall directly
+        # here, but some terminals (notably Warp) translate scroll-wheel
+        # events into bare Up/Down arrow keystrokes in alt-screen mode, so
+        # every wheel scroll would rewind history and clobber the input.
+        # Bare ↑/↓ now fall through to Textual's default Input navigation
+        # (intra-line cursor movement in multi-line buffers, no-op in
+        # single-line buffers), which is harmless even when misfired by a
+        # stray wheel event.
 
         # Tab autocomplete (before vim routing) — fallback when dropdown not shown
         if event.key == "tab" and self.value.startswith("/"):
@@ -417,6 +403,27 @@ class InputBar(Widget):
             self.value = ""
             self._cursor = 0
             self.post_message(self.Cancelled())
+        elif action == "history_prev":
+            # Shell-style previous-history recall. Suppressed while the
+            # slash-command dropdown is visible (dropdown keeps its own
+            # cursor) and while editing a multi-line draft (avoid
+            # clobbering in-progress multi-line input with an accidental
+            # chord). Bound to ctrl+↑ by default.
+            if not self._show_dropdown and "\n" not in self.value:
+                recalled = self._history.prev(current=self.value)
+                if recalled is not None:
+                    self.value = recalled
+                    self._cursor = len(self.value)
+                    self.refresh(layout=True)
+        elif action == "history_next":
+            # Shell-style next-history recall — pair of history_prev.
+            # Bound to ctrl+↓ by default.
+            if not self._show_dropdown and "\n" not in self.value:
+                recalled = self._history.next()
+                if recalled is not None:
+                    self.value = recalled
+                    self._cursor = len(self.value)
+                    self.refresh(layout=True)
 
     def watch_value(self) -> None:
         # Keep cursor in bounds

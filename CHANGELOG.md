@@ -1,5 +1,76 @@
 # Changelog
 
+## v1.23.1 — TUI text selection + scroll-wheel-history collision, fixed
+
+Patch release addressing two tightly-coupled UX bugs in the Textual
+fullscreen TUI surfaced by daily use in Warp.
+
+### Bugs fixed
+
+1. **Native click-drag text selection was broken.** Mouse capture was
+   defaulted to `True` in v1.17.0 ("TUI scroll fix") to make the
+   in-app scroll wheel work, at the cost of routing all mouse events
+   to the Textual app and blocking the terminal's native click-drag
+   text selection. This was the fourth flip of this setting in the
+   project's history — each previous attempt traded one bug for
+   another. v1.23.1 picks `mouse=False` as the default and addresses
+   the wheel side separately (fix #2).
+
+2. **Scroll-wheel pulled `/voice` (and other history) into the input
+   and froze the chat view.** Warp (and some other terminals) enable
+   "alternate scroll mode" (DECSET ?1007) by default in alt-screen
+   TUIs that don't hook mouse tracking, translating wheel events into
+   bare Up/Down arrow keystrokes. Those arrows landed on `InputBar`,
+   which had history recall hardcoded to bare Up/Down — so every
+   wheel scroll-up rewound the input buffer to the previous command
+   (typically `/voice`, with the live `Voice Input` banner from a
+   prior invocation still visible, making it look like voice was
+   self-triggering). Fixed two ways: (a) emit `\x1b[?1007l` on TUI
+   mount and `\x1b[?1007h` on unmount so terminals that respect the
+   sequence stop translating wheel events, and (b) move history
+   recall off bare ↑/↓ onto **Ctrl+↑ / Ctrl+↓** so even terminals
+   that ignore ?1007l can no longer spuriously rewind history with a
+   wheel scroll. The InputBar history block is now wired through the
+   keybinding action registry (`history_prev` / `history_next`)
+   instead of bypassing it.
+
+### User-visible behavior changes
+
+- **Mouse drag-select copy now works** in Warp / iTerm2 / Kitty / etc.
+  without holding any modifier.
+- **App-level mouse wheel scroll is no longer captured.** Use
+  `Shift+↑/↓`, `PageUp/PageDown`, or `/scroll` for in-app chat
+  scrolling. The terminal's native scrollback (when not in alt-screen
+  contexts) is unaffected.
+- **History recall moves from bare ↑/↓ to Ctrl+↑ / Ctrl+↓.** Bare
+  ↑/↓ now fall through to the default `Input` widget behavior
+  (intra-line cursor movement in multi-line buffers, no-op in
+  single-line) — harmless when delivered by a stray wheel event.
+- **Mouse capture is now configurable** via `mouse = true` in the
+  user config for terminals where in-app wheel capture is preferred
+  over native text selection (default: `false`).
+
+### Tests
+
+- 657 TUI tests passing (was 657 in v1.23.0). 2 new regression
+  guards added in `test_prompt_history_e2e.py` asserting bare ↑/↓
+  do not recall history under any condition (including after a
+  successful Ctrl+↑ recall).
+
+### Files touched
+
+- `llm_code/cli/tui_main.py` — flip `mouse=True` → `mouse=False`
+- `llm_code/tui/app.py` — emit `\x1b[?1007l` in `on_mount`,
+  `\x1b[?1007h` in `on_unmount`
+- `llm_code/tui/input_bar.py` — remove bare ↑/↓ history block,
+  wire `history_prev` / `history_next` actions in `_handle_action`
+- `llm_code/tui/keybindings.py` — `history_next` default
+  `ctrl+n` → `ctrl+down` (symmetric with `history_prev = ctrl+up`)
+- `tests/test_e2e_tui/test_prompt_history_e2e.py` — switch to
+  `ctrl+↑/↓`, add 2 bare-↑/↓ regression tests
+
+---
+
 ## v1.23.0 — 52 Commands × Deep E2E: the "pytest green ≠ user-runnable" gap, closed
 
 This release is about one thing: **every slash command now has a deep

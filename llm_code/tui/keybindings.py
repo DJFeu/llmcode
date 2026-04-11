@@ -25,7 +25,11 @@ ACTION_REGISTRY: dict[str, KeyAction] = {
     "autocomplete": KeyAction("autocomplete", "Autocomplete slash command", "tab"),
     "history_prev": KeyAction("history_prev", "Previous history", "ctrl+up"),
     "quick_open": KeyAction("quick_open", "Quick open file finder", "ctrl+p"),
-    "history_next": KeyAction("history_next", "Next history", "ctrl+n"),
+    # history_next pairs with history_prev on ctrl+↑/↓. Moved off bare ↑/↓ so
+    # terminals (notably Warp) that translate scroll-wheel events into bare
+    # Up/Down arrow keystrokes in alt-screen mode don't spuriously rewind
+    # command history whenever the user scrolls to read chat history.
+    "history_next": KeyAction("history_next", "Next history", "ctrl+down"),
     "toggle_thinking": KeyAction("toggle_thinking", "Toggle thinking display", "alt+t"),
     "toggle_vim": KeyAction("toggle_vim", "Toggle vim mode", "ctrl+shift+v"),
     "voice_input": KeyAction("voice_input", "Activate voice input", "ctrl+space"),
