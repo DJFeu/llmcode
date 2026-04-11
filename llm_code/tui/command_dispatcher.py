@@ -1751,7 +1751,7 @@ class CommandDispatcher:
             profile = self._app._runtime._last_hida_profile
             if profile is not None:
                 try:
-                    from llm_code.hida.engine import HidaEngine
+                    from llm_code.runtime.hida import HidaEngine
                     engine = HidaEngine()
                     summary = engine.build_summary(profile)
                     chat.add_entry(AssistantText(f"HIDA: {summary}"))

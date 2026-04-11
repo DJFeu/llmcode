@@ -440,9 +440,11 @@ class ConversationRuntime:
         # Initialize HIDA if enabled in config
         if getattr(config, "hida", None) is not None and config.hida.enabled:
             try:
-                from llm_code.hida.classifier import TaskClassifier
-                from llm_code.hida.engine import HidaEngine
-                from llm_code.hida.profiles import DEFAULT_PROFILES
+                from llm_code.runtime.hida import (
+                    DEFAULT_PROFILES,
+                    HidaEngine,
+                    TaskClassifier,
+                )
                 self._hida_classifier = TaskClassifier(profiles=DEFAULT_PROFILES)
                 self._hida_engine = HidaEngine()
             except ImportError:

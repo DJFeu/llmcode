@@ -1,28 +1,9 @@
-"""Frozen dataclasses and enums for HIDA task classification."""
-from __future__ import annotations
+"""Backward-compatibility shim.
 
-from dataclasses import dataclass
-from enum import Enum
+HIDA types live at :mod:`llm_code.runtime.hida` now. Re-exported here so
+``from llm_code.hida.types import TaskProfile, TaskType`` keeps working
+after the Phase 5.5 merge.
+"""
+from llm_code.runtime.hida import TaskProfile, TaskType  # noqa: F401
 
-
-class TaskType(Enum):
-    CODING = "coding"
-    DEBUGGING = "debugging"
-    REVIEWING = "reviewing"
-    PLANNING = "planning"
-    TESTING = "testing"
-    REFACTORING = "refactoring"
-    RESEARCH = "research"
-    DEPLOYMENT = "deployment"
-    DOCUMENTATION = "documentation"
-    CONVERSATION = "conversation"
-
-
-@dataclass(frozen=True)
-class TaskProfile:
-    task_type: TaskType
-    confidence: float
-    tools: frozenset[str]
-    memory_keys: frozenset[str]
-    governance_categories: frozenset[str]
-    load_full_prompt: bool
+__all__ = ["TaskProfile", "TaskType"]
