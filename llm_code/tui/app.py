@@ -319,6 +319,7 @@ class LLMCodeTUI(App):  # noqa: E302
         self._voice_active = False
         self._voice_recorder = None  # AudioRecorder | None — live during /voice on
         self._voice_stt = None  # STTEngine | None — cached across toggles
+        self._voice_monitor_timer = None  # Textual Timer for status-bar + VAD poll
         self._vcr_recorder = None
         self._interrupt_pending: bool = False
         self._last_interrupt_time: float = 0.0
@@ -1115,6 +1116,62 @@ class LLMCodeTUI(App):  # noqa: E302
         try:
             self.query_one(StatusBar).bg_tasks = count
         except Exception:
+            pass
+
+    # ── Voice recording monitor ───────────────────────────────────────
+
+    def _start_voice_monitor(self) -> None:
+        """Kick off the 200ms poll that updates the status-bar timer
+        and runs VAD auto-stop detection.
+
+        Safe to call repeatedly — any existing timer is torn down
+        first so we never double-schedule. Called from
+        ``CommandDispatcher._cmd_voice`` on `/voice on` and from the
+        hotkey toggle.
+        """
+        self._stop_voice_monitor()
+        self._voice_monitor_timer = self.set_interval(
+            0.2, self._tick_voice_monitor
+        )
+
+    def _stop_voice_monitor(self) -> None:
+        """Cancel the voice monitor timer and clear the status-bar
+        elapsed reading. Idempotent."""
+        if self._voice_monitor_timer is not None:
+            try:
+                self._voice_monitor_timer.stop()
+            except Exception:
+                pass
+            self._voice_monitor_timer = None
+        try:
+            self.query_one(StatusBar).voice_elapsed = 0.0
+        except Exception:
+            pass
+
+    def _tick_voice_monitor(self) -> None:
+        """Timer callback: refresh elapsed on the status bar, and fire
+        auto-stop when VAD says the speaker has gone quiet."""
+        recorder = self._voice_recorder
+        if recorder is None or not self._voice_active:
+            self._stop_voice_monitor()
+            return
+        try:
+            elapsed = recorder.elapsed_seconds()
+        except Exception:
+            elapsed = 0.0
+        try:
+            self.query_one(StatusBar).voice_elapsed = elapsed
+        except Exception:
+            pass
+        try:
+            if recorder.should_auto_stop():
+                # Tear down via the same path /voice off uses, passing
+                # through the dispatcher so chat messages + transcription
+                # worker are scheduled consistently. The dispatcher
+                # itself calls _stop_voice_monitor when it's done.
+                self._cmd_dispatcher.dispatch("voice", "off")
+        except Exception:
+            # VAD failure must never crash the TUI.
             pass
 
     def action_cycle_agent(self) -> None:

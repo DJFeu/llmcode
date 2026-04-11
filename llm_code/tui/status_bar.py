@@ -93,6 +93,10 @@ class StatusBar(Widget):
     permission_mode: reactive[str] = reactive("")  # build/plan/suggest/yolo
     cwd_basename: reactive[str] = reactive("")
     git_branch: reactive[str] = reactive("")
+    # Seconds elapsed in the current voice recording. 0 = not recording;
+    # the StatusBar segment renders only when this is positive so an
+    # idle TUI keeps the bar clean.
+    voice_elapsed: reactive[float] = reactive(0.0)
 
     DEFAULT_CSS = """
     StatusBar {
@@ -146,6 +150,11 @@ class StatusBar(Widget):
             segs.append((45, f"{self.bg_tasks} task{'s' if self.bg_tasks > 1 else ''} running", "yellow"))
         if self.is_streaming:
             segs.append((80, "streaming…", "cyan"))
+        if self.voice_elapsed > 0:
+            # Format MM:SS (recordings shouldn't need hours).
+            elapsed_int = int(self.voice_elapsed)
+            mm, ss = divmod(elapsed_int, 60)
+            segs.append((98, f"🎤 {mm:02d}:{ss:02d}", "bold red"))
         segs.append((30, "/help", "dim"))
         segs.append((20, "Ctrl+D quit", "dim"))
         return segs
@@ -170,6 +179,10 @@ class StatusBar(Widget):
             parts.append(f"{self.bg_tasks} task{'s' if self.bg_tasks > 1 else ''} running")
         if self.is_streaming:
             parts.append("streaming…")
+        if self.voice_elapsed > 0:
+            elapsed_int = int(self.voice_elapsed)
+            mm, ss = divmod(elapsed_int, 60)
+            parts.append(f"🎤 {mm:02d}:{ss:02d}")
         parts.append("/help")
         parts.append("Ctrl+D quit")
         return " │ ".join(parts)
@@ -222,6 +235,9 @@ class StatusBar(Widget):
         self.refresh()
 
     def watch_bg_tasks(self) -> None:
+        self.refresh()
+
+    def watch_voice_elapsed(self) -> None:
         self.refresh()
 
     def watch_context_used(self) -> None:

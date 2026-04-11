@@ -1401,7 +1401,14 @@ class CommandDispatcher:
             try:
                 from llm_code.voice.recorder import AudioRecorder, detect_backend
                 backend = detect_backend()
-                recorder = AudioRecorder(backend=backend)
+                # VAD opt-in from config — 0 disables auto-stop entirely.
+                silence_seconds = float(getattr(cfg, "silence_seconds", 2.0) or 0.0)
+                silence_threshold = int(getattr(cfg, "silence_threshold", 500) or 500)
+                recorder = AudioRecorder(
+                    backend=backend,
+                    silence_seconds=silence_seconds,
+                    silence_threshold=silence_threshold,
+                )
             except Exception as exc:
                 chat.add_entry(AssistantText(f"Voice recorder init failed: {exc}"))
                 return
@@ -1422,8 +1429,14 @@ class CommandDispatcher:
 
             self._app._voice_recorder = recorder
             self._app._voice_active = True
+            self._app._start_voice_monitor()
+            vad_hint = (
+                f" (auto-stops after {silence_seconds:g}s of silence)"
+                if silence_seconds > 0 else ""
+            )
             chat.add_entry(AssistantText(
-                "🎤 Recording — run `/voice off` to stop and transcribe."
+                f"🎤 Recording{vad_hint} — run `/voice off` to stop "
+                f"and transcribe."
             ))
             return
 
@@ -1436,6 +1449,13 @@ class CommandDispatcher:
 
             self._app._voice_active = False
             self._app._voice_recorder = None
+            # Tear down the status-bar timer / VAD poller so the elapsed
+            # readout doesn't freeze on the last value while the
+            # transcription worker is still running.
+            try:
+                self._app._stop_voice_monitor()
+            except Exception:
+                pass
 
             try:
                 audio_bytes = recorder.stop()
