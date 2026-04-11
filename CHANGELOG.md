@@ -1,5 +1,51 @@
 # Changelog
 
+## v1.22.1 — Voice UX patch: VAD peak detection, Ctrl+G hotkey, banner hint
+
+Field-test patch for v1.22.0. Two bugs showed up in the first hands-on
+session and are fixed:
+
+### Fixed
+- **VAD never auto-stopped on a noisy laptop mic.** The mean-based
+  detector with a 500 threshold was too aggressive — a MacBook with
+  ambient fan hum runs at a 600–1500 mean, so the silence window
+  never latched. Switched to **peak** detection with a 3000 default
+  floor: speech generates 10000–20000 peaks that are easy to
+  distinguish from <2000 room noise, no per-environment calibration
+  needed. Both peak and mean are still computed so `/voice` status
+  can surface them for manual tuning.
+- **Ctrl+Space hotkey did nothing on macOS.** The system-wide Input
+  Source switcher is bound to Ctrl+Space by default, so the
+  keystroke never reached Textual. Default hotkey is now **Ctrl+G**
+  (ASCII BEL, 0x07) — no shell / terminal / macOS conflict. InputBar
+  still accepts `ctrl+space` / `ctrl+@` / `f9` as fallbacks so users
+  who prefer those (or who want the legacy binding) can opt in via
+  `config.voice.hotkey`.
+
+### Polish
+- **Welcome banner now shows the voice hotkey** when
+  `voice.enabled == true` in config. Row format: `Voice   Ctrl+G to
+  start/stop (auto-stops on silence)`. Hidden entirely when voice is
+  off so non-voice users aren't polluted with noise.
+- **Bare `/voice` status surfaces live VAD telemetry**: current peak,
+  current mean, silence threshold, elapsed seconds. Makes it trivial
+  to see whether your environment is too noisy for the default
+  threshold.
+- **`AudioRecorder._last_peak` / `_last_mean`** track the most recent
+  chunk so the status view can read them without instrumenting the
+  sounddevice callback from the outside.
+- **sounddevice callback now wraps `_update_silence_tracker` in
+  try/except**, so a VAD bug can never take down the capture stream
+  and leave the recorder stuck.
+
+### Tests
+- 5284 passing (+2 vs v1.22.0). Recorder VAD suite rewritten around
+  peak detection (added: noisy-room-below-threshold still-silent,
+  instrumentation-updated). `test_voice/test_config.py::test_defaults`
+  updated to the new hotkey + threshold defaults.
+
+---
+
 ## v1.22.0 — Voice UX Pass: VAD, Timer, Hotkey, Typo-Safe Prompts
 
 This release turns `/voice` from "it works if you type the commands
