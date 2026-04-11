@@ -1,0 +1,4 @@
+ Choose model 
+  Qwen 3.5 122B  (local)
+▶ Claude Opus  (API)
+  GPT-4  (API)

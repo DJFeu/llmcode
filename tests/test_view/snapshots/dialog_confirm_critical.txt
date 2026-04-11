@@ -1,0 +1,1 @@
+ Delete foo.py permanently?  [y/N] 
