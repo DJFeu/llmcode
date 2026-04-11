@@ -58,8 +58,14 @@ class ScreenCoordinator:
     1. Exactly one Application exists per coordinator instance.
     2. Exactly one Console (writing to the real stdout, not a buffer) exists.
     3. All direct writes to stdout go through the console (no bare print()).
-    4. PT Application.invalidate() and console.print() never run concurrently
-       — the ``_screen_lock`` asyncio.Lock arbitrates.
+    4. Rich and prompt_toolkit coexist via their own internal locking:
+       Rich's Live has an internal lock, PT's ``invalidate()`` is
+       event-loop-thread-safe, and the M0 PoC plus the full M0-M9 test
+       suite showed no contention on Warp/iTerm2/tmux. A dedicated
+       ``_screen_lock`` was introduced in M3 as an R1 mitigation but
+       never acquired by any production code path — dropped in M9.5
+       (YAGNI). If a real race surfaces in future work, re-add with
+       a specific reproducer.
     5. The coordinator's ``run()`` is the main event loop; ``stop()`` sets
        ``_exit_requested`` and lets run() return cleanly.
 
@@ -90,7 +96,6 @@ class ScreenCoordinator:
         self._console = console or Console()
 
         # asyncio primitives
-        self._screen_lock = asyncio.Lock()
         self._exit_event = asyncio.Event()
         self._exit_requested = False
 
@@ -330,25 +335,17 @@ class ScreenCoordinator:
         })
 
     # === Output methods delegated by REPLBackend ===
-    # Each must acquire _screen_lock before writing to the console, so
-    # PT redraws and our writes don't interleave.
-
-    async def acquire_screen(self):
-        """Async accessor: returns the ``_screen_lock`` for safe stdout writes.
-
-        Usage:
-            lock = await self._coordinator.acquire_screen()
-            async with lock:
-                self._coordinator._console.print("...")
-        """
-        return self._screen_lock
+    # Rich's internal locking plus prompt_toolkit's event-loop-safe
+    # invalidate() are sufficient for the M0-M9 workload — no explicit
+    # arbitration happens here.
 
     def render_message_sync(self, event: MessageEvent) -> None:
         """Print a user-echo / system-note message to scrollback.
 
-        Synchronous version — safe when called from the PT key-binding
-        dispatcher (which doesn't yield to the event loop). For async
-        contexts, prefer render_message_async.
+        Safe to call from the PT key-binding dispatcher (no awaiting),
+        from background handlers marshalled via call_soon_threadsafe,
+        and from async contexts alike — Rich's Console.print() is
+        thread-safe.
         """
         prefix_map = {
             "user": "[bold green]>[/bold green] ",
@@ -358,10 +355,6 @@ class ScreenCoordinator:
         }
         prefix = prefix_map.get(event.role.value, "")
         self._console.print(f"{prefix}{event.content}")
-
-    async def render_message_async(self, event: MessageEvent) -> None:
-        async with self._screen_lock:
-            self.render_message_sync(event)
 
     def print_info_sync(self, text: str) -> None:
         self._console.print(f"[blue]ℹ[/blue] {text}")

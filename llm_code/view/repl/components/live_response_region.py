@@ -21,12 +21,13 @@ On abort():
   - Nothing is printed — the draft response is discarded
 
 Coordination with ScreenCoordinator:
-  - The region holds a reference to the coordinator so future
-    extensions can acquire its ``_screen_lock`` before each
-    live.update() / final print to prevent races with PT Application
-    redraws. M6 ships without the lock acquire — Rich's Live has its
-    own internal locking, and PT invalidate() + console.print() have
-    not shown contention in M0 PoC or integration tests so far.
+  - The region holds a reference to the coordinator for future
+    extensions but does not currently need lock-based arbitration.
+    Rich's Live has internal locking and PT's invalidate() is
+    event-loop-thread-safe; the M0 PoC and the full M0-M9 integration
+    suite showed no contention on Warp/iTerm2/tmux. The ``_screen_lock``
+    introduced in M3 as an R1 mitigation was never actually acquired
+    on any production code path and was removed in M9.5.
   - Only one LiveResponseRegion is active at a time per REPLBackend;
     starting a new one while one is active aborts the old one.
 """

@@ -6,7 +6,6 @@ output without a real terminal.
 """
 from __future__ import annotations
 
-import asyncio
 import io
 
 import pytest
@@ -189,14 +188,6 @@ def test_request_exit_sets_flag():
     assert coord._exit_requested is False
     coord.request_exit()
     assert coord._exit_requested is True
-
-
-@pytest.mark.asyncio
-async def test_acquire_screen_is_a_lock_manager():
-    """acquire_screen returns the asyncio.Lock for use as async with."""
-    coord, _ = _make_coordinator()
-    lock = await coord.acquire_screen()
-    assert isinstance(lock, asyncio.Lock)
 
 
 def test_coordinator_has_console():
