@@ -29,25 +29,49 @@ def test_dispatcher_returns_true_for_known():
     assert result is True
 
 
-def test_dispatcher_has_all_51_commands():
-    """Verify that all 51 expected _cmd_* methods exist on the dispatcher."""
+def test_dispatcher_has_all_52_commands():
+    """Every CommandDef in the registry must have a matching _cmd_ handler.
+
+    The prior iteration hard-coded a name list and diverged from the
+    live registry, which let four commands (update/theme/cache/personas)
+    ship without an autocomplete hint. Deriving the expected names from
+    ``COMMAND_REGISTRY`` keeps the two in lock-step automatically.
+    """
+    from llm_code.cli.commands import COMMAND_REGISTRY
     from llm_code.tui.command_dispatcher import CommandDispatcher
+
     app = MagicMock()
     dispatcher = CommandDispatcher(app)
 
-    expected = [
-        "compact", "exit", "quit", "help", "copy", "clear", "update",
-        "theme", "model", "cost", "cache", "profile", "gain", "cd",
-        "budget", "undo", "diff", "init", "index", "thinking", "vim",
-        "image", "lsp", "cancel", "plan", "yolo", "mode", "harness",
-        "knowledge", "dump", "analyze", "diff_check", "search", "set",
-        "settings", "config", "session", "voice", "cron", "task",
-        "personas", "orchestrate", "swarm", "vcr", "checkpoint",
-        "memory", "map", "mcp", "ide", "hida", "skill", "plugin",
-    ]
+    for cmd in COMMAND_REGISTRY:
+        assert hasattr(dispatcher, f"_cmd_{cmd.name}"), (
+            f"Missing _cmd_{cmd.name} — registry declares /{cmd.name} "
+            f"but CommandDispatcher has no handler for it"
+        )
 
-    for name in expected:
-        assert hasattr(dispatcher, f"_cmd_{name}"), f"Missing _cmd_{name}"
+
+def test_registry_has_no_dead_handlers():
+    """Every _cmd_* on the dispatcher must be listed in COMMAND_REGISTRY.
+
+    Prevents the opposite drift: a handler exists but has no prompt hint,
+    so users only learn about it from the source code (as happened with
+    /update, /theme, /cache, /personas before the 2026-04-11 audit).
+    """
+    from llm_code.cli.commands import COMMAND_REGISTRY
+    from llm_code.tui.command_dispatcher import CommandDispatcher
+
+    handler_names = {
+        attr[len("_cmd_"):]
+        for attr in dir(CommandDispatcher)
+        if attr.startswith("_cmd_") and callable(getattr(CommandDispatcher, attr, None))
+    }
+    registry_names = {c.name for c in COMMAND_REGISTRY}
+
+    # Every handler should have a hint.
+    missing_hints = handler_names - registry_names
+    assert not missing_hints, (
+        f"Handlers without registry entries (no autocomplete hint): {missing_hints}"
+    )
 
 
 def test_dispatch_calls_handler_with_args():
@@ -157,5 +181,170 @@ def test_cmd_voice_off_when_inactive_is_noop():
     dispatcher = CommandDispatcher(app)
     # Should not raise.
     dispatcher._cmd_voice("off")
+    assert app._voice_active is False
+    app.run_worker.assert_not_called()
+
+
+# ── /export tests ──────────────────────────────────────────────────────
+
+
+def _make_export_session(messages):
+    """Build a minimal Session stand-in for export rendering tests."""
+    from types import SimpleNamespace
+    from pathlib import Path
+
+    return SimpleNamespace(
+        id="abcd1234",
+        name="",
+        project_path=Path("/tmp/project"),
+        created_at="2026-04-11T00:00:00+00:00",
+        updated_at="2026-04-11T06:00:00+00:00",
+        tags=(),
+        messages=tuple(messages),
+    )
+
+
+def test_render_session_markdown_user_and_assistant_text():
+    from llm_code.api.types import Message, TextBlock
+    from llm_code.tui.command_dispatcher import _render_session_markdown
+
+    session = _make_export_session([
+        Message(role="user", content=(TextBlock(text="ping"),)),
+        Message(role="assistant", content=(TextBlock(text="pong"),)),
+    ])
+    md = _render_session_markdown(session)
+
+    assert "# Session abcd1234" in md
+    assert "## 1. User" in md
+    assert "ping" in md
+    assert "## 2. Assistant" in md
+    assert "pong" in md
+    assert md.endswith("\n")
+
+
+def test_render_session_markdown_includes_thinking_as_details():
+    from llm_code.api.types import Message, TextBlock, ThinkingBlock
+    from llm_code.tui.command_dispatcher import _render_session_markdown
+
+    session = _make_export_session([
+        Message(role="assistant", content=(
+            ThinkingBlock(content="let me think"),
+            TextBlock(text="done"),
+        )),
+    ])
+    md = _render_session_markdown(session)
+
+    assert "<details><summary>💭 thinking</summary>" in md
+    assert "let me think" in md
+    assert "done" in md
+
+
+def test_render_session_markdown_tool_call_and_result():
+    from llm_code.api.types import Message, ToolResultBlock, ToolUseBlock
+    from llm_code.tui.command_dispatcher import _render_session_markdown
+
+    session = _make_export_session([
+        Message(role="assistant", content=(
+            ToolUseBlock(id="t1", name="bash", input={"command": "ls"}),
+        )),
+        Message(role="user", content=(
+            ToolResultBlock(tool_use_id="t1", content="file.py\n"),
+        )),
+    ])
+    md = _render_session_markdown(session)
+
+    assert "🔧 tool call" in md
+    assert "`bash`" in md
+    assert '"command": "ls"' in md
+    assert "✅ tool result" in md
+    assert "file.py" in md
+
+
+def test_cmd_export_writes_markdown_to_requested_path(tmp_path):
+    """`/export <path>` should write session markdown to the given file."""
+    from llm_code.api.types import Message, TextBlock
+    from llm_code.tui.command_dispatcher import CommandDispatcher
+
+    app = MagicMock()
+    app._cwd = str(tmp_path)
+    app._runtime = MagicMock()
+    app._runtime.session = _make_export_session([
+        Message(role="user", content=(TextBlock(text="hi"),)),
+        Message(role="assistant", content=(TextBlock(text="there"),)),
+    ])
+
+    dispatcher = CommandDispatcher(app)
+    out = tmp_path / "conversation.md"
+    dispatcher._cmd_export(str(out))
+
+    assert out.exists()
+    body = out.read_text(encoding="utf-8")
+    assert "hi" in body
+    assert "there" in body
+
+
+def test_cmd_export_default_filename_in_cwd(tmp_path):
+    """`/export` without args should create a timestamped file in the cwd."""
+    from llm_code.api.types import Message, TextBlock
+    from llm_code.tui.command_dispatcher import CommandDispatcher
+
+    app = MagicMock()
+    app._cwd = str(tmp_path)
+    app._runtime = MagicMock()
+    app._runtime.session = _make_export_session([
+        Message(role="user", content=(TextBlock(text="hello"),)),
+    ])
+
+    dispatcher = CommandDispatcher(app)
+    dispatcher._cmd_export("")
+
+    files = list(tmp_path.glob("llmcode-export-abcd1234-*.md"))
+    assert len(files) == 1
+    assert "hello" in files[0].read_text(encoding="utf-8")
+
+
+def test_cmd_export_empty_session_is_noop(tmp_path):
+    """Exporting a session with no messages must not create a file."""
+    from llm_code.tui.command_dispatcher import CommandDispatcher
+
+    app = MagicMock()
+    app._cwd = str(tmp_path)
+    app._runtime = MagicMock()
+    app._runtime.session = _make_export_session([])
+
+    dispatcher = CommandDispatcher(app)
+    dispatcher._cmd_export("")
+
+    assert list(tmp_path.glob("*.md")) == []
+
+
+def test_cmd_export_without_runtime_is_noop(tmp_path):
+    from llm_code.tui.command_dispatcher import CommandDispatcher
+
+    app = MagicMock()
+    app._cwd = str(tmp_path)
+    app._runtime = None
+
+    dispatcher = CommandDispatcher(app)
+    dispatcher._cmd_export("")
+    assert list(tmp_path.glob("*.md")) == []
+
+
+# ── /voice empty-audio test (moved below /export block) ────────────────
+
+
+def test_cmd_voice_off_empty_audio_does_not_transcribe():
+    from llm_code.tui.command_dispatcher import CommandDispatcher
+
+    app = _make_voice_app()
+    recorder = MagicMock()
+    recorder.stop.return_value = b""
+    app._voice_active = True
+    app._voice_recorder = recorder
+    app._voice_stt = MagicMock()
+
+    dispatcher = CommandDispatcher(app)
+    dispatcher._cmd_voice("off")
+
     assert app._voice_active is False
     app.run_worker.assert_not_called()

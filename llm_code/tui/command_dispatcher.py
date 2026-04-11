@@ -17,6 +17,100 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _render_session_markdown(session: Any) -> str:
+    """Render a ``Session`` to a human-readable Markdown document.
+
+    Walks ``session.messages`` in order and dispatches each content
+    block type to a stable rendering. Thinking blocks are wrapped in a
+    collapsible ``<details>`` so the export stays readable on GitHub
+    but power users can still inspect the reasoning. Tool input/output
+    are emitted as fenced code blocks. Image blocks are represented by
+    a placeholder that names the media type rather than dumping the
+    base64 payload, which would make the file unusable.
+
+    Used by ``CommandDispatcher._cmd_export``. Kept as a module-level
+    helper (not a method) so tests can exercise it without spinning up
+    a whole TUI.
+    """
+    from datetime import datetime
+
+    from llm_code.api.types import (
+        ImageBlock,
+        ServerToolResultBlock,
+        ServerToolUseBlock,
+        TextBlock,
+        ThinkingBlock,
+        ToolResultBlock,
+        ToolUseBlock,
+    )
+
+    lines: list[str] = []
+    title = session.name or f"Session {session.id}"
+    lines.append(f"# {title}")
+    lines.append("")
+    lines.append(f"- **Session ID:** `{session.id}`")
+    lines.append(f"- **Project:** `{session.project_path}`")
+    lines.append(f"- **Created:** {session.created_at}")
+    lines.append(f"- **Updated:** {session.updated_at}")
+    lines.append(f"- **Messages:** {len(session.messages)}")
+    lines.append(f"- **Exported at:** {datetime.now().isoformat(timespec='seconds')}")
+    if session.tags:
+        lines.append(f"- **Tags:** {', '.join(session.tags)}")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    for idx, msg in enumerate(session.messages, start=1):
+        heading = "User" if msg.role == "user" else "Assistant" if msg.role == "assistant" else msg.role.title()
+        lines.append(f"## {idx}. {heading}")
+        lines.append("")
+        for block in msg.content:
+            if isinstance(block, TextBlock):
+                lines.append(block.text.rstrip())
+                lines.append("")
+            elif isinstance(block, ThinkingBlock):
+                lines.append("<details><summary>💭 thinking</summary>")
+                lines.append("")
+                lines.append("```")
+                lines.append(block.content.rstrip())
+                lines.append("```")
+                lines.append("")
+                lines.append("</details>")
+                lines.append("")
+            elif isinstance(block, (ToolUseBlock, ServerToolUseBlock)):
+                import json as _json
+                try:
+                    pretty = _json.dumps(block.input, ensure_ascii=False, indent=2)
+                except (TypeError, ValueError):
+                    pretty = repr(block.input)
+                lines.append(f"**🔧 tool call:** `{block.name}` (id=`{block.id}`)")
+                lines.append("")
+                lines.append("```json")
+                lines.append(pretty)
+                lines.append("```")
+                lines.append("")
+            elif isinstance(block, (ToolResultBlock, ServerToolResultBlock)):
+                is_err = getattr(block, "is_error", False)
+                marker = "❌ tool error" if is_err else "✅ tool result"
+                lines.append(f"**{marker}** (tool_use_id=`{block.tool_use_id}`)")
+                lines.append("")
+                lines.append("```")
+                lines.append(str(block.content).rstrip())
+                lines.append("```")
+                lines.append("")
+            elif isinstance(block, ImageBlock):
+                lines.append(f"*[image · {block.media_type}]*")
+                lines.append("")
+            else:
+                # Unknown block type — fail open, show repr so nothing is lost.
+                lines.append(f"*[{type(block).__name__}]* `{block!r}`")
+                lines.append("")
+        lines.append("---")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 class CommandDispatcher:
     """Dispatches /slash commands to handler methods.
 
@@ -118,19 +212,83 @@ class CommandDispatcher:
 
     _cmd_quit = None  # will be set after class body
 
+    def _cmd_export(self, args: str) -> None:
+        """Export the current conversation to a Markdown file.
+
+        Usage:
+            /export                 → write to ./llmcode-export-<id>-<date>.md
+            /export <path>          → write to the given path
+
+        The output is a stable Markdown rendering of every message in the
+        live session: user turns, assistant text/thinking, and tool
+        use/result blocks. Image blocks are summarized by media type
+        because base64 payloads are too large to be readable. The file is
+        created with ``pathlib.Path.write_text`` in UTF-8.
+        """
+        from datetime import datetime
+        from pathlib import Path
+
+        from llm_code.tui.chat_view import AssistantText, ChatScrollView
+
+        chat = self._app.query_one(ChatScrollView)
+
+        runtime = self._app._runtime
+        if runtime is None or not getattr(runtime, "session", None):
+            chat.add_entry(AssistantText("Export unavailable: no active session."))
+            return
+
+        session = runtime.session
+        messages = session.messages
+        if not messages:
+            chat.add_entry(AssistantText("Nothing to export — conversation is empty."))
+            return
+
+        target_arg = args.strip()
+        if target_arg:
+            target = Path(target_arg).expanduser()
+            if not target.is_absolute():
+                target = Path(self._app._cwd) / target
+        else:
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            default_name = f"llmcode-export-{session.id}-{stamp}.md"
+            target = Path(self._app._cwd) / default_name
+
+        try:
+            markdown = _render_session_markdown(session)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(markdown, encoding="utf-8")
+        except Exception as exc:
+            chat.add_entry(AssistantText(f"Export failed: {exc}"))
+            return
+
+        chat.add_entry(AssistantText(
+            f"✓ Exported {len(messages)} messages → {target}"
+        ))
+
     def _cmd_help(self, args: str) -> None:
-        from textual.screen import ModalScreen
-        from textual.containers import VerticalScroll
-        from textual.widgets import Static
+        """Open the interactive help modal.
+
+        The modal has three tabs (general / commands / custom-commands).
+        The two list tabs are rendered with Textual's built-in ``OptionList``
+        instead of a hand-rolled ``Static + cursor`` so keyboard navigation,
+        scrollbars, page-up/down, and focus highlight all work natively —
+        the previous implementation tracked the cursor inside a single
+        ``Static`` RichText, which meant ``VerticalScroll`` had no idea
+        where the cursor was and never scrolled past the first viewport.
+        """
         from rich.text import Text as RichText
+        from textual.containers import Container
+        from textual.screen import ModalScreen
+        from textual.widgets import OptionList, Static
+        from textual.widgets.option_list import Option
+
+        from llm_code.cli.commands import COMMAND_REGISTRY
         from llm_code.tui.input_bar import InputBar
 
         skills = self._app._skills
         app_ref = self._app
 
-        from llm_code.cli.commands import COMMAND_REGISTRY
-
-        _COMMANDS = [
+        _COMMANDS: list[tuple[str, str]] = [
             (f"/{c.name}", c.description)
             for c in COMMAND_REGISTRY
             if c.name not in ("quit",)  # skip duplicate of /exit
@@ -147,6 +305,13 @@ class CommandDispatcher:
                 source = "user" if not getattr(s, "plugin", None) else f"({s.plugin})"
                 _custom_cmds.append((trigger, f"{desc} {source}"))
 
+        def _format_option(cmd: str, desc: str) -> RichText:
+            text = RichText()
+            text.append(cmd, style="bold white")
+            text.append("\n  ")
+            text.append(desc, style="dim")
+            return text
+
         class HelpScreen(ModalScreen):
             DEFAULT_CSS = """
             HelpScreen { align: center middle; }
@@ -157,7 +322,17 @@ class CommandDispatcher:
                 border: round $accent;
                 padding: 1 2;
             }
-            #help-content { height: 1fr; }
+            #help-tabs { height: 2; }
+            #help-panes { height: 1fr; }
+            #help-general { height: auto; padding: 0 1; }
+            #help-commands, #help-custom {
+                height: 1fr;
+                background: $surface;
+                border: none;
+            }
+            #help-commands:focus, #help-custom:focus {
+                border: none;
+            }
             #help-footer {
                 dock: bottom;
                 height: 1;
@@ -166,49 +341,94 @@ class CommandDispatcher:
             }
             """
 
+            BINDINGS = [("escape", "close", "Close")]
+
             def __init__(self) -> None:
                 super().__init__()
                 self._tab = 0
-                self._cursor = 0
                 self._tab_names = ["general", "commands", "custom-commands"]
 
             def compose(self):
-                with VerticalScroll(id="help-box"):
-                    yield Static("Loading...", id="help-content")
-                yield Static("← → tabs · ↑↓ navigate · Enter execute · Esc close", id="help-footer")
+                with Container(id="help-box"):
+                    yield Static("", id="help-tabs")
+                    with Container(id="help-panes"):
+                        yield Static("", id="help-general")
+                        # Pre-populate OptionLists so Textual knows their
+                        # true content height for correct scroll math.
+                        yield OptionList(
+                            *[Option(_format_option(c, d), id=c) for c, d in _COMMANDS],
+                            id="help-commands",
+                        )
+                        if _custom_cmds:
+                            yield OptionList(
+                                *[Option(_format_option(c, d), id=c) for c, d in _custom_cmds],
+                                id="help-custom",
+                            )
+                        else:
+                            placeholder = RichText()
+                            placeholder.append(
+                                "No custom commands installed.\n  ",
+                                style="dim",
+                            )
+                            placeholder.append(
+                                "Use /skill or /plugin to browse and install.",
+                                style="dim",
+                            )
+                            yield OptionList(
+                                Option(placeholder, id=None, disabled=True),
+                                id="help-custom",
+                            )
+                yield Static(
+                    "← → tabs · ↑↓ navigate · Enter execute · Esc close",
+                    id="help-footer",
+                )
 
-            def on_mount(self):
-                self._refresh_content()
+            def on_mount(self) -> None:
+                # Static general content — computed once, never changes.
+                self.query_one("#help-general", Static).update(self._build_general())
+                self._show_tab(0)
+
+            def action_close(self) -> None:
+                self.dismiss()
 
             def on_key(self, event) -> None:
-                key = event.key
-                if key == "escape":
-                    self.dismiss()
-                elif key == "left":
-                    self._tab = max(0, self._tab - 1)
-                    self._cursor = 0
-                    self._refresh_content()
-                elif key == "right":
-                    self._tab = min(2, self._tab + 1)
-                    self._cursor = 0
-                    self._refresh_content()
-                elif key == "up" and self._tab > 0:
-                    self._cursor = max(0, self._cursor - 1)
-                    self._refresh_content()
-                elif key == "down" and self._tab > 0:
-                    items = _COMMANDS if self._tab == 1 else _custom_cmds
-                    self._cursor = min(len(items) - 1, self._cursor + 1)
-                    self._refresh_content()
-                elif key == "enter" and self._tab > 0:
-                    items = _COMMANDS if self._tab == 1 else _custom_cmds
-                    if 0 <= self._cursor < len(items):
-                        cmd = items[self._cursor][0]
-                        self.dismiss()
-                        # Execute the command after dismiss
-                        app_ref.query_one(InputBar).value = ""
-                        app_ref._handle_slash_command(cmd)
-                event.prevent_default()
-                event.stop()
+                # Only intercept tab switching. up/down/page up/page down/
+                # enter are all handled natively by the focused OptionList,
+                # which is why scrolling and the scrollbar actually work now.
+                if event.key == "left":
+                    self._show_tab(max(0, self._tab - 1))
+                    event.prevent_default()
+                    event.stop()
+                elif event.key == "right":
+                    self._show_tab(min(2, self._tab + 1))
+                    event.prevent_default()
+                    event.stop()
+
+            def _show_tab(self, idx: int) -> None:
+                self._tab = idx
+                self.query_one("#help-tabs", Static).update(self._render_header())
+                # Show the active pane, hide the others.
+                self.query_one("#help-general").display = idx == 0
+                self.query_one("#help-commands").display = idx == 1
+                self.query_one("#help-custom").display = idx == 2
+                # Move keyboard focus to the active list so up/down work
+                # immediately after a tab switch.
+                if idx == 1:
+                    self.query_one("#help-commands", OptionList).focus()
+                elif idx == 2:
+                    self.query_one("#help-custom", OptionList).focus()
+
+            def on_option_list_option_selected(self, event) -> None:
+                """Enter on a command option → close modal + dispatch it."""
+                opt_id = event.option.id
+                if not opt_id:
+                    return
+                self.dismiss()
+                try:
+                    app_ref.query_one(InputBar).value = ""
+                except Exception:
+                    pass
+                app_ref._handle_slash_command(opt_id)
 
             def _render_header(self) -> RichText:
                 text = RichText()
@@ -219,27 +439,10 @@ class CommandDispatcher:
                         text.append(f" {name} ", style="bold white on #3a3a5a")
                     else:
                         text.append(f"  {name}  ", style="dim")
-                text.append("\n\n")
                 return text
 
-            def _refresh_content(self) -> None:
-                content = self.query_one("#help-content", Static)
-                from rich.console import Console
-                from io import StringIO
-                if self._tab == 0:
-                    rt = self._build_general()
-                elif self._tab == 1:
-                    rt = self._build_list("Browse default commands:", _COMMANDS)
-                else:
-                    rt = self._build_list("Browse custom commands:", _custom_cmds)
-                # Render Rich Text to ANSI string for Static.update()
-                buf = StringIO()
-                console = Console(file=buf, force_terminal=True, width=120)
-                console.print(rt, end="")
-                content.update(buf.getvalue())
-
             def _build_general(self) -> RichText:
-                text = self._render_header()
+                text = RichText()
                 text.append(
                     "llm-code understands your codebase, makes edits with your "
                     "permission, and executes commands — right from your terminal.\n\n",
@@ -257,22 +460,6 @@ class CommandDispatcher:
                     for i, col in enumerate(row):
                         text.append(f"{col:<32s}", style="white" if i == 0 else "dim")
                     text.append("\n")
-                return text
-
-            def _build_list(self, title: str, items: list[tuple[str, str]]) -> RichText:
-                text = self._render_header()
-                text.append(f"{title}\n\n", style="white")
-                if not items:
-                    text.append("  No items available.\n", style="dim")
-                    text.append("  Use /skill to browse and install.\n", style="dim")
-                    return text
-                for i, (cmd, desc) in enumerate(items):
-                    if i == self._cursor:
-                        text.append("  > ", style="bold cyan")
-                        text.append(f"{cmd}\n", style="bold white")
-                    else:
-                        text.append(f"    {cmd}\n", style="bold white")
-                    text.append(f"      {desc}\n", style="dim")
                 return text
 
         self._app.push_screen(HelpScreen())
