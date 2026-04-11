@@ -299,6 +299,8 @@ class ConversationRuntime:
         self._tool_registry = tool_registry
         self._permissions = permission_policy
         self._hooks = hook_runner
+        from llm_code.runtime.hook_dispatcher import HookDispatcher
+        self._hook_dispatcher = HookDispatcher(hook_runner)
         self._thinking_boost_active = False
         # Register opt-in builtin Python hooks (config.builtin_hooks.enabled).
         try:
@@ -588,9 +590,14 @@ class ConversationRuntime:
 
 
     def _fire_hook(self, event: str, context: dict | None = None) -> None:
-        """Fire a hook event if the hook runner supports the generic fire() method."""
-        if hasattr(self._hooks, "fire"):
-            self._hooks.fire(event, context or {})
+        """Fire a hook event via the extracted HookDispatcher.
+
+        Kept as a thin delegator so existing call sites inside this module
+        (pre_compact, session_compact, prompt_submit, http_fallback…) stay
+        unchanged. See ``llm_code.runtime.hook_dispatcher`` for the actual
+        guard logic.
+        """
+        self._hook_dispatcher.fire(event, context)
 
     def _find_last_tool_result(self, tool_name: str) -> str | None:
         """Find the most recent successful ToolResultBlock for a tool.
