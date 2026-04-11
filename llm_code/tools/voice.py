@@ -371,13 +371,100 @@ class AnthropicSTT:
         return _ws_transcribe(self._ws_url, audio_bytes, language)
 
 
+# ── Local Whisper backend ───────────────────────────────────────────────
+
+
+class LocalWhisperSTT:
+    """Embedded Whisper inference via ``faster-whisper`` — no HTTP server.
+
+    Chosen as the "batteries-included" backend: users who don't want to
+    stand up a separate `whisper-asr-webservice` container can
+    ``pip install llmcode-cli[voice-local]`` and have an on-device STT
+    that runs against one of the standard Whisper model sizes
+    (``tiny`` / ``base`` / ``small`` / ``medium`` / ``large-v3``).
+
+    Inference is lazy: the model is not loaded until the first
+    ``transcribe`` call, so merely constructing this class has zero
+    cost — important because the factory may build it eagerly on
+    ``/voice on`` while the user is just opening the recording.
+
+    The model and its downloaded weights are cached by faster-whisper
+    inside ``~/.cache/huggingface/hub/`` (per their defaults).
+    """
+
+    def __init__(
+        self,
+        model_size: str = "base",
+        device: str = "auto",
+        compute_type: str = "default",
+    ) -> None:
+        self._model_size = model_size
+        self._device = device
+        self._compute_type = compute_type
+        # Lazy: faster_whisper.WhisperModel or None until first transcribe.
+        self._model = None
+
+    def transcribe(self, audio_bytes: bytes, language: str) -> str:
+        if self._model is None:
+            try:
+                from faster_whisper import WhisperModel  # type: ignore[import-not-found]
+            except ImportError as exc:
+                raise RuntimeError(
+                    "faster-whisper is not installed. Run "
+                    "`pip install llmcode-cli[voice-local]` to enable the "
+                    "local Whisper backend."
+                ) from exc
+            self._model = WhisperModel(
+                self._model_size,
+                device=self._device,
+                compute_type=self._compute_type,
+            )
+
+        # faster-whisper accepts a file path OR a numpy array of float32
+        # samples. We already hold raw PCM bytes, so the cheapest path is
+        # to wrap them as a WAV in a temp file — avoids a numpy dep on
+        # the import path for callers that don't use this backend.
+        import tempfile
+
+        wav_data = _pcm_to_wav(audio_bytes)
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            f.write(wav_data)
+            tmp_path = f.name
+
+        try:
+            segments, _info = self._model.transcribe(
+                tmp_path, language=language or None
+            )
+            return " ".join(seg.text.strip() for seg in segments).strip()
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
 # ── Factory ─────────────────────────────────────────────────────────────
 
 
 def create_stt_engine(config: "VoiceConfig") -> STTEngine:
-    """Factory: create an STT engine from config."""
+    """Factory: create an STT engine from config.
+
+    Supported backends:
+
+    * ``"local"`` — embedded faster-whisper (no server; downloads model
+      on first use). ``config.local_model`` selects the model size.
+    * ``"whisper"`` — HTTP POST to an OpenAI-compatible whisper endpoint
+      (e.g. ``whisper-asr-webservice``). ``config.whisper_url`` picks
+      the endpoint.
+    * ``"google"`` — Google Cloud Speech-to-Text.
+    * ``"anthropic"`` — Anthropic WebSocket voice_stream.
+    """
     backend = config.backend
 
+    if backend == "local":
+        return LocalWhisperSTT(
+            model_size=getattr(config, "local_model", "base") or "base",
+        )
     if backend == "whisper":
         return WhisperSTT(url=config.whisper_url)
     if backend == "google":
@@ -386,7 +473,8 @@ def create_stt_engine(config: "VoiceConfig") -> STTEngine:
         return AnthropicSTT(ws_url=config.anthropic_ws_url)
 
     raise ValueError(
-        f"Unknown STT backend: {backend!r}. Valid: whisper, google, anthropic"
+        f"Unknown STT backend: {backend!r}. "
+        "Valid: local, whisper, google, anthropic"
     )
 
 
@@ -395,6 +483,7 @@ __all__ = [
     "AnthropicSTT",
     "AudioRecorder",
     "GoogleSTT",
+    "LocalWhisperSTT",
     "RecorderBackend",
     "STTEngine",
     "WhisperSTT",

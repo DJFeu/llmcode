@@ -406,6 +406,7 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         anthropic_ws_url=voice_raw.get("anthropic_ws_url", "wss://api.anthropic.com"),
         language=voice_raw.get("language", "en"),
         hotkey=voice_raw.get("hotkey", "ctrl+space"),
+        local_model=voice_raw.get("local_model", "base"),
     )
 
     thinking_raw = data.get("thinking", {})

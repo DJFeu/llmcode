@@ -101,3 +101,83 @@ class TestAnthropicSTT:
         engine = AnthropicSTT(ws_url="wss://api.anthropic.com")
         result = engine.transcribe(_fake_pcm(), "en")
         assert result == "hello from anthropic"
+
+
+class TestLocalWhisperSTT:
+    """Local embedded Whisper via faster-whisper — no HTTP server."""
+
+    def test_implements_protocol(self):
+        from llm_code.tools.voice import LocalWhisperSTT
+        from llm_code.voice.stt import STTEngine
+
+        engine = LocalWhisperSTT()
+        assert isinstance(engine, STTEngine)
+
+    def test_lazy_model_loading(self):
+        """Constructor must not load the model — importing faster-
+        whisper and downloading weights would make `/voice on` block
+        for several seconds on first use."""
+        from llm_code.tools.voice import LocalWhisperSTT
+
+        engine = LocalWhisperSTT(model_size="base")
+        assert engine._model is None
+
+    def test_missing_faster_whisper_raises_clear_error(self):
+        """If faster-whisper isn't installed, transcribe must surface
+        a runtime error that tells the user exactly which extras to
+        install."""
+        from llm_code.tools.voice import LocalWhisperSTT
+
+        engine = LocalWhisperSTT()
+        # Force the ImportError path by temporarily hiding the module.
+        with patch.dict("sys.modules", {"faster_whisper": None}):
+            with pytest.raises(RuntimeError, match="voice-local"):
+                engine.transcribe(_fake_pcm(), "en")
+
+    def test_transcribe_uses_mocked_model(self, tmp_path, monkeypatch):
+        """Round-trip test with a mock WhisperModel — verifies the
+        PCM→WAV→tempfile→segments pipeline without downloading a real
+        model."""
+        import sys
+
+        from llm_code.tools.voice import LocalWhisperSTT
+
+        mock_segment = MagicMock()
+        mock_segment.text = "hello from local whisper"
+
+        mock_model = MagicMock()
+        mock_model.transcribe.return_value = ([mock_segment], MagicMock())
+
+        mock_wm = MagicMock(return_value=mock_model)
+        mock_module = MagicMock()
+        mock_module.WhisperModel = mock_wm
+
+        monkeypatch.setitem(sys.modules, "faster_whisper", mock_module)
+
+        engine = LocalWhisperSTT(model_size="tiny")
+        result = engine.transcribe(_fake_pcm(), "en")
+
+        assert result == "hello from local whisper"
+        mock_wm.assert_called_once()
+        call_args = mock_wm.call_args
+        # model_size forwarded; device/compute_type defaulted
+        assert call_args.args[0] == "tiny" or call_args.kwargs.get("model_size_or_path") == "tiny"
+
+
+class TestCreateSTTEngineFactory:
+    def test_factory_returns_local_when_backend_is_local(self):
+        from llm_code.runtime.config_features import VoiceConfig
+        from llm_code.tools.voice import LocalWhisperSTT, create_stt_engine
+
+        cfg = VoiceConfig(backend="local", local_model="small")
+        engine = create_stt_engine(cfg)
+        assert isinstance(engine, LocalWhisperSTT)
+        assert engine._model_size == "small"
+
+    def test_factory_rejects_unknown_backend(self):
+        from llm_code.runtime.config_features import VoiceConfig
+        from llm_code.tools.voice import create_stt_engine
+
+        cfg = VoiceConfig(backend="mystery")
+        with pytest.raises(ValueError, match="Unknown STT backend"):
+            create_stt_engine(cfg)

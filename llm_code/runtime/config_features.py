@@ -21,12 +21,16 @@ class KnowledgeConfig:
 @dataclass(frozen=True)
 class VoiceConfig:
     enabled: bool = False
-    backend: str = "whisper"  # "whisper" | "google" | "anthropic"
+    backend: str = "whisper"  # "local" | "whisper" | "google" | "anthropic"
     whisper_url: str = "http://localhost:8000/v1/audio/transcriptions"
     google_language_code: str = ""
     anthropic_ws_url: str = "wss://api.anthropic.com"
     language: str = "en"
     hotkey: str = "ctrl+space"
+    # Local faster-whisper model size when backend == "local".
+    # One of: tiny | base | small | medium | large-v3. Larger = slower
+    # but more accurate; downloaded lazily into ~/.cache/huggingface/.
+    local_model: str = "base"
 
 
 @dataclass(frozen=True)
