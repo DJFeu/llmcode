@@ -142,6 +142,10 @@ class StubRecordingBackend(ViewBackend):
     def mark_fatal_error(self, code: str, message: str, retryable: bool = True) -> None:
         self.fatal_errors.append((code, message, retryable))
 
+    def request_exit(self) -> None:
+        """Stops the stub's fake run() loop. Safe to call multiple times."""
+        self._running = False
+
     def set_input_handler(self, handler: InputHandler) -> None:
         self._input_handler = handler
 

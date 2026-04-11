@@ -57,6 +57,7 @@ def test_view_backend_has_expected_abstract_methods():
         "start",
         "stop",
         "run",
+        "request_exit",
         "set_input_handler",
         "render_message",
         "start_streaming_message",
@@ -313,6 +314,11 @@ class ViewBackendConformanceSuite:
         backend.print_error("error line")
         backend.print_panel("panel body", title="panel title")
         backend.print_panel("panel without title")  # title is optional
+
+    def test_request_exit_is_idempotent(self, backend):
+        """request_exit must be safe to call multiple times."""
+        backend.request_exit()
+        backend.request_exit()  # second call must not raise
 
     def test_lifecycle_hooks_are_callable(self, backend):
         """Default no-op lifecycle hooks are safe to call."""

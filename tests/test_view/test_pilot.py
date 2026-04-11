@@ -329,3 +329,27 @@ async def test_real_pilot_tool_event_failure(repl_pilot):
     out = repl_pilot.captured_output
     assert "bash" in out
     assert "nonzero" in out
+
+
+@pytest.mark.asyncio
+async def test_real_pilot_request_exit_sets_coordinator_flag(repl_pilot):
+    """REPLBackend.request_exit delegates to coordinator.request_exit."""
+    coord = repl_pilot.backend.coordinator
+    assert coord._exit_requested is False
+    repl_pilot.backend.request_exit()
+    assert coord._exit_requested is True
+    # Idempotent — second call is safe
+    repl_pilot.backend.request_exit()
+    assert coord._exit_requested is True
+
+
+@pytest.mark.asyncio
+async def test_stub_backend_request_exit_stops_running(stub_repl_pilot):
+    """StubRecordingBackend.request_exit flips the fake run() loop flag."""
+    backend = stub_repl_pilot.backend
+    assert backend._running is True  # fixture started it
+    backend.request_exit()
+    assert backend._running is False
+    # Idempotent
+    backend.request_exit()
+    assert backend._running is False

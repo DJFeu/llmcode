@@ -94,6 +94,23 @@ class ViewBackend(ABC):
         """
         pass
 
+    @abstractmethod
+    def request_exit(self) -> None:
+        """Signal the backend to exit its ``run()`` loop at the next
+        opportunity.
+
+        Used by ``/exit`` / ``/quit`` dispatcher handlers, Ctrl+D
+        fallthroughs from the input layer, and any graceful-shutdown
+        flow that needs to leave the event loop cleanly. REPL delegates
+        to ``ScreenCoordinator.request_exit`` which sets the exit flag
+        and wakes the PT Application. Bot backends stop their webhook
+        polling loop; web backends close the WebSocket.
+
+        Implementations MUST be safe to call multiple times — a second
+        ``request_exit`` while already exiting is a no-op, not an
+        error.
+        """
+
     # === Input (push model) ===
 
     @abstractmethod

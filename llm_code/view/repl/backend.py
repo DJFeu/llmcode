@@ -105,6 +105,15 @@ class REPLBackend(ViewBackend):
             f"[{code}] {message} (retryable={retryable})"
         )
 
+    def request_exit(self) -> None:
+        """Graceful exit — sets the coordinator's exit flag and wakes
+        the PT Application. Safe to call multiple times.
+        """
+        self._coordinator.request_exit()
+        app = self._coordinator._app
+        if app is not None and app.is_running:
+            app.exit()
+
     # === Input ===
 
     def set_input_handler(self, handler: InputHandler) -> None:
