@@ -25,6 +25,7 @@ No ``runtime.on_status_change`` call (the v1 plan's invented method):
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -333,54 +334,130 @@ def main(
 async def _run_repl(backend, state) -> None:
     """Start + run + stop the REPL backend with proper lifecycle.
 
-    Prints a minimal welcome banner between ``start`` and ``run`` so
-    the user sees version / model / cwd / key hotkeys on first
-    entry. The banner flows through the same
-    ``prompt_toolkit.patch_stdout`` wrapper the coordinator's
-    ``run_async`` uses, so it lands cleanly above the status line +
-    input area and isn't stomped by PT's first draw.
+    Two setup steps happen between ``start()`` and ``run()``:
+
+    1. **Anchor PT's layout at the terminal bottom.** prompt_toolkit
+       non-fullscreen mode draws its layout at the current cursor
+       position. On a fresh terminal that's near the top, which
+       leaves the status line + input area floating at the top of
+       the viewport with a giant empty scrollback region underneath.
+       We push the terminal cursor to the bottom by writing newlines
+       before PT takes over, so PT's first draw lands at the bottom.
+       This gives the familiar "bottom chrome" feel v1.x Textual had,
+       without the costs of full-screen alt-screen mode.
+
+    2. **Schedule the welcome banner via asyncio.create_task.**
+       Printing the banner BEFORE ``run()`` races PT's initial
+       layout redraw — PT clobbers lines above its anchor during
+       cold start, and banner content can disappear or wrap
+       incorrectly. Firing the banner ~100 ms after run_async
+       enters its event loop lets it flow through the
+       coordinator's ``patch_stdout`` wrapper, which PT renders
+       cleanly above the anchored layout.
     """
+    import asyncio
     await backend.start()
-    _print_welcome(backend, state)
+    _push_cursor_to_bottom()
+
+    async def _welcome_after_start() -> None:
+        await asyncio.sleep(0.1)
+        _print_welcome(backend, state)
+
+    welcome_task = asyncio.create_task(_welcome_after_start())
     try:
         await backend.run()
     finally:
+        if not welcome_task.done():
+            welcome_task.cancel()
+            try:
+                await welcome_task
+            except (asyncio.CancelledError, Exception):
+                pass
         await backend.stop()
 
 
 def _print_welcome(backend, state) -> None:
-    """Print a compact two-line welcome banner once the backend is ready.
+    """Print a Rich ``Panel`` welcome banner once PT's event loop is up.
 
-    Intentionally small — scrollback is precious, and the status
-    line already shows model / cost / context / cwd continuously.
-    v1.x Textual showed a large logo header; v2.0.0 REPL trades
-    that for two terse info lines that scroll away once real
-    content starts.
+    Uses ``view.print_panel`` so the Rich ``Panel`` — with a title bar
+    and a box border — shows up as a proper "welcome screen" at
+    startup, rather than the two terse info lines the first M14
+    draft had. The panel contents are one line each so the body
+    never wraps at narrow widths.
     """
     try:
-        from importlib.metadata import version as _pkg_version
-        try:
-            version = _pkg_version("llmcode-cli")
-        except Exception:
-            version = "2.0.0"
+        version = _resolve_version()
         model = (
             getattr(state.config, "model", None)
             if state.config is not None
             else None
         ) or "(no model)"
         cwd_display = state.cwd.name or str(state.cwd)
-        backend.print_info(
-            f"[bold]llmcode[/bold] v{version} · "
-            f"model: {model} · cwd: {cwd_display}"
+        body = (
+            f"[bold cyan]model[/bold cyan]  {model}\n"
+            f"[bold cyan]cwd[/bold cyan]    {cwd_display}\n"
+            "\n"
+            "[dim]Ctrl+G voice · [bold]/[/bold] commands · "
+            "Ctrl+D quit[/dim]"
         )
-        backend.print_info(
-            "[dim]Ctrl+G voice · "
-            "/ for commands · "
-            "Ctrl+D to quit[/dim]"
-        )
+        backend.print_panel(body, title=f"llmcode v{version}")
     except Exception:
         # Welcome banner must never block startup
         pass
+
+
+def _push_cursor_to_bottom() -> None:
+    """Emit blank newlines so the terminal cursor lands at the bottom
+    of the viewport before prompt_toolkit takes over.
+
+    In ``full_screen=False`` mode PT draws its layout at the current
+    cursor position. If that position is near the top of the terminal
+    (fresh tab, empty terminal), the status line + input area sit
+    near the top and the rest of the viewport is an empty hole below
+    them. Printing N newlines first (where N = terminal rows −
+    PT layout height − welcome panel height) moves the cursor to
+    the bottom, so PT anchors its layout there and content scrolls
+    up into the reserved region above.
+
+    Falls back to 24 rows (DEC VT100 default) if
+    ``shutil.get_terminal_size`` fails. Subtracts a fixed 8 lines
+    for the reserved layout + welcome panel; any smaller terminals
+    just end up with a shorter scrollback region.
+    """
+    try:
+        rows = shutil.get_terminal_size((80, 24)).lines
+    except Exception:
+        rows = 24
+    reserved = 8  # PT layout (2-3) + welcome panel (6) + breathing room
+    fill = max(0, rows - reserved)
+    if fill > 0:
+        sys.stdout.write("\n" * fill)
+        sys.stdout.flush()
+
+
+def _resolve_version() -> str:
+    """Best-effort version lookup.
+
+    Prefers the installed package metadata, falls back to the
+    ``pyproject.toml`` version string (for editable source checkouts
+    that haven't been re-installed yet), and finally falls back to a
+    hardcoded ``2.0.0``. The last fallback is the common case during
+    a fresh clone + direct ``python -m llm_code.cli.main`` run.
+    """
+    try:
+        from importlib.metadata import version as _pkg_version
+        return _pkg_version("llmcode-cli")
+    except Exception:
+        pass
+    try:
+        import tomllib
+        pyproject = Path(__file__).resolve().parent.parent.parent / "pyproject.toml"
+        if pyproject.is_file():
+            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+            return str(data.get("project", {}).get("version", "2.0.0"))
+    except Exception:
+        pass
+    return "2.0.0"
 
 
 _OLLAMA_DEFAULT_URL = "http://localhost:11434"

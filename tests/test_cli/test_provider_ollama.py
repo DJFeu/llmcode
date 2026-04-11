@@ -18,7 +18,7 @@ from click.testing import CliRunner
 from llm_code.cli.main import main
 
 
-async def _noop_repl(backend) -> None:
+async def _noop_repl(backend, state) -> None:
     return None
 
 
