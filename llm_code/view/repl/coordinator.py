@@ -116,7 +116,9 @@ class ScreenCoordinator:
         # M4: input area + slash popover + history, plus the KeyBindings
         # factory from keybindings.py. Replaces the M3 inline closures.
         self._history = PromptHistory(path=default_history_path())
-        self._input_area = InputArea()
+        # M15: inject history so the ghost text processor can preview
+        # the latest entry on an empty buffer.
+        self._input_area = InputArea(history=self._history)
 
         # M8: dialog popover hosts confirm/select/text/checklist overlays.
         self._dialog_popover = DialogPopover()

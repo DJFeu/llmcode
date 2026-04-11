@@ -11,6 +11,11 @@ from __future__ import annotations
 from typing import Any, Callable, Optional
 
 from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.filters import (
+    Condition,
+    has_completions,
+    completion_is_selected,
+)
 from prompt_toolkit.key_binding import KeyBindings
 
 from llm_code.view.repl.history import PromptHistory
@@ -23,6 +28,7 @@ def build_keybindings(
     on_submit: Callable[[str], None],
     on_exit: Callable[[], None],
     on_voice_toggle: Optional[Callable[[], None]] = None,
+    on_expand_toggle: Optional[Callable[[], None]] = None,
 ) -> KeyBindings:
     """Construct the full KeyBindings set for the REPL.
 
@@ -107,5 +113,53 @@ def build_keybindings(
         @kb.add("c-@")  # prompt_toolkit encodes Ctrl+Space as Ctrl+@
         def _voice(event: Any) -> None:
             on_voice_toggle()
+
+    # === Right-arrow accept completion (fish-shell style) ===
+    #
+    # When a completion menu is visible (the slash popover or a path
+    # completer float), Right-arrow accepts the highlighted entry
+    # and commits it into the buffer — the classic fish / Claude Code
+    # convention. Guarded by ``has_completions`` so a bare Right is
+    # still a normal cursor-right when no menu is pending.
+
+    @kb.add("right", filter=has_completions)
+    def _accept_completion(event: Any) -> None:
+        buf = event.current_buffer
+        state = buf.complete_state
+        if state is None:
+            return
+        if state.current_completion is not None:
+            buf.apply_completion(state.current_completion)
+        elif state.completions:
+            # No explicit selection → take the first completion.
+            buf.apply_completion(state.completions[0])
+
+    # === Right-arrow accept history ghost (empty buffer) ===
+    #
+    # When the buffer is empty AND the completion menu is NOT active,
+    # Right accepts the latest history entry. Disjoint with
+    # ``_accept_completion`` above: that binding has
+    # ``filter=has_completions``; this one guards on empty buffer.
+
+    ghost_condition = Condition(
+        lambda: (not input_buffer.text) and bool(history.peek_latest())
+    )
+
+    @kb.add("right", filter=ghost_condition)
+    @kb.add("tab", filter=ghost_condition)
+    @kb.add("c-f", filter=ghost_condition)
+    def _accept_ghost(event: Any) -> None:
+        latest = history.peek_latest()
+        if latest is None:
+            return
+        input_buffer.text = latest
+        input_buffer.cursor_position = len(latest)
+
+    # === Ctrl+O expand/collapse toggle (M15 Task C6) ===
+
+    if on_expand_toggle is not None:
+        @kb.add("c-o")
+        def _expand(event: Any) -> None:
+            on_expand_toggle()
 
     return kb

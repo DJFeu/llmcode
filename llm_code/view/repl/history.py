@@ -99,6 +99,38 @@ class PromptHistory:
         """Read-only snapshot of the stored entries, newest first."""
         return list(self._entries)
 
+    def peek_latest(self) -> Optional[str]:
+        """Return the most recent entry without advancing the cursor.
+
+        Used by the M15 history ghost text processor: when the buffer
+        is empty, the ghost previews the latest entry; pressing Tab
+        or Right accepts it.
+        """
+        if not self._entries:
+            return None
+        return self._entries[0]
+
+    def count_entries(self) -> int:
+        """Return the number of stored entries (O(1))."""
+        return len(self._entries)
+
+    def search(self, query: str, *, limit: int = 20) -> list[str]:
+        """Return entries whose text contains ``query`` (newest first).
+
+        Case-insensitive substring match. Used by Ctrl+R history search
+        in a future M15 follow-up.
+        """
+        if not query:
+            return []
+        needle = query.lower()
+        out: list[str] = []
+        for e in self._entries:
+            if needle in e.lower():
+                out.append(e)
+                if len(out) >= limit:
+                    break
+        return out
+
     def __len__(self) -> int:
         return len(self._entries)
 

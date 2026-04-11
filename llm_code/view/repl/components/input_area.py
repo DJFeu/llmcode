@@ -12,17 +12,29 @@ instance + its managed Window.
 """
 from __future__ import annotations
 
+import shutil
+
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.layout.containers import (
     ConditionalContainer,
     Float,
+    HSplit,
     Window,
 )
 from prompt_toolkit.layout.controls import BufferControl
-from prompt_toolkit.layout.menus import CompletionsMenu
+from prompt_toolkit.layout.menus import (
+    CompletionsMenu,
+    MultiColumnCompletionsMenu,
+)
 
+from llm_code.view.repl.components.history_ghost import HistoryGhostProcessor
+from llm_code.view.repl.components.path_completer import (
+    PathCompleter,
+    build_input_completer,
+)
 from llm_code.view.repl.components.slash_popover import SlashCompleter
+from llm_code.view.repl.history import PromptHistory
 
 
 MIN_ROWS = 1
@@ -32,22 +44,32 @@ MAX_ROWS = 12
 class InputArea:
     """Self-contained multi-line input component."""
 
-    def __init__(self) -> None:
-        self._completer = SlashCompleter()
+    def __init__(self, history: PromptHistory | None = None) -> None:
+        self._slash_completer = SlashCompleter()
+        # Merged completer (slash + @file path). The separate
+        # SlashCompleter reference is kept for ``refresh_completions``
+        # so plugin reloads can re-scan the command registry without
+        # rebuilding the merged completer.
+        self._completer = build_input_completer()
         self.buffer = Buffer(
             multiline=True,
             completer=self._completer,
             complete_while_typing=True,
         )
+        self._history = history
         self._vim_mode = False
 
     @property
-    def completer(self) -> SlashCompleter:
+    def completer(self):
         return self._completer
 
     def refresh_completions(self) -> None:
         """Re-scan the slash command registry. Call after plugin load."""
-        self._completer.refresh()
+        self._slash_completer.refresh()
+        # Rebuild the merged completer so the PathCompleter picks up
+        # any cwd changes on refresh.
+        self._completer = build_input_completer()
+        self.buffer.completer = self._completer
 
     def set_vim_mode(self, enabled: bool) -> None:
         """Toggle vim mode on the underlying buffer.
@@ -73,10 +95,14 @@ class InputArea:
             line_count = self.buffer.text.count("\n") + 1
             return max(MIN_ROWS, min(line_count, MAX_ROWS))
 
+        processors = []
+        if self._history is not None:
+            processors.append(HistoryGhostProcessor(peek=self._history.peek_latest))
         return Window(
             content=BufferControl(
                 buffer=self.buffer,
                 focus_on_click=True,
+                input_processors=processors,
             ),
             height=_height,
             wrap_lines=True,
@@ -86,17 +112,38 @@ class InputArea:
     def build_popover_float(self) -> Float:
         """Construct the Float that hosts the slash-completion popover.
 
-        The popover only shows when the completer has matches AND the
-        input starts with '/'. Otherwise it's hidden (no dropdown
-        appears during regular typing).
+        Uses :class:`MultiColumnCompletionsMenu` on terminals wider
+        than 60 columns, falling back to a single-column
+        :class:`CompletionsMenu` on narrower widths so completions
+        remain readable. The popover only shows when the input
+        starts with '/'.
         """
         has_slash = Condition(lambda: self.buffer.text.startswith("/"))
+
+        def _is_wide_terminal() -> bool:
+            try:
+                cols = shutil.get_terminal_size((80, 24)).columns
+            except Exception:
+                cols = 80
+            return cols >= 60
+
+        multi = ConditionalContainer(
+            content=MultiColumnCompletionsMenu(
+                show_meta=True,
+                suggested_max_column_width=28,
+            ),
+            filter=has_slash & Condition(_is_wide_terminal),
+        )
+        single = ConditionalContainer(
+            content=CompletionsMenu(max_height=8, scroll_offset=1),
+            filter=has_slash & ~Condition(_is_wide_terminal),
+        )
 
         return Float(
             xcursor=True,
             ycursor=True,
             content=ConditionalContainer(
-                content=CompletionsMenu(max_height=8, scroll_offset=1),
+                content=HSplit([multi, single]),
                 filter=has_slash,
             ),
         )

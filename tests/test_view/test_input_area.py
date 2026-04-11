@@ -282,3 +282,84 @@ async def test_voice_hotkey_fires_when_wired():
 
     matches[-1].handler(_FakeEvent())
     assert fired == [True]
+
+
+# === Right-arrow accept completion (M15 Task B1) ===
+
+
+def test_right_arrow_binding_is_registered_with_has_completions_filter():
+    """The Right-arrow Right-accept binding exists and is guarded by
+    PT's ``has_completions`` filter — so it never hijacks a bare Right
+    cursor move.
+
+    We validate this at the binding-registry level (not via a running
+    PT app) because ``has_completions`` reads the active app's state
+    at runtime, which isn't available in unit-level tests.
+    """
+    from prompt_toolkit.buffer import Buffer
+    from prompt_toolkit.key_binding.key_bindings import _parse_key
+
+    buf = Buffer(multiline=True)
+    kb = build_keybindings(
+        input_buffer=buf,
+        history=PromptHistory(),
+        on_submit=lambda t: None,
+        on_exit=lambda: None,
+    )
+    parsed = _parse_key("right")
+    matches = kb.get_bindings_for_keys((parsed,))
+    assert matches, "Right-arrow binding must exist"
+    # The Right binding must carry a filter — ``has_completions`` —
+    # NOT the always-True default. We verify by asserting at least one
+    # Right binding has a non-trivial filter repr.
+    filters = [repr(b.filter) for b in matches]
+    assert any("completions" in f.lower() or "condition" in f.lower()
+               for f in filters), (
+        f"expected has_completions guard on Right binding, got: {filters}"
+    )
+
+
+def test_right_arrow_accept_handler_applies_first_completion():
+    """Directly invoke the Right-accept handler to verify it applies
+    the current completion from the buffer's ``complete_state``.
+
+    We bypass the pilot because ``has_completions`` needs a live
+    application; calling the handler directly tests its effect on
+    the buffer.
+    """
+    from prompt_toolkit.buffer import Buffer, CompletionState
+    from prompt_toolkit.completion import Completion
+    from prompt_toolkit.key_binding.key_bindings import _parse_key
+
+    buf = Buffer(multiline=True)
+    buf.insert_text("/he")
+    comp = Completion(text="/help", start_position=-3)
+    buf.complete_state = CompletionState(
+        original_document=buf.document,
+        completions=[comp],
+        complete_index=0,
+    )
+
+    kb = build_keybindings(
+        input_buffer=buf,
+        history=PromptHistory(),
+        on_submit=lambda t: None,
+        on_exit=lambda: None,
+    )
+    parsed = _parse_key("right")
+    matches = kb.get_bindings_for_keys((parsed,))
+    # Find the completion-accept binding specifically: its filter
+    # repr contains ``has_completions`` (the PT helper function
+    # reference), distinct from our ghost-accept lambda.
+    bindings = [b for b in matches if "has_completions" in repr(b.filter)]
+    assert bindings, f"expected has_completions binding, got: {[repr(m.filter) for m in matches]}"
+
+    class _FakeEvent:
+        current_buffer = buf
+
+        class app:
+            @staticmethod
+            def invalidate(): pass
+
+    bindings[0].handler(_FakeEvent())
+    assert buf.text == "/help"

@@ -17,8 +17,10 @@ from typing import Iterable
 
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 from prompt_toolkit.document import Document
+from prompt_toolkit.formatted_text import FormattedText
 
 from llm_code.cli.commands import COMMAND_REGISTRY
+from llm_code.view.repl import style
 
 
 def _build_slash_entries() -> list[tuple[str, str]]:
@@ -60,6 +62,14 @@ class SlashCompleter(Completer):
                 yield Completion(
                     text=name,
                     start_position=-len(command_prefix),
-                    display=name,
-                    display_meta=description,
+                    display=FormattedText(
+                        [
+                            (f"bold fg:{style.palette.command_fg}", name),
+                        ]
+                    ),
+                    display_meta=FormattedText(
+                        [
+                            (f"fg:{style.palette.hint_fg}", description),
+                        ]
+                    ),
                 )
