@@ -1,79 +1,56 @@
-"""Shared fixtures for test_view/ — REPLPilot is the primary one.
+"""Shared fixtures for test_view/.
 
-REPLPilot is the test abstraction that replaces Textual's pilot_app
-for the v2.0.0 REPL rewrite. It wraps a headless REPLBackend + its
-dispatcher with an input injection channel and output capture, giving
-tests a uniform surface like:
+Two pilot flavors:
 
-    async def test_some_behavior(repl_pilot):
-        await repl_pilot.submit("/voice")
-        assert repl_pilot.info_lines_contain("voice")
+1. ``stub_repl_pilot`` — uses ``StubRecordingBackend`` for pure-logic
+   tests that need to assert on call patterns without a real terminal.
+2. ``repl_pilot`` — uses real ``REPLBackend`` with an in-memory
+   ``Console(file=StringIO)`` for component tests that need to verify
+   actual rendered output.
 
-See spec section 9.3 for the rationale.
+Most tests use ``repl_pilot``. ``stub_repl_pilot`` is reserved for
+dispatcher/command tests where all we care about is "did the backend
+get called with X".
 """
 from __future__ import annotations
 
 import asyncio
+import io
 from typing import Any, Awaitable, Callable, Optional
 
 import pytest_asyncio
+from rich.console import Console
 
 from llm_code.view.repl.backend import REPLBackend
 from llm_code.view.types import MessageEvent, Role, StatusUpdate
+from tests.test_view._stub_backend import StubRecordingBackend
 
 
-class REPLPilot:
-    """Test control surface for the REPL backend.
+class StubREPLPilot:
+    """Test control surface over StubRecordingBackend."""
 
-    Wraps a REPLBackend instance plus a fake dispatcher callback. The
-    pilot is the exclusive way tests interact with the backend — don't
-    poke at backend attributes directly unless you have a good reason.
-
-    Usage:
-        async def test_example(repl_pilot):
-            await repl_pilot.submit("/version")
-            assert any("version" in line for line in repl_pilot.info_lines)
-    """
-
-    def __init__(self, backend: REPLBackend) -> None:
+    def __init__(self, backend: StubRecordingBackend) -> None:
         self.backend = backend
         self.submitted_inputs: list[str] = []
         self._handler: Optional[Callable[[str], Awaitable[None]]] = None
 
     async def start(self) -> None:
-        """Initialize the backend (calls backend.start())."""
         await self.backend.start()
 
     async def stop(self) -> None:
-        """Tear down the backend."""
         await self.backend.stop()
 
-    def set_dispatcher(
-        self,
-        handler: Callable[[str], Awaitable[None]],
-    ) -> None:
-        """Install a dispatcher callback. Most tests use the default
-        no-op or a small custom lambda."""
+    def set_dispatcher(self, handler: Callable[[str], Awaitable[None]]) -> None:
         self._handler = handler
         self.backend.set_input_handler(handler)
 
-    # === Input injection ===
-
     async def submit(self, text: str) -> None:
-        """Pretend the user typed `text` and pressed Enter.
-
-        The installed dispatcher callback (if any) is awaited so the
-        test can assert on post-turn state immediately after the call.
-        """
         self.submitted_inputs.append(text)
         if self._handler is not None:
             await self._handler(text)
 
     async def pause(self, duration: float = 0.01) -> None:
-        """Yield to the event loop for `duration` seconds."""
         await asyncio.sleep(duration)
-
-    # === Output inspection ===
 
     @property
     def rendered_messages(self) -> list[MessageEvent]:
@@ -101,7 +78,6 @@ class REPLPilot:
 
     @property
     def current_status(self) -> StatusUpdate:
-        """Fold all partial status updates into a merged snapshot."""
         merged = StatusUpdate()
         for update in self.backend.status_updates:
             for field_name in update.__dataclass_fields__:
@@ -134,8 +110,6 @@ class REPLPilot:
     def turn_ends(self) -> int:
         return self.backend.turn_ends
 
-    # === Convenience query helpers ===
-
     def info_lines_contain(self, substring: str) -> bool:
         return any(substring in line for line in self.info_lines)
 
@@ -155,10 +129,7 @@ class REPLPilot:
             return None
         return self.streaming_handles[-1].buffer
 
-    # === Scripted dialog responses ===
-
     def script_confirms(self, *responses: bool) -> None:
-        """Queue responses for subsequent show_confirm() calls."""
         self.backend.scripted_confirm.extend(responses)
 
     def script_selects(self, *responses: Any) -> None:
@@ -174,21 +145,45 @@ class REPLPilot:
         self.backend.scripted_editor.extend(responses)
 
 
-@pytest_asyncio.fixture
-async def repl_pilot():
-    """Async fixture yielding a fully-started REPLPilot.
+class RealREPLPilot:
+    """Test control surface over real REPLBackend + StringIO Console.
 
-    Uses the stub REPLBackend (M2) or real REPLBackend (M3+). Tests
-    using this fixture don't need to know which — the Protocol surface
-    is identical.
-
-    Example:
-        async def test_info_print(repl_pilot):
-            repl_pilot.backend.print_info("hello")
-            assert repl_pilot.info_lines == ["hello"]
+    Used by component tests in M3+ that need to assert on actual
+    rendered output. The backend's coordinator runs with an in-memory
+    Console, so no terminal is required.
     """
-    backend = REPLBackend()
-    pilot = REPLPilot(backend)
+
+    def __init__(self, backend: REPLBackend, capture: io.StringIO) -> None:
+        self.backend = backend
+        self._capture = capture
+
+    async def start(self) -> None:
+        await self.backend.start()
+
+    async def stop(self) -> None:
+        await self.backend.stop()
+
+    @property
+    def captured_output(self) -> str:
+        return self._capture.getvalue()
+
+    def captured_contains(self, substring: str) -> bool:
+        return substring in self.captured_output
+
+    def clear_capture(self) -> None:
+        self._capture.seek(0)
+        self._capture.truncate()
+
+    @property
+    def coordinator(self):
+        return self.backend.coordinator
+
+
+@pytest_asyncio.fixture
+async def stub_repl_pilot():
+    """Fixture using the recording stub backend (for pure-logic tests)."""
+    backend = StubRecordingBackend()
+    pilot = StubREPLPilot(backend)
     await pilot.start()
     try:
         yield pilot
@@ -197,18 +192,39 @@ async def repl_pilot():
 
 
 @pytest_asyncio.fixture
-async def repl_pilot_with_echo_dispatcher(repl_pilot):
-    """REPLPilot pre-wired with a dispatcher that renders every input
-    back as a Role.USER message. Useful for tests that want to assert
-    on the full input -> echo -> status update flow without writing a
-    custom dispatcher each time."""
+async def repl_pilot():
+    """Fixture using the real REPLBackend with a StringIO Console capture.
 
+    The Console is configured with ``force_terminal=True`` so Rich
+    emits ANSI codes as if writing to a real terminal, which is what
+    most component tests want to assert on.
+    """
+    capture = io.StringIO()
+    console = Console(
+        file=capture,
+        force_terminal=True,
+        color_system="truecolor",
+        width=80,
+        record=False,
+    )
+    backend = REPLBackend(console=console)
+    pilot = RealREPLPilot(backend, capture)
+    await pilot.start()
+    try:
+        yield pilot
+    finally:
+        await pilot.stop()
+
+
+@pytest_asyncio.fixture
+async def stub_repl_pilot_with_echo_dispatcher(stub_repl_pilot):
+    """Stub pilot pre-wired with an echo dispatcher (M2 compatibility)."""
     async def echo_dispatcher(text: str) -> None:
-        repl_pilot.backend.on_turn_start()
-        repl_pilot.backend.render_message(
+        stub_repl_pilot.backend.on_turn_start()
+        stub_repl_pilot.backend.render_message(
             MessageEvent(role=Role.USER, content=text)
         )
-        repl_pilot.backend.on_turn_end()
+        stub_repl_pilot.backend.on_turn_end()
 
-    repl_pilot.set_dispatcher(echo_dispatcher)
-    return repl_pilot
+    stub_repl_pilot.set_dispatcher(echo_dispatcher)
+    return stub_repl_pilot
