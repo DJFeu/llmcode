@@ -160,3 +160,95 @@ async def test_no_recorder_monitor_is_safe(pilot_voice_app):
     app._voice_active = False
     # Must not raise.
     app._tick_voice_monitor()
+
+
+async def test_voice_off_with_no_speech_shows_mic_permission_hint(
+    pilot_voice_app,
+):
+    """The `/voice off` handler should surface a detailed microphone-
+    permission troubleshooting message when the recorder flags that
+    it never heard any speech — the usual symptom of a denied macOS
+    Microphone permission that leaves the callback receiving zero
+    PCM bytes."""
+    from unittest.mock import MagicMock
+
+    from llm_code.tui.chat_view import ChatScrollView
+
+    app, pilot = pilot_voice_app
+
+    rec = MagicMock()
+    rec.stop.return_value = b""  # empty buffer — same as mic-denied
+    rec.stopped_no_speech = True
+    rec._has_heard_speech = False
+    rec._last_peak = 0
+    rec._last_mean = 0.0
+
+    app._voice_active = True
+    app._voice_recorder = rec
+    app._voice_stt = MagicMock()
+
+    app._cmd_dispatcher.dispatch("voice", "off")
+    await pilot.pause()
+
+    # State flipped clean.
+    assert app._voice_active is False
+    # Chat should carry the troubleshooting text.
+    from tests.test_e2e_tui.test_boot_banner import _rendered_text
+    chat = app.query_one(ChatScrollView)
+    rendered = _rendered_text(chat)
+    assert "No audio captured" in rendered
+    # The hint specifically names macOS Microphone settings so users
+    # can copy-paste the steps.
+    assert "macOS" in rendered
+    assert "Microphone" in rendered
+    # And it includes the peak telemetry so power users can see
+    # whether any signal reached the recorder at all.
+    assert "peak=0" in rendered
+
+
+async def test_voice_off_with_speech_heard_runs_transcription(pilot_voice_app):
+    """Happy path: when the recorder DID hear speech and returned a
+    non-empty buffer, `/voice off` should dispatch the transcription
+    worker — NOT show the mic-permission hint."""
+    from unittest.mock import MagicMock
+
+    from llm_code.tui.chat_view import ChatScrollView
+
+    app, pilot = pilot_voice_app
+
+    rec = MagicMock()
+    rec.stop.return_value = b"\x00\x01" * 8000
+    rec.stopped_no_speech = False
+    rec._has_heard_speech = True
+    rec._last_peak = 7500
+    rec._last_mean = 4200.0
+
+    app._voice_active = True
+    app._voice_recorder = rec
+    app._voice_stt = MagicMock()
+    app._voice_stt.transcribe.return_value = "hello from e2e"
+
+    # Close the coroutine so the event loop doesn't complain about
+    # an awaited coroutine in test teardown.
+    def _consume_coro(coro, *_, **__):
+        coro.close()
+
+    original_run_worker = app.run_worker
+
+    def _tracked_run_worker(work, *args, **kwargs):
+        if hasattr(work, "close"):
+            work.close()
+            return None
+        return original_run_worker(work, *args, **kwargs)
+
+    app.run_worker = _tracked_run_worker  # type: ignore[assignment]
+
+    app._cmd_dispatcher.dispatch("voice", "off")
+    await pilot.pause()
+
+    # The transcription-worker path should have run, not the hint.
+    from tests.test_e2e_tui.test_boot_banner import _rendered_text
+    chat = app.query_one(ChatScrollView)
+    rendered = _rendered_text(chat)
+    assert "Transcribing" in rendered
+    assert "No audio captured" not in rendered

@@ -157,14 +157,34 @@ class AudioRecorder:
         self._silence_seconds = silence_seconds
         self._silence_threshold = silence_threshold
         self._silence_start: float | None = None
+        # The silence window must only start *after* the first real
+        # speech chunk is observed. Without this gate, pressing the
+        # hotkey while the mic is still warming up (or while the user
+        # is mid-breath before speaking) fires auto-stop immediately,
+        # because the first few chunks read as silence. Latching on
+        # "has the speaker said anything yet?" defers the window start
+        # until the user has actually begun talking — same pattern
+        # every serious voice-input tool (Whisper, Wispr Flow, etc.)
+        # uses.
+        self._has_heard_speech = False
         # Set by should_auto_stop() once the silence window is hit so
         # the TUI knows whether to stop on its own vs. at user command.
         self._auto_stopped = False
+        # "stopped because we never heard any speech at all" — used by
+        # the TUI to tell the user to check their microphone permission
+        # instead of assuming they deliberately stayed silent.
+        self._stopped_no_speech = False
         # Live instrumentation — updated each chunk so the /voice
         # status view can show "current peak / mean" and the user
         # can tune silence_threshold without guessing.
         self._last_peak: int = 0
         self._last_mean: float = 0.0
+
+    # Safety net: even if _has_heard_speech never flips (mic access
+    # denied, broken device, etc.), don't let the recorder sit on its
+    # hands forever. After this many seconds without hearing anything,
+    # the recorder force-stops and the TUI surfaces a permission hint.
+    _NO_SPEECH_TIMEOUT_SECONDS = 30.0
 
     def start(self) -> None:
         """Begin recording audio."""
@@ -172,7 +192,11 @@ class AudioRecorder:
         self._recording = True
         self._start_time = time.monotonic()
         self._silence_start = None
+        self._has_heard_speech = False
         self._auto_stopped = False
+        self._stopped_no_speech = False
+        self._last_peak = 0
+        self._last_mean = 0.0
 
         if self._backend == RecorderBackend.SOUNDDEVICE:
             self._start_sounddevice()
@@ -227,16 +251,55 @@ class AudioRecorder:
         no silence window has accumulated yet. Once it returns
         ``True``, subsequent calls keep returning ``True`` until the
         recorder is stopped — no flip-flopping.
+
+        Two distinct auto-stop conditions:
+
+        1. **Normal VAD stop** — the speaker was heard (at least one
+           chunk had peak ≥ threshold) AND the silence window elapsed
+           since the last speech chunk. This is the common case:
+           user finishes talking, two seconds of silence, recorder
+           tears down.
+        2. **Hard no-speech timeout** — the recorder never heard any
+           speech at all within ``_NO_SPEECH_TIMEOUT_SECONDS``. This
+           catches environments where the mic is muted, the terminal
+           lacks microphone permission, or the device is broken. Also
+           sets ``_stopped_no_speech`` so the caller can surface a
+           targeted error message instead of the generic transcript
+           flow.
         """
         if self._silence_seconds <= 0.0 or not self._recording:
             return False
+        now = time.monotonic()
+        # Hard no-speech timeout — fires even if the user never
+        # flipped `_has_heard_speech`, so a denied mic permission
+        # can't leave the recorder running forever.
+        if (
+            not self._has_heard_speech
+            and self._start_time is not None
+            and now - self._start_time >= self._NO_SPEECH_TIMEOUT_SECONDS
+        ):
+            self._auto_stopped = True
+            self._stopped_no_speech = True
+            return True
+        # Normal VAD path — only latches AFTER we've heard speech at
+        # least once, and only when a silence window is in progress.
+        if not self._has_heard_speech:
+            return False
         if self._silence_start is None:
             return False
-        elapsed = time.monotonic() - self._silence_start
-        if elapsed >= self._silence_seconds:
+        if now - self._silence_start >= self._silence_seconds:
             self._auto_stopped = True
             return True
         return False
+
+    @property
+    def stopped_no_speech(self) -> bool:
+        """True if the last auto-stop fired because nothing was ever heard.
+
+        Used by the TUI to decide whether to print the normal
+        "Transcribing..." flow or a microphone-permission hint.
+        """
+        return self._stopped_no_speech
 
     @property
     def auto_stopped(self) -> bool:
@@ -284,11 +347,22 @@ class AudioRecorder:
         self._last_peak = peak
         self._last_mean = total / len(samples)
         now = time.monotonic()
-        if peak < self._silence_threshold:
+        if peak >= self._silence_threshold:
+            # Speech chunk — mark that the session has heard the user
+            # and reset any silence window that had started. This
+            # latches once per recording so later silence can trigger
+            # auto-stop without also requiring continuous speech.
+            self._has_heard_speech = True
+            self._silence_start = None
+        elif self._has_heard_speech:
+            # Only start the silence window AFTER we've heard speech
+            # at least once. Without this guard, pressing the hotkey
+            # in a silent room fires auto-stop immediately because
+            # every chunk looks like silence from byte zero.
             if self._silence_start is None:
                 self._silence_start = now
-        else:
-            self._silence_start = None
+        # else: no speech yet, don't start any silence window — let
+        # the hard no-speech timeout in should_auto_stop handle it.
 
     def _start_sounddevice(self) -> None:
         import sounddevice as sd  # type: ignore[import]

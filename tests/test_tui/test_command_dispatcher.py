@@ -152,6 +152,14 @@ def test_cmd_voice_off_transcribes_and_inserts():
     stt_engine.transcribe.return_value = "hello world"
     recorder = MagicMock()
     recorder.stop.return_value = b"\x00\x01" * 8000  # 1s of 16kHz 16-bit
+    # Speech-gate flags must be explicit — MagicMock's auto-generated
+    # child attributes are truthy by default, which would send the
+    # dispatcher into the "no speech, show mic permission hint"
+    # branch and skip the worker dispatch.
+    recorder.stopped_no_speech = False
+    recorder._has_heard_speech = True
+    recorder._last_peak = 8000
+    recorder._last_mean = 5000.0
 
     app._voice_active = True
     app._voice_recorder = recorder

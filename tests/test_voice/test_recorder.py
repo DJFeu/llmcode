@@ -92,27 +92,34 @@ class TestAudioRecorderVAD:
         assert rec.should_auto_stop() is False
         assert rec._silence_start is None
 
-    def test_silence_starts_window_when_chunk_is_quiet(self):
+    def test_silence_starts_window_when_chunk_is_quiet_after_speech(self):
+        """After the speech gate has flipped, a silent chunk starts
+        the silence window. Without prior speech the gate blocks
+        window start — see TestAudioRecorderSpeechGate."""
         rec = AudioRecorder(
             backend=RecorderBackend.SOUNDDEVICE,
             silence_seconds=0.5,
             silence_threshold=3000,
         )
         rec._recording = True
+        # Flip the gate with a speech-level peak first.
+        rec._update_silence_tracker(self._loud_chunk(peak=8000))
+        # Then go silent — window starts.
         rec._update_silence_tracker(self._silent_chunk(noise_floor=100))
         assert rec._silence_start is not None
 
     def test_noisy_room_below_peak_threshold_still_silent(self):
-        """A real MacBook mic with fan hum pushes mean to ~800 and peak
-        to ~1500. Peak detection with a 3000 default floor should
-        still treat that as silence so VAD fires cleanly."""
+        """After speech has been heard, a noisy-but-sub-threshold
+        chunk (peak ~1500 on a MacBook with fan hum) still counts
+        as silence and advances the silence window."""
         rec = AudioRecorder(
             backend=RecorderBackend.SOUNDDEVICE,
             silence_seconds=0.5,
             silence_threshold=3000,
         )
         rec._recording = True
-        # Simulate noisy-room PCM: peak ~1500 (well below 3000).
+        # Speech first, then the noisy-room chunk.
+        rec._update_silence_tracker(self._loud_chunk(peak=8000))
         rec._update_silence_tracker(self._loud_chunk(peak=1500))
         assert rec._silence_start is not None
         assert rec._last_peak == 1500
@@ -125,8 +132,11 @@ class TestAudioRecorderVAD:
             silence_threshold=3000,
         )
         rec._recording = True
+        # Speech first, then silence → window starts.
+        rec._update_silence_tracker(self._loud_chunk(peak=8000))
         rec._update_silence_tracker(self._silent_chunk(noise_floor=200))
         assert rec._silence_start is not None
+        # Louder speech again — window cleared.
         rec._update_silence_tracker(self._loud_chunk(peak=10000))
         assert rec._silence_start is None
         assert rec._last_peak == 10000
@@ -138,6 +148,7 @@ class TestAudioRecorderVAD:
             silence_threshold=3000,
         )
         rec._recording = True
+        rec._start_time = 100.0
 
         fake_now = [100.0]
         monkeypatch.setattr(
@@ -145,6 +156,9 @@ class TestAudioRecorderVAD:
             lambda: fake_now[0],
         )
 
+        # Flip the gate first — without this the speech-gate blocks
+        # the silence window from starting at all.
+        rec._update_silence_tracker(self._loud_chunk(peak=8000))
         rec._update_silence_tracker(self._silent_chunk())
         assert rec.should_auto_stop() is False
 
@@ -168,8 +182,12 @@ class TestAudioRecorderVAD:
             silence_seconds=0.5,
         )
         rec._recording = True
+        # Must not raise even with an odd-length chunk.
         rec._update_silence_tracker(b"\x00\x00\x00\x00\x00")
-        assert rec._silence_start is not None
+        # Window is NOT started because the speech gate is still
+        # closed (these 5 bytes are pure silence and no speech has
+        # been heard yet).
+        assert rec._silence_start is None
 
     def test_update_silence_tracker_noop_on_empty_chunk(self):
         rec = AudioRecorder(
@@ -194,3 +212,153 @@ class TestAudioRecorderVAD:
         rec._update_silence_tracker(self._loud_chunk(peak=7500))
         assert rec._last_peak == 7500
         assert rec._last_mean == 7500
+
+
+class TestAudioRecorderSpeechGate:
+    """The VAD window should only start counting silence *after* the
+    first real speech chunk is observed. Without this gate, pressing
+    the hotkey in a silent room (or with microphone access denied)
+    fires auto-stop immediately because every chunk reads as silence
+    from byte zero."""
+
+    def _silent_chunk(self, n_samples: int = 1024) -> bytes:
+        return struct.pack(f"<{n_samples}h", *([0] * n_samples))
+
+    def _loud_chunk(self, n_samples: int = 1024, peak: int = 10000) -> bytes:
+        samples = [peak if i % 2 == 0 else -peak for i in range(n_samples)]
+        return struct.pack(f"<{n_samples}h", *samples)
+
+    def test_silence_before_speech_does_not_start_window(self, monkeypatch):
+        """10 silent chunks in a row must NOT start a silence window
+        because the user hasn't said anything yet."""
+        rec = AudioRecorder(
+            backend=RecorderBackend.SOUNDDEVICE,
+            silence_seconds=0.1,
+            silence_threshold=3000,
+        )
+        rec._recording = True
+        rec._start_time = 100.0
+        monkeypatch.setattr(
+            "llm_code.tools.voice.time.monotonic", lambda: 100.5
+        )
+
+        for _ in range(10):
+            rec._update_silence_tracker(self._silent_chunk())
+        assert rec._has_heard_speech is False
+        assert rec._silence_start is None
+        # Even though silence_seconds=0.1 has elapsed, auto-stop
+        # must NOT fire because we never heard anything.
+        assert rec.should_auto_stop() is False
+
+    def test_speech_then_silence_starts_window_normally(self, monkeypatch):
+        """Once we've heard at least one loud chunk, subsequent
+        silence should start the window as expected."""
+        rec = AudioRecorder(
+            backend=RecorderBackend.SOUNDDEVICE,
+            silence_seconds=0.1,
+            silence_threshold=3000,
+        )
+        rec._recording = True
+        rec._start_time = 100.0
+        fake_now = [100.0]
+        monkeypatch.setattr(
+            "llm_code.tools.voice.time.monotonic", lambda: fake_now[0]
+        )
+
+        # Hear speech first — flips the gate.
+        rec._update_silence_tracker(self._loud_chunk(peak=8000))
+        assert rec._has_heard_speech is True
+
+        # Then go silent — window starts.
+        fake_now[0] = 100.1
+        rec._update_silence_tracker(self._silent_chunk())
+        assert rec._silence_start is not None
+
+        # Advance past the window — auto-stop.
+        fake_now[0] = 100.3
+        assert rec.should_auto_stop() is True
+        assert rec._stopped_no_speech is False  # normal stop, not timeout
+
+    def test_no_speech_hard_timeout(self, monkeypatch):
+        """If the recorder never hears anything at all within
+        _NO_SPEECH_TIMEOUT_SECONDS, it should force-stop and flag
+        ``stopped_no_speech=True`` so the caller can tell the user
+        to check microphone permission."""
+        rec = AudioRecorder(
+            backend=RecorderBackend.SOUNDDEVICE,
+            silence_seconds=0.1,
+            silence_threshold=3000,
+        )
+        # Shorten the timeout so the test doesn't take 30s.
+        rec._NO_SPEECH_TIMEOUT_SECONDS = 1.0
+        rec._recording = True
+        rec._start_time = 100.0
+
+        fake_now = [100.0]
+        monkeypatch.setattr(
+            "llm_code.tools.voice.time.monotonic", lambda: fake_now[0]
+        )
+
+        # Feed silence, stay under the timeout — no stop.
+        rec._update_silence_tracker(self._silent_chunk())
+        assert rec.should_auto_stop() is False
+        assert rec.stopped_no_speech is False
+
+        # Advance past the timeout.
+        fake_now[0] = 101.5
+        assert rec.should_auto_stop() is True
+        assert rec.stopped_no_speech is True
+        assert rec.auto_stopped is True
+
+    def test_speech_clears_silence_window_and_unlatches_restart(self, monkeypatch):
+        """Typical "speak, pause briefly, speak again" pattern: the
+        pause shouldn't latch silence if the user resumes speaking
+        before the window elapses."""
+        rec = AudioRecorder(
+            backend=RecorderBackend.SOUNDDEVICE,
+            silence_seconds=1.0,
+            silence_threshold=3000,
+        )
+        rec._recording = True
+        rec._start_time = 100.0
+        fake_now = [100.0]
+        monkeypatch.setattr(
+            "llm_code.tools.voice.time.monotonic", lambda: fake_now[0]
+        )
+
+        rec._update_silence_tracker(self._loud_chunk(peak=8000))
+        fake_now[0] = 100.5
+        rec._update_silence_tracker(self._silent_chunk())
+        assert rec._silence_start is not None  # pause started
+
+        # Resume speaking within the window.
+        fake_now[0] = 100.9
+        rec._update_silence_tracker(self._loud_chunk(peak=9000))
+        # Window reset.
+        assert rec._silence_start is None
+        assert rec.should_auto_stop() is False
+
+    def test_start_resets_speech_gate(self):
+        """Starting a fresh recording must clear has_heard_speech /
+        stopped_no_speech / silence_start from a previous session."""
+        rec = AudioRecorder(
+            backend=RecorderBackend.SOUNDDEVICE,
+            silence_seconds=0.5,
+            silence_threshold=3000,
+        )
+        # Dirty state from a hypothetical previous recording.
+        rec._has_heard_speech = True
+        rec._stopped_no_speech = True
+        rec._silence_start = 99.0
+        rec._last_peak = 8000
+
+        # Patch the external startup branches so start() is callable
+        # without actually opening a sounddevice stream.
+        rec._backend = RecorderBackend.SOX
+        rec._start_external = lambda cmd: None  # type: ignore[assignment]
+        rec.start()
+
+        assert rec._has_heard_speech is False
+        assert rec._stopped_no_speech is False
+        assert rec._silence_start is None
+        assert rec._last_peak == 0

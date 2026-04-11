@@ -1457,14 +1457,52 @@ class CommandDispatcher:
             except Exception:
                 pass
 
+            # Pull the "never heard any speech" flag *before* stop()
+            # resets buffer state. Used below to surface a targeted
+            # microphone-permission error instead of the generic
+            # "empty buffer" message.
+            no_speech = bool(getattr(recorder, "stopped_no_speech", False))
+            has_heard = bool(getattr(recorder, "_has_heard_speech", True))
+            peak = int(getattr(recorder, "_last_peak", 0) or 0)
+            mean = float(getattr(recorder, "_last_mean", 0.0) or 0.0)
+
             try:
                 audio_bytes = recorder.stop()
             except Exception as exc:
                 chat.add_entry(AssistantText(f"Voice stop failed: {exc}"))
                 return
 
-            if not audio_bytes:
-                chat.add_entry(AssistantText("No audio captured."))
+            # "Empty buffer", "30-second no-speech timeout", and
+            # "recorder never heard the user" all land in the same
+            # dead-end: the capture path produced no usable audio.
+            # Collapse them into one actionable message instead of
+            # the previous cryptic "No audio captured." one-liner.
+            if not audio_bytes or no_speech or not has_heard:
+                threshold = getattr(cfg, "silence_threshold", 3000)
+                chat.add_entry(AssistantText(
+                    "**No audio captured.** The recorder ran but never "
+                    "heard any speech above the silence threshold.\n\n"
+                    f"VAD telemetry: peak={peak}, mean={mean:.0f} "
+                    f"(silent <{threshold}).\n\n"
+                    "**Most common cause on macOS:** your terminal app "
+                    "does not have microphone permission. System "
+                    "Settings → Privacy & Security → Microphone → "
+                    "enable your terminal (Warp / iTerm2 / Terminal / "
+                    "Ghostty). Then **fully quit and relaunch** the "
+                    "terminal — just closing the window keeps the "
+                    "process alive and macOS caches the denial until "
+                    "the process exits.\n\n"
+                    "**Sanity check:** run this one-liner outside "
+                    "llmcode and look at the max sample value — if "
+                    "it prints 0, nothing is reaching the Python "
+                    "process:\n"
+                    "```\npython3 -c 'import sounddevice as sd; "
+                    "print(sd.rec(16000, samplerate=16000, channels=1, "
+                    "blocking=True).max())'\n```\n\n"
+                    "**Linux:** check `arecord -l` lists your device. "
+                    "If it does, also verify PulseAudio / PipeWire "
+                    "hasn't muted the input."
+                ))
                 return
 
             duration = len(audio_bytes) / (2 * 16000)  # 16-bit @ 16kHz
