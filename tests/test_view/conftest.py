@@ -178,6 +178,52 @@ class RealREPLPilot:
     def coordinator(self):
         return self.backend.coordinator
 
+    # === Key-press simulation ===
+
+    async def press(self, key_name: str) -> None:
+        """Fire the binding registered for ``key_name`` as if the user
+        had pressed that key.
+
+        Resolves the key name through prompt_toolkit's own parser so we
+        match the same Keys enum the coordinator registered. Single-key
+        bindings only (no multi-key sequences). Missing binding raises
+        ``AssertionError`` so tests fail fast on typos.
+        """
+        # Use private parser — the only way to match kb.bindings' key
+        # normalization exactly.
+        from prompt_toolkit.key_binding.key_bindings import _parse_key
+
+        kb = self.backend.coordinator._key_bindings
+        parsed = _parse_key(key_name)
+        matches = kb.get_bindings_for_keys((parsed,))
+        if not matches:
+            raise AssertionError(
+                f"no binding found for {key_name!r} "
+                f"(parsed as {parsed!r})"
+            )
+
+        # Minimal fake KeyPressEvent. The real handlers we register only
+        # call event.app.exit() and event.app.invalidate(), so this
+        # mock surface is enough.
+        class _FakeApp:
+            def exit(self) -> None:
+                pass
+
+            def invalidate(self) -> None:
+                pass
+
+        class _FakeEvent:
+            app = _FakeApp()
+
+        event = _FakeEvent()
+        # Call the most specific binding (last registered wins, same
+        # semantics as prompt_toolkit's own key processor).
+        matches[-1].handler(event)
+
+    async def type_text(self, text: str) -> None:
+        """Insert ``text`` into the input buffer at the cursor position."""
+        self.backend.coordinator._input_area.buffer.insert_text(text)
+
 
 @pytest_asyncio.fixture
 async def stub_repl_pilot():
