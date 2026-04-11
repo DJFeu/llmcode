@@ -369,7 +369,15 @@ class AudioRecorder:
 
         def callback(indata, frames, time_info, status):
             if self._recording:
-                chunk = indata.tobytes()
+                # ``sd.RawInputStream`` delivers ``indata`` as a cffi
+                # ``CData`` buffer, which exposes the buffer protocol
+                # but does NOT have a ``.tobytes()`` method — that's
+                # only present on numpy arrays from the non-raw
+                # ``sd.InputStream``. Use ``bytes(indata)`` which
+                # materializes the buffer protocol into a plain
+                # bytes object and works for both cffi buffers and
+                # numpy arrays.
+                chunk = bytes(indata)
                 self._buffer.extend(chunk)
                 # Silence tracking must never crash the audio callback
                 # — a bug here would otherwise kill the stream silently
