@@ -36,7 +36,7 @@ class TmuxBackend:
         """
         llm_code_bin = shutil.which("llm-code") or sys.executable
         if llm_code_bin == sys.executable:
-            cmd = f"{sys.executable} -m llm_code.cli.tui_main --lite"
+            cmd = f"{sys.executable} -m llm_code.cli.main --lite"
         else:
             cmd = f"{llm_code_bin} --lite"
 

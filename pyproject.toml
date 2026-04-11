@@ -69,7 +69,7 @@ dev = [
 ]
 
 [project.scripts]
-llmcode = "llm_code.cli.tui_main:main"
+llmcode = "llm_code.cli.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["llm_code"]

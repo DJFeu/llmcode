@@ -7,7 +7,7 @@ import pytest
 
 from llm_code.api.types import MessageResponse, TextBlock, TokenUsage
 from llm_code.cli.oneshot import run_execute_mode, run_quick_mode
-from llm_code.tui.dialogs import ScriptedDialogs
+from llm_code.view.scripted import ScriptedDialogs
 
 
 def _make_config(**overrides):

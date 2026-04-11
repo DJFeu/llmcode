@@ -1,4 +1,27 @@
-"""Entry point for llm-code."""
+"""Entry point for llm-code — v2.0.0 REPL edition.
+
+M11 cutover replaces the previous ``cli/tui_main.py`` Textual launcher
+with this REPL-backed entry point. The CLI surface (options, one-shot
+modes, remote modes, Ollama probe) is unchanged; only the interactive
+path differs: instead of ``LLMCodeTUI(...).run(mouse=...)`` it builds
+the AppState + REPLBackend + ViewStreamRenderer + CommandDispatcher
+quartet M10 produced and runs the REPL backend's event loop.
+
+Wiring (M11 Task 11.2, per M11-M14 audit §H2 fix):
+
+    state      = AppState.from_config(config, cwd=cwd, budget=budget,
+                                      initial_mode=cli_mode)
+    backend    = REPLBackend(config=config)
+    renderer   = ViewStreamRenderer(view=backend, state=state)
+    dispatcher = CommandDispatcher(view=backend, state=state,
+                                   renderer=renderer)
+    backend.set_input_handler(dispatcher.run_turn)
+    asyncio.run(backend.run())
+
+No ``runtime.on_status_change`` call (the v1 plan's invented method):
+``ViewStreamRenderer`` pushes status updates directly via
+``view.update_status`` during its stream loop.
+"""
 from __future__ import annotations
 
 import os
@@ -7,47 +30,97 @@ from pathlib import Path
 
 import click
 
-_PERMISSION_CHOICES = ["prompt", "auto_accept", "read_only", "workspace_write", "full_access"]
+_PERMISSION_CHOICES = [
+    "prompt", "auto_accept", "read_only", "workspace_write", "full_access",
+]
 
 
 @click.command()
 @click.argument("prompt", required=False)
 @click.option("--model", "-m", default=None, help="Model name to use")
 @click.option("--api", default=None, help="API base URL")
-@click.option("--api-key", default=None, help="API key (or set LLM_API_KEY env var)")
-@click.option("--provider", type=click.Choice(["ollama"]), default=None, help="LLM provider shortcut")
+@click.option(
+    "--api-key", default=None,
+    help="API key (or set LLM_API_KEY env var)",
+)
+@click.option(
+    "--provider", type=click.Choice(["ollama"]), default=None,
+    help="LLM provider shortcut",
+)
 @click.option(
     "--permission",
     type=click.Choice(_PERMISSION_CHOICES),
     default=None,
     help="Permission mode",
 )
-@click.option("--budget", type=int, default=None, help="Token budget target")
-@click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
+@click.option(
+    "--budget", type=int, default=None, help="Token budget target",
+)
+@click.option(
+    "--verbose", "-v", is_flag=True, help="Enable verbose logging",
+)
 @click.option(
     "--log-file",
     "log_file",
     default=None,
     help=(
-        "Write verbose logs to PATH instead of stderr. Required when "
-        "running the TUI with -v — otherwise logs and Textual's own "
-        "stderr writes interleave and break the rendering. Also "
-        "reads LLMCODE_LOG_FILE env var."
+        "Write verbose logs to PATH instead of stderr. Also reads "
+        "LLMCODE_LOG_FILE env var."
     ),
 )
 @click.option("--serve", is_flag=True, help="Start as remote server")
-@click.option("--port", type=int, default=8765, help="Server port (for --serve)")
-@click.option("--connect", default=None, help="Connect to remote server (host:port)")
-@click.option("--ssh", default=None, help="SSH to remote host and connect (user@host)")
-@click.option("--replay", default=None, help="Replay a VCR recording file (.jsonl)")
-@click.option("--replay-speed", type=float, default=1.0, help="Playback speed for --replay (0 = instant)")
-@click.option("--resume", default=None, help="Resume from a checkpoint (session_id or 'last')")
-@click.option("--mode", "cli_mode", type=click.Choice(["suggest", "normal", "plan"]), default=None, help="Interaction mode (suggest/normal/plan)")
-@click.option("--yolo", is_flag=True, default=False, help="YOLO mode: auto-accept all permissions (dangerous)")
-@click.option("-x", "--execute", "execute_prompt", default=None, help="Translate to shell command and execute")
-@click.option("-q", "--quick", "quick_prompt", default=None, help="Quick Q&A (no TUI)")
-@click.option("--config-schema", is_flag=True, default=False, help="Print the ConfigSchema JSON schema and exit")
-@click.option("--preset", default=None, help="Load a built-in config preset (local-qwen, claude-cloud, mixed-routing, cost-saving)")
+@click.option(
+    "--port", type=int, default=8765, help="Server port (for --serve)",
+)
+@click.option(
+    "--connect", default=None,
+    help="Connect to remote server (host:port)",
+)
+@click.option(
+    "--ssh", default=None,
+    help="SSH to remote host and connect (user@host)",
+)
+@click.option(
+    "--replay", default=None, help="Replay a VCR recording file (.jsonl)",
+)
+@click.option(
+    "--replay-speed", type=float, default=1.0,
+    help="Playback speed for --replay (0 = instant)",
+)
+@click.option(
+    "--resume", default=None,
+    help="Resume from a checkpoint (session_id or 'last')",
+)
+@click.option(
+    "--mode",
+    "cli_mode",
+    type=click.Choice(["suggest", "normal", "plan"]),
+    default=None,
+    help="Interaction mode (suggest/normal/plan)",
+)
+@click.option(
+    "--yolo", is_flag=True, default=False,
+    help="YOLO mode: auto-accept all permissions (dangerous)",
+)
+@click.option(
+    "-x", "--execute", "execute_prompt", default=None,
+    help="Translate to shell command and execute",
+)
+@click.option(
+    "-q", "--quick", "quick_prompt", default=None,
+    help="Quick Q&A (headless)",
+)
+@click.option(
+    "--config-schema", is_flag=True, default=False,
+    help="Print the ConfigSchema JSON schema and exit",
+)
+@click.option(
+    "--preset", default=None,
+    help=(
+        "Load a built-in config preset (local-qwen, claude-cloud, "
+        "mixed-routing, cost-saving)"
+    ),
+)
 def main(
     prompt: str | None,
     model: str | None,
@@ -78,6 +151,7 @@ def main(
 
     if config_schema:
         import json as _json
+
         from llm_code.runtime.config import ConfigSchema
         click.echo(_json.dumps(ConfigSchema.model_json_schema(), indent=2))
         return
@@ -85,7 +159,7 @@ def main(
     setup_logging(verbose=verbose, log_file=log_file)
     cwd = Path.cwd()
 
-    # Build CLI overrides
+    # Build CLI overrides layered on top of the loaded config.
     cli_overrides: dict = {}
     if preset:
         from llm_code.runtime.config_presets import load_preset
@@ -103,22 +177,30 @@ def main(
     if permission:
         cli_overrides.setdefault("permissions", {})["mode"] = permission
 
-    # Map --mode flag to permission mode
-    _MODE_PERMISSION_MAP = {"suggest": "prompt", "normal": "workspace_write", "plan": "prompt"}
+    _MODE_PERMISSION_MAP = {
+        "suggest": "prompt",
+        "normal": "workspace_write",
+        "plan": "prompt",
+    }
     if cli_mode:
-        cli_overrides.setdefault("permissions", {})["mode"] = _MODE_PERMISSION_MAP[cli_mode]
+        cli_overrides.setdefault("permissions", {})["mode"] = (
+            _MODE_PERMISSION_MAP[cli_mode]
+        )
     if yolo:
         cli_overrides.setdefault("permissions", {})["mode"] = "auto_accept"
 
-    # Ollama provider setup
+    # Ollama provider auto-setup
     if provider == "ollama":
         ollama_result = _run_ollama_setup(
-            api_override=api,
-            model_override=model,
+            api_override=api, model_override=model,
         )
         if ollama_result is None:
-            click.echo("Error: Cannot connect to Ollama at localhost:11434", err=True)
-            click.echo("Make sure Ollama is running: ollama serve", err=True)
+            click.echo(
+                "Error: Cannot connect to Ollama at localhost:11434", err=True,
+            )
+            click.echo(
+                "Make sure Ollama is running: ollama serve", err=True,
+            )
             raise SystemExit(1)
         selected_model, base_url = ollama_result
         cli_overrides["model"] = selected_model
@@ -132,7 +214,8 @@ def main(
         cli_overrides=cli_overrides,
     )
 
-    # One-shot modes (skip TUI)
+    # === One-shot modes (skip the REPL) ===
+
     if execute_prompt:
         from llm_code.cli.oneshot import run_execute_mode
         run_execute_mode(execute_prompt, config)
@@ -153,7 +236,10 @@ def main(
         player = VCRPlayer(Path(replay))
         summary = player.summary()
         print(f"Replaying: {replay}")
-        print(f"  events={summary['event_count']}  duration={summary['duration']:.1f}s")
+        print(
+            f"  events={summary['event_count']}  "
+            f"duration={summary['duration']:.1f}s"
+        )
         print()
         for event in player.replay(speed=replay_speed):
             print(f"[{event.type:15s}] {event.data}")
@@ -167,8 +253,8 @@ def main(
 
     if connect:
         from llm_code.remote.client import RemoteClient
-        client = RemoteClient(connect)
-        asyncio.run(client.connect())
+        remote_client = RemoteClient(connect)
+        asyncio.run(remote_client.connect())
         return
 
     if ssh:
@@ -176,8 +262,9 @@ def main(
         asyncio.run(ssh_connect(ssh, port=port))
         return
 
-    # Resolve resume session if requested
-    resume_session = None
+    # --resume handling — we print a hint line for feature parity with
+    # v1.x; the REPL backend's /checkpoint resume command can reload a
+    # specific checkpoint interactively once the session is up.
     if resume:
         from llm_code.runtime.checkpoint_recovery import CheckpointRecovery
         checkpoints_dir = Path.home() / ".llmcode" / "checkpoints"
@@ -189,18 +276,49 @@ def main(
         if resume_session is None:
             print(f"[warning] No checkpoint found for: {resume}")
         else:
-            print(f"Resuming session {resume_session.id} ({len(resume_session.messages)} messages)")
+            print(
+                f"Resuming session {resume_session.id} "
+                f"({len(resume_session.messages)} messages)"
+            )
 
-    # Textual fullscreen TUI (default and only UI mode)
-    from llm_code.tui.app import LLMCodeTUI
-    app = LLMCodeTUI(config=config, cwd=cwd, budget=budget, initial_mode=cli_mode)
-    # mouse=False preserves native terminal click-drag text selection (copy) —
-    # the most-requested UX in Warp / iTerm2. Tradeoff: app-level mouse scroll
-    # wheel is lost. Keyboard scrolling still works: Shift+Up/Down, PageUp/Down,
-    # /scroll. Opt in with `mouse = true` in config for terminals that need
-    # in-app wheel capture at the cost of losing native text selection.
-    _mouse = bool(getattr(config, "mouse", False))
-    app.run(mouse=_mouse)
+    # === Interactive REPL ===
+
+    from llm_code.runtime.app_state import AppState
+    from llm_code.view.dispatcher import CommandDispatcher
+    from llm_code.view.repl.backend import REPLBackend
+    from llm_code.view.stream_renderer import ViewStreamRenderer
+
+    state = AppState.from_config(
+        config,
+        cwd=cwd,
+        budget=budget,
+        initial_mode=cli_mode or "workspace_write",
+    )
+    backend = REPLBackend(
+        config=config,
+        runtime=state.runtime,
+    )
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    dispatcher = CommandDispatcher(
+        view=backend, state=state, renderer=renderer,
+    )
+    backend.set_input_handler(dispatcher.run_turn)
+    asyncio.run(_run_repl(backend))
+
+
+async def _run_repl(backend) -> None:
+    """Start + run + stop the REPL backend with proper lifecycle.
+
+    Kept as a coroutine so ``asyncio.run`` only appears once in the
+    main(), and so a future wrapper (profiling, VCR capture, etc.) can
+    sit between the entry point and the backend lifecycle without
+    touching main().
+    """
+    await backend.start()
+    try:
+        await backend.run()
+    finally:
+        await backend.stop()
 
 
 _OLLAMA_DEFAULT_URL = "http://localhost:11434"
@@ -210,14 +328,19 @@ def _run_ollama_setup(
     api_override: str | None = None,
     model_override: str | None = None,
 ) -> tuple[str, str] | None:
-    """Probe Ollama, optionally select model. Returns (model, base_url) or None."""
+    """Probe Ollama, optionally select model.
+
+    Returns ``(model, base_url)`` or ``None`` on failure.
+    """
     import asyncio as _asyncio
 
     base_url = api_override or _OLLAMA_DEFAULT_URL
 
     async def _setup() -> tuple[str, str] | None:
-        from llm_code.runtime.ollama import OllamaClient, sort_models_for_selection
         from llm_code.runtime.hardware import detect_vram_gb
+        from llm_code.runtime.ollama import (
+            OllamaClient, sort_models_for_selection,
+        )
 
         client = OllamaClient(base_url=base_url)
         try:
@@ -229,7 +352,10 @@ def _run_ollama_setup(
 
             models = await client.list_models()
             if not models:
-                click.echo("No models found in Ollama. Download one first:", err=True)
+                click.echo(
+                    "No models found in Ollama. Download one first:",
+                    err=True,
+                )
                 click.echo("  ollama pull qwen3:1.7b", err=True)
                 return None
 
@@ -240,7 +366,8 @@ def _run_ollama_setup(
             vram_gb = detect_vram_gb()
             sorted_models = sort_models_for_selection(models, vram_gb)
 
-            from llm_code.tui.dialogs import Choice, DialogCancelled, HeadlessDialogs
+            from llm_code.view.dialog_types import Choice, DialogCancelled
+            from llm_code.view.headless import HeadlessDialogs
 
             dialogs = HeadlessDialogs()
             choices = [
@@ -276,7 +403,12 @@ def _format_model_list(
     models: list,
     vram_gb: float | None,
 ) -> str:
-    """Format models as a numbered list with VRAM annotations."""
+    """Format models as a numbered list with VRAM annotations.
+
+    Kept for parity with the v1.x tui_main surface so the existing
+    ``tests/test_cli/test_provider_ollama.py`` keeps working
+    unchanged.
+    """
     lines = ["\nAvailable Ollama models:\n"]
 
     for i, model in enumerate(models, 1):
@@ -291,7 +423,18 @@ def _format_model_list(
             elif not model.fits_in_vram(vram_gb):
                 suffix = " ⚠️ May exceed available VRAM"
 
-        lines.append(f"  {prefix}{i}) {model.name:<20s} ({size_str}){suffix}")
+        lines.append(
+            f"  {prefix}{i}) {model.name:<20s} ({size_str}){suffix}"
+        )
 
     lines.append("")
     return "\n".join(lines)
+
+
+# Allow ``python -m llm_code.cli.main`` to invoke the Click command.
+# Without this guard the module imports cleanly but does nothing — the
+# subprocess-based swarm backends and the M11.6 smoke test both rely
+# on running ``python -m llm_code.cli.main ...``, which needs a
+# module-level call to the click command.
+if __name__ == "__main__":
+    main()

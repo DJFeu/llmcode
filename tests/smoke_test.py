@@ -28,7 +28,7 @@ def _skip(msg: str) -> None:
 def test_import():
     """Core modules should import without error."""
     modules = [
-        "llm_code.cli.tui_main",
+        "llm_code.cli.main",
         "llm_code.cli.commands",
         "llm_code.cli.oneshot",
         "llm_code.runtime.config",
