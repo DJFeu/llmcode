@@ -149,7 +149,7 @@ class ViewStreamRenderer:
         # Shared StreamParser: TEXT / THINKING / TOOL_CALL state machine
         # used by both runtime dispatch and view rendering. Imported
         # lazily so module import stays cheap.
-        from llm_code.tui.stream_parser import StreamEventKind, StreamParser
+        from llm_code.view.stream_parser import StreamEventKind, StreamParser
 
         _profile = getattr(runtime, "_model_profile", None)
         _implicit_thinking = (
@@ -357,7 +357,7 @@ class ViewStreamRenderer:
                 thinking_buffer[:120],
             )
             try:
-                from llm_code.tui.app import _empty_response_message
+                from llm_code.view.diagnostics import _empty_response_message
                 session_msgs = (
                     runtime.session.messages if runtime.session else None
                 )
@@ -405,7 +405,7 @@ class ViewStreamRenderer:
             "length", "max_tokens",
         ):
             try:
-                from llm_code.tui.app import _truncation_warning_message
+                from llm_code.view.diagnostics import _truncation_warning_message
                 session_msgs = (
                     runtime.session.messages if runtime.session else None
                 )

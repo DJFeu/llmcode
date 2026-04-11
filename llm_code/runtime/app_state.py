@@ -190,10 +190,12 @@ class AppState:
 
         # Core tools — collaborator-free set shared with run_quick_mode.
         # The register function is injected by the caller, or we fall
-        # back to the tui/app.py implementation until M11 relocates it.
+        # back to the shared runtime helper.
         state.tool_reg = ToolRegistry()
         if register_core_tools is None:
-            from llm_code.tui.app import _register_core_tools as _rct
+            from llm_code.runtime.core_tools import (
+                register_core_tools as _rct,
+            )
             register_core_tools = _rct
         register_core_tools(state.tool_reg, config)
 

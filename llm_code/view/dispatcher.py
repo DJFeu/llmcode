@@ -559,13 +559,8 @@ class CommandDispatcher:
             target = self._state.cwd / default_name
 
         try:
-            # Delegate to the v1.x helper until M11 relocates it —
-            # the function is a pure session-to-markdown renderer and
-            # has no widget dependencies.
-            from llm_code.tui.command_dispatcher import (
-                _render_session_markdown,
-            )
-            markdown = _render_session_markdown(session)
+            from llm_code.view.session_export import render_session_markdown
+            markdown = render_session_markdown(session)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(markdown, encoding="utf-8")
         except Exception as exc:  # noqa: BLE001
@@ -833,7 +828,7 @@ class CommandDispatcher:
         parts = args.strip().split(None, 1)
         if len(parts) < 2:
             try:
-                from llm_code.tui.settings_modal import editable_fields
+                from llm_code.view.settings import editable_fields
                 fields = ", ".join(sorted(editable_fields()))
                 self._view.print_info(
                     f"Usage: /set <key> <value>\nEditable: {fields}"
@@ -847,7 +842,7 @@ class CommandDispatcher:
             self._view.print_error("Config not initialized.")
             return
         try:
-            from llm_code.tui.settings_modal import apply_setting
+            from llm_code.view.settings import apply_setting
             self._state.config = apply_setting(cfg, key, value)
             if self._state.runtime is not None:
                 self._state.runtime._config = self._state.config
@@ -866,7 +861,7 @@ class CommandDispatcher:
             self._view.print_info("No config loaded.")
             return
         try:
-            from llm_code.tui.settings_modal import (
+            from llm_code.view.settings import (
                 build_settings_sections,
                 render_sections_text,
             )
