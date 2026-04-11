@@ -26,7 +26,15 @@ class VoiceConfig:
     google_language_code: str = ""
     anthropic_ws_url: str = "wss://api.anthropic.com"
     language: str = "en"
-    hotkey: str = "ctrl+space"
+    # Toggle hotkey bound at the InputBar. Default is Ctrl+G (ASCII
+    # BEL, 0x07) because Ctrl+Space collides with the macOS Input
+    # Source switcher on a default system — the OS swallows the key
+    # before it reaches the terminal, so the binding looks "broken"
+    # to the user. Ctrl+G has no system-level binding on macOS and
+    # is rarely used by shells (readline treats it as abort-input,
+    # which is harmless inside a TUI). Change to any Textual key
+    # name if you want a different binding.
+    hotkey: str = "ctrl+g"
     # Local faster-whisper model size when backend == "local".
     # One of: tiny | base | small | medium | large-v3. Larger = slower
     # but more accurate; downloaded lazily into ~/.cache/huggingface/.
@@ -36,9 +44,13 @@ class VoiceConfig:
     # capture down without waiting for an explicit `/voice off`.
     # 0 disables VAD entirely (old behavior — user must stop manually).
     silence_seconds: float = 2.0
-    # RMS proxy threshold (mean absolute 16-bit sample value) below
-    # which a chunk counts as silent. Tune up in noisy environments.
-    silence_threshold: int = 500
+    # Peak 16-bit sample amplitude below which a chunk counts as
+    # silent. Speech peaks at 10000-20000 on the first syllable;
+    # room silence / fan hum / mic self-noise rarely peak above 2000.
+    # 3000 leaves a comfortable margin. Raise if VAD triggers too
+    # early in noisy environments (you'll see it never fire); lower
+    # if VAD refuses to stop in a quiet room.
+    silence_threshold: int = 3000
 
 
 @dataclass(frozen=True)

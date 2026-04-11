@@ -121,11 +121,19 @@ class AudioRecorder:
     down automatically — no per-chunk callback plumbing required.
     """
 
-    # Threshold chosen for 16-bit PCM microphone input. 500 is roughly
-    # "very quiet room" — a real voice pushes this into the thousands
-    # on the first vowel. Tune via the ``silence_threshold`` ctor arg
-    # if your environment is noisy.
-    _DEFAULT_SILENCE_THRESHOLD = 500
+    # Peak-amplitude threshold for 16-bit PCM. Speech generates sharp
+    # transient peaks in the 10000–20000 range on the first syllable;
+    # room silence, fan noise, and mic self-noise rarely peak above
+    # 2500 even on noisy laptops. 3000 leaves a comfortable margin so
+    # a single pop or click doesn't reset the silence window, while
+    # still catching real speech reliably.
+    #
+    # The earlier default (500, mean-based) was too aggressive: a
+    # MacBook's built-in mic with ambient fan noise was regularly
+    # running at a 600–1500 *mean*, so the silence window never
+    # started and VAD auto-stop never fired. Peak detection with a
+    # higher floor catches speech cleanly and ignores ambient hiss.
+    _DEFAULT_SILENCE_THRESHOLD = 3000
 
     def __init__(
         self,
@@ -152,6 +160,11 @@ class AudioRecorder:
         # Set by should_auto_stop() once the silence window is hit so
         # the TUI knows whether to stop on its own vs. at user command.
         self._auto_stopped = False
+        # Live instrumentation — updated each chunk so the /voice
+        # status view can show "current peak / mean" and the user
+        # can tune silence_threshold without guessing.
+        self._last_peak: int = 0
+        self._last_mean: float = 0.0
 
     def start(self) -> None:
         """Begin recording audio."""
@@ -233,10 +246,18 @@ class AudioRecorder:
     def _update_silence_tracker(self, chunk: bytes) -> None:
         """Internal: update the silence timer from a freshly-read PCM chunk.
 
-        Computes the chunk's mean absolute sample value (a cheap RMS
-        proxy — good enough for "is there anyone talking" and avoids
-        a numpy dependency). Values below ``_silence_threshold`` start
-        / continue a silence window; values above reset it.
+        Uses **peak** detection rather than mean/RMS — speech produces
+        sharp transient peaks in the 10000–20000 range even when the
+        *average* is dragged down by between-syllable gaps, while
+        room silence / mic self-noise / fan hum rarely peaks above
+        2000. Peak detection therefore gives a cleaner speech-vs-
+        silence signal on real laptops.
+
+        An earlier version used the mean absolute sample value with a
+        500 threshold; on a MacBook with ambient fan noise the mean
+        regularly sat at 600–1500, so the silence window never
+        started and VAD auto-stop never fired. Switching to peaks
+        fixed it without requiring per-environment calibration.
         """
         if self._silence_seconds <= 0.0 or not chunk:
             return
@@ -249,9 +270,21 @@ class AudioRecorder:
         samples.frombytes(chunk[:usable])
         if not samples:
             return
-        mean_abs = sum(abs(s) for s in samples) / len(samples)
+        # Single pass: compute both peak and mean so `_last_peak` /
+        # `_last_mean` are available for live instrumentation (the
+        # `/voice` status command shows them so users can tune their
+        # silence_threshold without guessing).
+        peak = 0
+        total = 0
+        for s in samples:
+            a = -s if s < 0 else s
+            if a > peak:
+                peak = a
+            total += a
+        self._last_peak = peak
+        self._last_mean = total / len(samples)
         now = time.monotonic()
-        if mean_abs < self._silence_threshold:
+        if peak < self._silence_threshold:
             if self._silence_start is None:
                 self._silence_start = now
         else:
@@ -264,7 +297,14 @@ class AudioRecorder:
             if self._recording:
                 chunk = indata.tobytes()
                 self._buffer.extend(chunk)
-                self._update_silence_tracker(chunk)
+                # Silence tracking must never crash the audio callback
+                # — a bug here would otherwise kill the stream silently
+                # and leave the user stuck with a recording that won't
+                # stop. Swallow and continue instead.
+                try:
+                    self._update_silence_tracker(chunk)
+                except Exception:
+                    pass
 
         self._stream = sd.RawInputStream(
             samplerate=self.sample_rate,

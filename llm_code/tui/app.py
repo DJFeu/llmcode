@@ -459,13 +459,26 @@ class LLMCodeTUI(App):  # noqa: E302
             text.append(f"  {label:<14}", style="yellow")
             text.append(f" {value}\n", style="bold white")
         text.append("\n")
-        for label, value in [
+        quick_rows = [
             ("Quick start", "/help · /skill · /mcp"),
             ("Multiline", "Shift+Enter or Ctrl+J"),
             ("Images", paste_key),
             ("Scroll", "PageUp/Down · Shift+↑/↓"),
             ("Cycle agent", "Shift+Tab or Ctrl+Y (build/plan/suggest)"),
-        ]:
+        ]
+        # Only surface the voice hotkey when voice is actually enabled
+        # in config — otherwise the hint is just noise for the 95% of
+        # users who never touch it. Falls back to "ctrl+g" default so
+        # the hint still lists something sensible if hotkey is unset.
+        voice_cfg = getattr(self._config, "voice", None) if self._config else None
+        if voice_cfg and getattr(voice_cfg, "enabled", False):
+            hotkey = (getattr(voice_cfg, "hotkey", "") or "ctrl+g").strip()
+            # Nicer-looking display: "ctrl+g" → "Ctrl+G"
+            pretty = "+".join(part.capitalize() for part in hotkey.split("+"))
+            quick_rows.append(
+                ("Voice", f"{pretty} to start/stop (auto-stops on silence)")
+            )
+        for label, value in quick_rows:
             text.append(f"  {label:<14}", style="dim")
             text.append(f" {value}\n", style="white")
         text.append("\n")

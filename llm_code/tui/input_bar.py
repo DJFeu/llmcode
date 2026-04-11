@@ -202,14 +202,35 @@ class InputBar(Widget):
         # ── Voice hotkey toggle ───────────────────────────────────────
         # Terminals don't deliver keyup events, so a true push-to-talk
         # is impossible in most shells. Instead we toggle: first press
-        # runs `/voice on`, second press runs `/voice off`. The default
-        # binding is Ctrl+Space, which shows up under several different
-        # normalizations depending on the terminal emulator:
-        #   - Textual with the kitty keyboard protocol → "ctrl+space"
-        #   - Legacy ANSI terminals → "ctrl+@" (NUL byte)
-        # We accept both so the feature works across Warp, iTerm2,
-        # Terminal.app, and the stock Linux VTs.
-        if event.key in ("ctrl+space", "ctrl+@"):
+        # runs `/voice on`, second press runs `/voice off`.
+        #
+        # The binding is read from `config.voice.hotkey` (default:
+        # "ctrl+g"). We ALSO always accept a small hardcoded fallback
+        # set so the feature keeps working even when the configured
+        # key is intercepted by a higher layer:
+        #
+        #   - "ctrl+g" — ASCII BEL, rarely claimed by shell/terminal
+        #   - "ctrl+space" / "ctrl+@" — user might still have this in
+        #     config.json; on macOS default it collides with the OS
+        #     Input Source switcher (useless there) but on Linux /
+        #     kitty-protocol terminals it works fine
+        #   - "f9" — function key, passes through on nearly every
+        #     terminal
+        #
+        # Ctrl+Space is NOT the default any more because macOS eats
+        # it system-wide before it reaches Textual. Users who want it
+        # back just set `"hotkey": "ctrl+space"` in config.json.
+        configured = "ctrl+g"
+        try:
+            app_cfg = getattr(self.app, "_config", None)
+            voice_cfg = getattr(app_cfg, "voice", None) if app_cfg else None
+            if voice_cfg and voice_cfg.hotkey:
+                configured = str(voice_cfg.hotkey).strip().lower()
+        except Exception:
+            pass
+
+        voice_hotkeys = {configured, "ctrl+g", "ctrl+space", "ctrl+@", "f9"}
+        if event.key in voice_hotkeys:
             try:
                 app_ref = self.app
                 dispatcher = getattr(app_ref, "_cmd_dispatcher", None)

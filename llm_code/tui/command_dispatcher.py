@@ -1482,17 +1482,49 @@ class CommandDispatcher:
         # tell at a glance whether they need to run `/voice off`.
         if arg == "":
             if self._app._voice_active:
+                rec = self._app._voice_recorder
+                elapsed = 0.0
+                peak = 0
+                mean = 0.0
+                if rec is not None:
+                    # Coerce to plain numeric types so the f-string
+                    # formatting below can't blow up if a test passes
+                    # a bare MagicMock whose attributes are still
+                    # auto-generated child mocks.
+                    try:
+                        elapsed = float(rec.elapsed_seconds())
+                    except Exception:
+                        elapsed = 0.0
+                    try:
+                        peak = int(getattr(rec, "_last_peak", 0) or 0)
+                    except Exception:
+                        peak = 0
+                    try:
+                        mean = float(getattr(rec, "_last_mean", 0.0) or 0.0)
+                    except Exception:
+                        mean = 0.0
+                vad_hint = (
+                    f"VAD: peak {peak} / mean {mean:.0f} "
+                    f"(silent <{cfg.silence_threshold}, {cfg.silence_seconds:g}s window)"
+                    if cfg.silence_seconds > 0 else
+                    "VAD: disabled"
+                )
                 chat.add_entry(AssistantText(
-                    "🎤 **Voice: recording** — run `/voice off` to stop "
-                    "and transcribe.\n"
-                    f"Backend: {cfg.backend}   Language: {cfg.language}"
+                    f"🎤 **Voice: recording** — {elapsed:.1f}s elapsed. "
+                    "Run `/voice off` or press the hotkey to stop and transcribe.\n"
+                    f"Backend: {cfg.backend}   Language: {cfg.language}\n"
+                    f"{vad_hint}"
                 ))
             else:
+                hk_pretty = "+".join(
+                    p.capitalize() for p in (cfg.hotkey or "ctrl+g").split("+")
+                )
                 chat.add_entry(AssistantText(
                     "Voice: idle\n"
-                    f"Backend: {cfg.backend}   Language: {cfg.language}\n"
-                    "Usage: `/voice on` to start recording, "
-                    "`/voice off` to stop and transcribe."
+                    f"Backend: {cfg.backend}   Language: {cfg.language}   "
+                    f"Hotkey: {hk_pretty}\n"
+                    f"Usage: `/voice on` (or press {hk_pretty}) to start "
+                    "recording, `/voice off` (or the hotkey again) to stop."
                 ))
             return
 

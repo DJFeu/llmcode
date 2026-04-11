@@ -71,15 +71,18 @@ class TestAudioRecorder:
 
 
 class TestAudioRecorderVAD:
-    """Silence detection / auto-stop."""
+    """Peak-based silence detection / auto-stop."""
 
-    def _silent_chunk(self, n_samples: int = 1024) -> bytes:
-        """Produce a PCM chunk whose samples are all zero (pure silence)."""
-        return struct.pack(f"<{n_samples}h", *([0] * n_samples))
+    def _silent_chunk(self, n_samples: int = 1024, noise_floor: int = 0) -> bytes:
+        """Produce a quiet PCM chunk — all samples at ±noise_floor."""
+        samples = [
+            noise_floor if i % 2 == 0 else -noise_floor for i in range(n_samples)
+        ]
+        return struct.pack(f"<{n_samples}h", *samples)
 
-    def _loud_chunk(self, n_samples: int = 1024, amp: int = 8000) -> bytes:
-        """Produce a PCM chunk alternating +amp / -amp → mean |s| == amp."""
-        samples = [amp if i % 2 == 0 else -amp for i in range(n_samples)]
+    def _loud_chunk(self, n_samples: int = 1024, peak: int = 10000) -> bytes:
+        """Produce a chunk with a speech-like peak amplitude."""
+        samples = [peak if i % 2 == 0 else -peak for i in range(n_samples)]
         return struct.pack(f"<{n_samples}h", *samples)
 
     def test_vad_disabled_never_auto_stops(self):
@@ -93,29 +96,46 @@ class TestAudioRecorderVAD:
         rec = AudioRecorder(
             backend=RecorderBackend.SOUNDDEVICE,
             silence_seconds=0.5,
-            silence_threshold=500,
+            silence_threshold=3000,
         )
         rec._recording = True
-        rec._update_silence_tracker(self._silent_chunk())
+        rec._update_silence_tracker(self._silent_chunk(noise_floor=100))
         assert rec._silence_start is not None
 
-    def test_loud_chunk_resets_silence_window(self):
+    def test_noisy_room_below_peak_threshold_still_silent(self):
+        """A real MacBook mic with fan hum pushes mean to ~800 and peak
+        to ~1500. Peak detection with a 3000 default floor should
+        still treat that as silence so VAD fires cleanly."""
         rec = AudioRecorder(
             backend=RecorderBackend.SOUNDDEVICE,
             silence_seconds=0.5,
-            silence_threshold=500,
+            silence_threshold=3000,
         )
         rec._recording = True
-        rec._update_silence_tracker(self._silent_chunk())
+        # Simulate noisy-room PCM: peak ~1500 (well below 3000).
+        rec._update_silence_tracker(self._loud_chunk(peak=1500))
         assert rec._silence_start is not None
-        rec._update_silence_tracker(self._loud_chunk())
+        assert rec._last_peak == 1500
+
+    def test_loud_chunk_resets_silence_window(self):
+        """A speech-like peak above the threshold clears the window."""
+        rec = AudioRecorder(
+            backend=RecorderBackend.SOUNDDEVICE,
+            silence_seconds=0.5,
+            silence_threshold=3000,
+        )
+        rec._recording = True
+        rec._update_silence_tracker(self._silent_chunk(noise_floor=200))
+        assert rec._silence_start is not None
+        rec._update_silence_tracker(self._loud_chunk(peak=10000))
         assert rec._silence_start is None
+        assert rec._last_peak == 10000
 
     def test_should_auto_stop_returns_true_after_window(self, monkeypatch):
         rec = AudioRecorder(
             backend=RecorderBackend.SOUNDDEVICE,
             silence_seconds=0.1,
-            silence_threshold=500,
+            silence_threshold=3000,
         )
         rec._recording = True
 
@@ -159,3 +179,18 @@ class TestAudioRecorderVAD:
         rec._recording = True
         rec._update_silence_tracker(b"")
         assert rec._silence_start is None
+        assert rec._last_peak == 0
+
+    def test_last_peak_and_mean_updated_for_instrumentation(self):
+        """The `/voice` status command shows these values so users
+        can tune silence_threshold — they must reflect the most recent
+        chunk, not be stuck at zero."""
+        rec = AudioRecorder(
+            backend=RecorderBackend.SOUNDDEVICE,
+            silence_seconds=0.5,
+            silence_threshold=3000,
+        )
+        rec._recording = True
+        rec._update_silence_tracker(self._loud_chunk(peak=7500))
+        assert rec._last_peak == 7500
+        assert rec._last_mean == 7500

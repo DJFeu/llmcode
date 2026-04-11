@@ -11,7 +11,15 @@ class TestVoiceConfig:
         assert vc.backend == "whisper"
         assert vc.whisper_url == "http://localhost:8000/v1/audio/transcriptions"
         assert vc.language == "en"
-        assert vc.hotkey == "ctrl+space"
+        # Default hotkey is Ctrl+G (ASCII BEL). Ctrl+Space was the
+        # previous default but collides with the macOS Input Source
+        # switcher system-wide, so the hotkey never reached Textual.
+        assert vc.hotkey == "ctrl+g"
+        # VAD defaults — peak-based detection with a 3000-sample
+        # amplitude floor, 2-second window.
+        assert vc.silence_seconds == 2.0
+        assert vc.silence_threshold == 3000
+        assert vc.local_model == "base"
 
     def test_frozen(self):
         vc = VoiceConfig()
