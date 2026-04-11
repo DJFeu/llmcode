@@ -18,16 +18,18 @@ components into the layout slots.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Optional
 
 from prompt_toolkit import Application
 from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import HSplit, Layout, Window
-from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.layout import FloatContainer, HSplit, Layout, Window
+from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.styles import Style
 from rich.console import Console
 
+from llm_code.view.repl.components.input_area import InputArea
+from llm_code.view.repl.history import PromptHistory, default_history_path
+from llm_code.view.repl.keybindings import build_keybindings
 from llm_code.view.types import (
     MessageEvent,
     StatusUpdate,
@@ -52,13 +54,15 @@ class ScreenCoordinator:
 
     Component plug-in points (used in M4-M9):
 
-    - ``_status_text_fn`` — callable returning the status line string.
+    - ``_status_text`` — callable returning the status line string.
       M5 replaces the placeholder with a StatusLine component.
-    - ``_input_buffer`` — the prompt_toolkit Buffer for user typing.
-      M4 swaps the barebones Buffer for an InputArea component with
-      multi-line, slash-popover, and keybinding integration.
-    - ``_key_bindings`` — the PT KeyBindings. M4 adds Enter/Shift+Enter/
-      Ctrl+G/history/etc. M3 only wires Ctrl+D -> exit.
+    - ``_input_area`` — the InputArea component owning the PT Buffer,
+      slash completer, popover Float, and dynamic window height. Added
+      in M4.
+    - ``_key_bindings`` — produced by ``build_keybindings()`` in
+      ``view/repl/keybindings.py``. M4 wires Enter/Ctrl+D/Ctrl+C/
+      Ctrl+J/Alt+Enter/Ctrl+U/Ctrl+Up/Ctrl+Down. M9 adds the voice
+      hotkey via the ``on_voice_toggle`` parameter.
     - ``_extra_layout_rows`` — optional HSplit children inserted above
       the input area. M6/M7 use this for ConditionalContainer-wrapped
       voice overlays, rate limit warnings, etc.
@@ -79,10 +83,8 @@ class ScreenCoordinator:
         self._exit_event = asyncio.Event()
         self._exit_requested = False
 
-        # prompt_toolkit state — constructed in start()
+        # prompt_toolkit state — Application constructed in start()
         self._app: Optional[Application] = None
-        self._input_buffer: Buffer = Buffer(multiline=True)
-        self._key_bindings = KeyBindings()
 
         # Input callback installed by backend.set_input_handler()
         self._input_callback: Optional[InputCallback] = None
@@ -90,33 +92,35 @@ class ScreenCoordinator:
         # Status state — M5 expands this into StatusLine component
         self._current_status = StatusUpdate()
 
-        # Pre-register Ctrl+D to exit. M4 adds Enter/Shift+Enter/etc.
-        @self._key_bindings.add("c-d")
-        def _exit(event: Any) -> None:
-            # Ctrl+D: exit on empty input buffer, delete-char otherwise
-            if not self._input_buffer.text:
-                self.request_exit()
-                event.app.exit()
+        # M4: input area + slash popover + history, plus the KeyBindings
+        # factory from keybindings.py. Replaces the M3 inline closures.
+        self._history = PromptHistory(path=default_history_path())
+        self._input_area = InputArea()
+        self._key_bindings = build_keybindings(
+            input_buffer=self._input_area.buffer,
+            history=self._history,
+            on_submit=self._handle_submit,
+            on_exit=self.request_exit,
+            on_voice_toggle=None,  # M9 wires this
+        )
 
-        # Ctrl+C: clear input, or exit if already empty
-        @self._key_bindings.add("c-c")
-        def _interrupt(event: Any) -> None:
-            if self._input_buffer.text:
-                self._input_buffer.reset()
-            else:
-                self.request_exit()
-                event.app.exit()
+    # M3 Buffer is now owned by InputArea; expose a pass-through property
+    # so any external caller that historically used `coord._input_buffer`
+    # keeps working during the transition.
+    @property
+    def input_buffer(self) -> Buffer:
+        return self._input_area.buffer
 
-        # Enter: submit current buffer to the input callback
-        @self._key_bindings.add("enter")
-        def _submit(event: Any) -> None:
-            text = self._input_buffer.text.strip()
-            if not text:
-                return
-            self._input_buffer.reset()
-            if self._input_callback is not None:
-                asyncio.create_task(self._invoke_callback(text))
-            event.app.invalidate()
+    def _handle_submit(self, text: str) -> None:
+        """Called by the Enter keybinding with the submitted text.
+
+        Records the entry in prompt history, then schedules the async
+        input callback (if one is installed) so the dispatcher can
+        process the turn.
+        """
+        self._history.add(text)
+        if self._input_callback is not None:
+            asyncio.create_task(self._invoke_callback(text))
 
     async def _invoke_callback(self, text: str) -> None:
         """Wrap input_callback invocation so exceptions don't kill the
@@ -186,23 +190,29 @@ class ScreenCoordinator:
     # === Layout construction ===
 
     def _build_layout(self) -> Layout:
-        """Build the bottom layout: placeholder status line + empty input area.
+        """Build the REPL bottom layout.
 
-        Components in M4+ replace these placeholders via the coordinator's
-        layout swap API (to be designed when M4 needs it). For now, the
-        layout is static with placeholder content.
+        Structure:
+            FloatContainer
+            |- HSplit
+            |  |- status line (1 row, reverse video)
+            |  |- InputArea window (1-12 rows, dynamic)
+            |- Float: slash-completion popover (ConditionalContainer,
+               only shown when input starts with '/')
         """
         status_window = Window(
             FormattedTextControl(self._status_text),
             height=1,
             style="class:status",
         )
-        input_window = Window(
-            BufferControl(buffer=self._input_buffer),
-            height=3,
-            style="class:input",
+        input_window = self._input_area.build_window()
+        popover_float = self._input_area.build_popover_float()
+        return Layout(
+            FloatContainer(
+                content=HSplit([status_window, input_window]),
+                floats=[popover_float],
+            )
         )
-        return Layout(HSplit([status_window, input_window]))
 
     def _status_text(self) -> str:
         """Current status line as a plain string.
