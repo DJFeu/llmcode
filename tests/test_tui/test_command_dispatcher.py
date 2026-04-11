@@ -185,6 +185,58 @@ def test_cmd_voice_off_when_inactive_is_noop():
     app.run_worker.assert_not_called()
 
 
+def test_cmd_voice_typo_does_not_stop_recording():
+    """A typo like `/voice /oof` must not silently be treated as a
+    status query; the user's recording session must stay intact and
+    the dispatcher must surface an error.
+
+    Previously `/voice /oof` fell through to the bare-`/voice` status
+    branch, so a user who mis-typed `off` thought they had stopped
+    recording but was still recording in the background.
+    """
+    from llm_code.tui.command_dispatcher import CommandDispatcher
+
+    app = _make_voice_app()
+    recorder = MagicMock()
+    app._voice_active = True
+    app._voice_recorder = recorder
+    app._voice_stt = MagicMock()
+
+    dispatcher = CommandDispatcher(app)
+    dispatcher._cmd_voice("/oof")
+
+    # Recording still running — the typo did not flip active off.
+    assert app._voice_active is True
+    assert app._voice_recorder is recorder
+    # No worker dispatched, because no transcription happened.
+    app.run_worker.assert_not_called()
+    # recorder.stop was NOT called — the mis-typed command must not
+    # silently tear down the capture loop.
+    recorder.stop.assert_not_called()
+
+
+def test_cmd_voice_bare_shows_status_when_idle():
+    from llm_code.tui.command_dispatcher import CommandDispatcher
+
+    app = _make_voice_app()
+    dispatcher = CommandDispatcher(app)
+    dispatcher._cmd_voice("")
+    # Must not raise and must not flip any state.
+    assert app._voice_active is False
+
+
+def test_cmd_voice_bare_shows_recording_state_when_active():
+    from llm_code.tui.command_dispatcher import CommandDispatcher
+
+    app = _make_voice_app()
+    app._voice_active = True
+    app._voice_recorder = MagicMock()
+    dispatcher = CommandDispatcher(app)
+    dispatcher._cmd_voice("")
+    # Still recording — bare `/voice` must not tear it down.
+    assert app._voice_active is True
+
+
 # ── /export tests ──────────────────────────────────────────────────────
 
 

@@ -1457,13 +1457,39 @@ class CommandDispatcher:
             )
             return
 
-        # Bare `/voice` — status/help.
-        state = "recording 🎤" if self._app._voice_active else "idle"
+        # Bare `/voice` — status/help. Recording-state is explicitly
+        # spelled out so a user who's in the middle of a session can
+        # tell at a glance whether they need to run `/voice off`.
+        if arg == "":
+            if self._app._voice_active:
+                chat.add_entry(AssistantText(
+                    "🎤 **Voice: recording** — run `/voice off` to stop "
+                    "and transcribe.\n"
+                    f"Backend: {cfg.backend}   Language: {cfg.language}"
+                ))
+            else:
+                chat.add_entry(AssistantText(
+                    "Voice: idle\n"
+                    f"Backend: {cfg.backend}   Language: {cfg.language}\n"
+                    "Usage: `/voice on` to start recording, "
+                    "`/voice off` to stop and transcribe."
+                ))
+            return
+
+        # Any other argument is a typo (`/voice /oof`, `/voice ono`, …).
+        # Reject loudly so the user doesn't silently keep recording
+        # while thinking the command went through.
+        active_hint = (
+            "\n\n⚠️ **Still recording** — run `/voice off` (literal) "
+            "to stop and transcribe."
+            if self._app._voice_active
+            else ""
+        )
         chat.add_entry(AssistantText(
-            f"Voice: {state}\n"
-            f"Backend: {cfg.backend}\n"
-            f"Language: {cfg.language}\n"
-            f"Usage: /voice [on|off]"
+            f"Unknown `/voice` subcommand: `{arg}`\n"
+            "Usage: `/voice` (status), `/voice on` (start recording), "
+            "`/voice off` (stop + transcribe)."
+            + active_hint
         ))
 
     async def _transcribe_voice(
