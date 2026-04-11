@@ -7,7 +7,7 @@ only so swapping backends at runtime is a one-line change.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Generic, Protocol, Sequence, TypeVar
+from typing import Callable, Generic, Optional, Protocol, Sequence, TypeVar
 
 T = TypeVar("T")
 
@@ -47,7 +47,11 @@ class DialogValidationError(ValueError):
 
 
 # A validator returns None for "OK" or a string describing the error.
-TextValidator = Callable[[str], str | None]
+# NOTE: ``Optional[str]`` rather than ``str | None`` because this is a
+# module-level type alias — it is eval'd at import time, and PEP 604
+# unions are runtime-legal only on Python 3.10+. ``from __future__ import
+# annotations`` does not cover this line.
+TextValidator = Callable[[str], Optional[str]]
 
 
 class Dialogs(Protocol):

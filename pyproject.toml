@@ -34,6 +34,13 @@ dependencies = [
     # tomllib entered the stdlib in 3.11; pull tomli (same API) on older
     # interpreters so model_profile._load_toml keeps working on 3.9/3.10.
     'tomli>=2.0 ; python_version < "3.11"',
+    # Pydantic resolves model field annotations at class creation time.
+    # `from __future__ import annotations` stores them as strings, but
+    # Pydantic still resolves those strings, and PEP 604 unions like
+    # `str | None` are runtime-legal only on Python 3.10+. This backport
+    # package rewrites the AST so the resolution succeeds on 3.9 —
+    # Pydantic itself points users to this package in its error message.
+    'eval_type_backport>=0.2 ; python_version < "3.10"',
 ]
 
 [project.urls]
