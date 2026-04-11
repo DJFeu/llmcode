@@ -1,5 +1,195 @@
 # Changelog
 
+## v2.0.0 — REPL Mode: native terminal UX, ViewBackend Protocol, Textual TUI removed
+
+Major rewrite of llmcode's view layer, delivering on the "permanently
+solve the class of bugs that drove v1.17 through v1.23 to re-flip the
+mouse-capture setting four times" promise. llmcode now launches a
+line-streaming REPL built on prompt_toolkit + Rich instead of a Textual
+fullscreen TUI. Your config, sessions, history, and all 53 slash
+commands carry over unchanged.
+
+See [`docs/migration-v2.md`](docs/migration-v2.md) for the full
+upgrade guide. TL;DR: `pip install -U llmcode-cli`.
+
+### 🚨 Breaking changes
+
+- **Textual fullscreen TUI removed.** `llmcode` now launches a
+  line-streaming REPL built on prompt_toolkit + Rich. All your
+  config, sessions, history, and slash commands carry over; only
+  the visual presentation is different.
+- **No commands are removed.** All 53 slash commands still work.
+  A few interactive *flows* changed because their Textual widgets
+  no longer exist:
+  - **`/help`** — was a three-tab modal; now an inline print into
+    scrollback (searchable + copyable natively).
+  - **`/settings`** — was a modal; now an inline print. Edit
+    fields with `/set <key> <value>`.
+  - **`/skill`, `/mcp`, `/plugin`** (no sub-command) — was a
+    marketplace card browser; now a plain list + usage hint. The
+    `install`, `enable`, `disable`, `remove` sub-commands are
+    unchanged.
+  - **`/theme`** — now honors your terminal's own palette via
+    Rich; the runtime theme switcher is gone.
+  - **`/vim`** — prompt_toolkit has its own vim-mode layer that
+    isn't runtime-toggleable from a slash command yet. The
+    command prints a note.
+- **Textual dependency removed.** `pip install llmcode-cli` no
+  longer pulls `textual>=1.0`. If you had Python 3.9 environments
+  that needed Textual for unrelated reasons, that's your
+  responsibility now.
+- **Backwards-compat shim kept** at
+  `llm_code.streaming.stream_parser` — it now re-exports from
+  `llm_code.view.stream_parser` so any out-of-tree consumer of
+  the canonical stream parser keeps working.
+
+### ✨ User-visible improvements
+
+- **Native mouse drag-select-copy** works in Warp / iTerm2 / Kitty /
+  macOS Terminal / xterm without holding any modifier.
+- **Terminal-native scroll wheel** scrolls the shell's scrollback as
+  it should. No more `/scroll` command or `Shift+↑↓` workaround.
+- **Terminal Find (⌘F / Ctrl+F)** works because llmcode no longer
+  enters alt-screen mode. Search your conversation history with the
+  terminal's own search.
+- **Warp AI block recognition**, **iTerm2 split panes**, and
+  **tmux copy-mode** all work correctly because llmcode doesn't
+  capture mouse events or take over the screen.
+- **OSC8 hyperlinks** click-through in Warp / iTerm2 / WezTerm.
+- **The v1.23.1 wheel-triggered `/voice` regression is structurally
+  impossible** in the new REPL — there is no mouse capture to
+  misroute scroll events into the input buffer.
+- **Faster cold start**: the REPL is up in well under a second on a
+  warm cache; the Textual TUI could take 2–3s on first run.
+
+### 🏗 Architecture
+
+- **New `llm_code/view/` package** contains the entire view layer:
+  - `base.py` — `ViewBackend` abstract base class, the extension
+    point for future platform backends (Telegram, Discord, Slack,
+    Web in v2.1+).
+  - `types.py` — `MessageEvent`, `StatusUpdate`, the
+    `StreamingMessageHandle` / `ToolEventHandle` Protocols.
+  - `dialog_types.py` — `Choice`, `DialogCancelled`,
+    `DialogValidationError`, `TextValidator`.
+  - `dispatcher.py` — 53 view-agnostic slash-command handlers
+    plus the top-level `run_turn` router.
+  - `stream_renderer.py` — consumes `runtime.run_turn`'s
+    `AsyncIterator[StreamEvent]` and drives any `ViewBackend`.
+  - `repl/` — the first-party REPL backend on prompt_toolkit + Rich.
+  - `diagnostics.py`, `session_export.py`, `settings.py`,
+    `stream_parser.py`, `headless.py`, `scripted.py` — utility
+    modules relocated from the deleted `tui/` package.
+- **`runtime/app_state.py`** — new `AppState` dataclass +
+  `from_config(config, cwd, ...)` factory. Replaces the ~30 state
+  fields that used to live on `LLMCodeTUI.__init__` + the
+  `RuntimeInitializer.initialize()` adapter, so the REPL backend
+  can construct the same subsystem graph without instantiating
+  a Textual app.
+- **`runtime/core_tools.py`** — the collaborator-free core tool
+  set registration helper, relocated from `tui/app.py`. Shared by
+  `AppState.from_config` and the headless `run_quick_mode` path.
+- **Old `llm_code/tui/` package deleted** — 30 files, ~9400 lines,
+  including `app.py`, `command_dispatcher.py` (2455 lines, 52
+  `_cmd_*` methods), `streaming_handler.py` (463 lines), the
+  chat/header/input/status widgets, the marketplace browser, the
+  settings modal, all four Textual dialog variants, and the
+  Textual theme system.
+- **`tests/test_tui/` + `tests/test_e2e_tui/` deleted** —
+  65 files / ~9400 lines of widget-coupled tests replaced by
+  view-layer equivalents. Two runtime-layer tests
+  (`test_register_core_tools`, `test_secret_redaction`) were
+  relocated to `tests/test_runtime/`.
+
+### 🎙 Voice input (M9 + M9.5)
+
+- New `PollingRecorderAdapter` bridges the real polling-API
+  `AudioRecorder` (sounddevice / sox / arecord) to the M9 backend's
+  callback interface, so voice **actually works** in production
+  v2.0.0. The earlier M9 path shipped with a callback-API
+  assumption that only the test FakeRecorder matched.
+- R3 (voice + asyncio deadlock) stress test scaled from 10 → 100
+  iterations + new `test_voice_during_active_streaming` and
+  `test_rapid_voice_restart` coverage.
+- Voice state (`voice_active`, `voice_recorder`, `voice_stt`) now
+  lives on `AppState` instead of on `REPLBackend`, so the `/voice`
+  command path and the `Ctrl+G` hotkey path share one source of
+  truth.
+
+### 🧪 Tests
+
+- **~900 new tests** across `tests/test_view/`, `tests/test_e2e_repl/`,
+  `tests/test_runtime/` (new AppState + renderer + dispatcher suites).
+- **Protocol conformance harness** in
+  `tests/test_view/test_protocol_conformance.py` — every future
+  `ViewBackend` subclass inherits the base test class for free.
+- **`StubRecordingBackend`** fixture for unit-level tests that want
+  logic coverage without a real terminal.
+- **`repl_pilot`** fixture for component tests driving a real
+  `REPLBackend` with a captured Rich Console.
+- **21 `pexpect` smoke tests** (`tests/test_e2e_repl/test_smoke.py`)
+  spawning the real `llmcode` binary in a pseudo-TTY and asserting
+  on visible terminal output — including hard architectural guards
+  that the REPL emits no alt-screen or mouse-tracking escape
+  sequences.
+- **22 snapshot goldens** (`tests/test_view/snapshots/`) for visual
+  regression coverage of StatusLine, ToolEventRegion, DialogPopover,
+  and Rich panels.
+- **LLMCODE_TEST_MODE** env var support in `cli/main.py`: when set,
+  plain-text submissions echo as `echo: <text>` instead of calling
+  the LLM, so end-to-end smoke tests can run without an API key.
+
+Full project suite: **5344 tests** passing at the v2.0.0 tag.
+(v1.23.1 was ~5488 including the now-deleted `test_tui/` tree.)
+
+### 📦 Dependencies
+
+- **Removed:** `textual>=1.0`
+- **Already present:** `prompt-toolkit>=3.0.47`, `rich>=13.0`
+- **Added to dev extras:** `pexpect>=4.9.0`
+
+### 🧹 Tech debt cleanups rolled in
+
+- `_screen_lock` dead code removed from `ScreenCoordinator` (was
+  never acquired by any production code path; YAGNI per the M0
+  PoC evidence).
+- `swarm/test_backend_subprocess.py` fixture rewritten to use
+  `MagicMock` for sync methods and `AsyncMock` for async methods,
+  eliminating a class of never-awaited-coroutine RuntimeWarnings.
+- `tests/test_integration_v4.py` provider fixture similarly
+  unwound for `supports_native_tools` / `supports_images` /
+  `supports_reasoning` sync methods.
+- `@pytest.mark.unit` registered in `pyproject.toml`'s
+  `[tool.pytest.ini_options].markers` so existing `unit` marker
+  uses no longer emit `PytestUnknownMarkWarning`.
+- All TypeScript-like `list[X]` / `dict[X, Y]` annotations reviewed
+  for Python 3.10+ compatibility.
+
+### Milestone trace
+
+This release is the end of the M0–M14 plan tree. Individual
+milestones:
+
+- **M0–M2**: Spec + `view/base.py` + `view/types.py` + Protocol
+  conformance harness
+- **M3–M9**: REPL component build (coordinator, input area, slash
+  popover, status line, live response, tool events, dialogs, voice)
+- **M9.5**: Voice adapter + `_screen_lock` deletion + stress test
+- **M10**: `AppState` + `ViewStreamRenderer` + `CommandDispatcher`
+  (the largest milestone — 4 sub-commits for the 53-command port)
+- **M11**: Cutover — `cli/main.py` rewrite, `tui/` + `test_tui/`
+  deletion, `textual` dependency removed
+- **M12**: Pexpect smoke suite
+- **M13**: Snapshot goldens
+- **M14**: Docs + release
+
+### Migration
+
+See [`docs/migration-v2.md`](docs/migration-v2.md) for the full
+upgrade guide.
+
+---
+
 ## v1.23.1 — TUI text selection + scroll-wheel-history collision, fixed
 
 Patch release addressing two tightly-coupled UX bugs in the Textual
