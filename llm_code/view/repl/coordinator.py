@@ -22,12 +22,16 @@ from typing import Awaitable, Callable, Optional
 
 from prompt_toolkit import Application
 from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.filters import Condition
+from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.layout import FloatContainer, HSplit, Layout, Window
+from prompt_toolkit.layout.containers import ConditionalContainer
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.styles import Style
 from rich.console import Console
 
 from llm_code.view.repl.components.input_area import InputArea
+from llm_code.view.repl.components.status_line import StatusLine
 from llm_code.view.repl.history import PromptHistory, default_history_path
 from llm_code.view.repl.keybindings import build_keybindings
 from llm_code.view.types import (
@@ -89,8 +93,9 @@ class ScreenCoordinator:
         # Input callback installed by backend.set_input_handler()
         self._input_callback: Optional[InputCallback] = None
 
-        # Status state — M5 expands this into StatusLine component
-        self._current_status = StatusUpdate()
+        # M5: StatusLine owns merged status state + formatted rendering.
+        # Replaces M3's raw StatusUpdate + inline format function.
+        self._status_line = StatusLine()
 
         # M4: input area + slash popover + history, plus the KeyBindings
         # factory from keybindings.py. Replaces the M3 inline closures.
@@ -195,11 +200,21 @@ class ScreenCoordinator:
         Structure:
             FloatContainer
             |- HSplit
+            |  |- rate-limit warning (ConditionalContainer, hidden by default)
             |  |- status line (1 row, reverse video)
             |  |- InputArea window (1-12 rows, dynamic)
             |- Float: slash-completion popover (ConditionalContainer,
                only shown when input starts with '/')
         """
+        rate_limit_warning = Window(
+            FormattedTextControl(self._status_line.render_rate_limit_warning),
+            height=1,
+            style="class:rate-limit",
+        )
+        rate_limit_container = ConditionalContainer(
+            content=rate_limit_warning,
+            filter=Condition(self._status_line.is_rate_limited),
+        )
         status_window = Window(
             FormattedTextControl(self._status_text),
             height=1,
@@ -209,23 +224,27 @@ class ScreenCoordinator:
         popover_float = self._input_area.build_popover_float()
         return Layout(
             FloatContainer(
-                content=HSplit([status_window, input_window]),
+                content=HSplit([
+                    rate_limit_container,
+                    status_window,
+                    input_window,
+                ]),
                 floats=[popover_float],
             )
         )
 
-    def _status_text(self) -> str:
-        """Current status line as a plain string.
-
-        M5 replaces this with a formatted-text function that renders
-        model/cost/tokens inline. For M3, it's an empty placeholder
-        to verify layout wiring works.
-        """
-        return " llmcode REPL — M3 skeleton "
+    def _status_text(self) -> FormattedText:
+        """Render the status line. Called by FormattedTextControl on each
+        PT redraw, so spinner advance and render happen in sync."""
+        self._status_line.advance_spinner()
+        return self._status_line.render_formatted_text()
 
     def _build_style(self) -> Style:
         return Style.from_dict({
             "status": "reverse",
+            "status.mode": "reverse fg:ansiyellow",
+            "status.spinner": "reverse fg:ansicyan",
+            "rate-limit": "fg:ansired reverse",
             "input": "",
         })
 
@@ -284,25 +303,17 @@ class ScreenCoordinator:
     # === Status ===
 
     def update_status(self, status: StatusUpdate) -> None:
-        """Merge a partial StatusUpdate into the current state.
+        """Merge a partial StatusUpdate into the StatusLine component.
 
-        M5 expands this to actually refresh the status line; for M3 we
-        just store it so tests can assert on the merged state.
+        Non-None fields overwrite current state; None fields are ignored.
+        Boolean False on ``is_streaming`` and ``voice_active`` is treated
+        as a meaningful clear (so the streaming spinner and voice mode
+        can be turned off explicitly).
         """
-        for field_name in status.__dataclass_fields__:
-            value = getattr(status, field_name)
-            # Merge rule: None = unchanged; False = unchanged (default);
-            # non-None non-False = overwrite
-            if value is None:
-                continue
-            if field_name == "is_streaming" and value is False:
-                # False on is_streaming is a meaningful clear, always apply
-                pass
-            setattr(self._current_status, field_name, value)
-
+        self._status_line.merge(status)
         if self._app is not None and self._app.is_running:
             self._app.invalidate()
 
     @property
     def current_status(self) -> StatusUpdate:
-        return self._current_status
+        return self._status_line.state
