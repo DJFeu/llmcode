@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Python 3.11+
+- Python 3.9+
 - A running LLM server (vLLM, Ollama, LM Studio, or OpenAI API)
 
 ## Installation

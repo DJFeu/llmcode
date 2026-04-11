@@ -305,8 +305,17 @@ def _detect_small_model(model_name: str) -> bool:
 
 
 def _load_toml(path: Path) -> dict[str, Any]:
-    """Load a TOML file and return the parsed dict."""
-    import tomllib
+    """Load a TOML file and return the parsed dict.
+
+    Uses the stdlib ``tomllib`` on Python 3.11+ and falls back to the
+    PyPI ``tomli`` package (declared in ``pyproject.toml`` as a
+    conditional dependency on older interpreters). Both have the same
+    ``load`` API.
+    """
+    try:
+        import tomllib  # Python 3.11+
+    except ImportError:  # pragma: no cover - exercised on 3.9/3.10 only
+        import tomli as tomllib  # type: ignore[import-not-found, no-redef]
     with open(path, "rb") as f:
         return tomllib.load(f)
 
