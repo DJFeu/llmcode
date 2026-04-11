@@ -242,20 +242,30 @@ class REPLBackend(ViewBackend):
     def _start_voice(self) -> None:
         """Begin recording. Lazily constructs the recorder on first use.
 
-        Note: the M9 backend glue assumes a callback-style recorder
-        API (``on_chunk_progress`` / ``on_auto_stop``). The real
-        ``llm_code.tools.voice.AudioRecorder`` currently uses a polling
-        interface, so this path falls through the try/except and prints
-        an error in production. Tests monkeypatch ``AudioRecorder``
-        with a callback-compatible FakeRecorder. A proper polling
-        adapter lands in M10/M11 when runtime wiring is revisited.
+        Wires the REPL's callback-style voice glue
+        (``_on_recorder_chunk`` / ``_on_recorder_auto_stop``) to the
+        polling ``AudioRecorder`` via :class:`PollingRecorderAdapter`
+        (M9.5). The adapter constructs a real ``AudioRecorder``, spins
+        a polling task on ``start()``, and fires callbacks from the
+        main asyncio loop — no background-thread juggling needed here.
+
+        Recorder construction and STT factory lookup are both wrapped
+        in try/except so a missing optional voice dependency, a denied
+        mic permission, or a bad STT config surfaces as an inline
+        "voice unavailable" message instead of an unhandled exception.
         """
         if self._recorder is None:
             try:
-                from llm_code.tools import voice as voice_module
-                self._recorder = voice_module.AudioRecorder(
+                from llm_code.view.repl.recorder_adapter import (
+                    PollingRecorderAdapter,
+                )
+                stt = self._build_stt_engine()
+                self._recorder = PollingRecorderAdapter(
                     on_chunk_progress=self._on_recorder_chunk,
                     on_auto_stop=self._on_recorder_auto_stop,
+                    silence_seconds=2.0,
+                    stt_engine=stt,
+                    language=self._voice_language(),
                 )
             except Exception as exc:  # noqa: BLE001
                 self._coordinator.print_error_sync(
@@ -270,6 +280,34 @@ class REPLBackend(ViewBackend):
             self._coordinator.print_error_sync(
                 f"voice start failed: {exc}"
             )
+
+    def _build_stt_engine(self) -> Any:
+        """Build an STTEngine from self._config.voice, or None if
+        no voice config is present.
+
+        Returning None is a valid state: the adapter's ``transcribe()``
+        returns an empty string in that case, so manual stop + no
+        transcription flow still works even on a stock install with
+        no STT configured. This keeps the happy path usable for
+        recording-only experimentation.
+        """
+        voice_config = (
+            getattr(self._config, "voice", None) if self._config else None
+        )
+        if voice_config is None:
+            return None
+        from llm_code.tools.voice import create_stt_engine
+        return create_stt_engine(voice_config)
+
+    def _voice_language(self) -> str:
+        """Language code passed to the STT engine. Defaults to 'en' when
+        no voice config is present or it omits the field."""
+        voice_config = (
+            getattr(self._config, "voice", None) if self._config else None
+        )
+        if voice_config is None:
+            return "en"
+        return getattr(voice_config, "language", "en") or "en"
 
     def _stop_voice(self) -> None:
         """Manual Ctrl+G stop during recording."""

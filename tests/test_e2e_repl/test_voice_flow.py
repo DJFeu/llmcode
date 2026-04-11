@@ -1,11 +1,17 @@
 """End-to-end voice flow tests — exercise the Ctrl+G toggle path.
 
 The real ``llm_code.tools.voice.AudioRecorder`` uses a polling API
-(``should_auto_stop``, ``_last_peak``) rather than callbacks. M9's
-backend glue, however, assumes a callback API (``on_chunk_progress`` /
-``on_auto_stop``) that a future polling adapter will wrap. These tests
-monkeypatch the module-level ``AudioRecorder`` with a callback-compatible
-``FakeRecorder`` so the glue can exercise its full code path.
+(``should_auto_stop``, ``_last_peak``) rather than callbacks. M9.5
+introduced :class:`PollingRecorderAdapter` to bridge that polling
+surface to the callback shape the REPL backend expects. These tests
+monkeypatch the adapter at the ``recorder_adapter`` module level with
+a callback-compatible ``FakeRecorder`` so the backend glue exercises
+its full code path without touching real audio hardware.
+
+Patching the adapter directly (rather than the underlying
+``AudioRecorder``) keeps the fake simple: the M9 callback contract
+is unchanged, so we don't have to re-implement polling semantics in
+the fake.
 """
 from __future__ import annotations
 
@@ -21,8 +27,15 @@ from llm_code.view.repl.backend import REPLBackend
 
 
 class FakeRecorder:
-    """Callback-compatible recorder mock that mirrors what the M9
-    backend glue expects from a future polling adapter.
+    """Callback-compatible recorder mock that stands in for
+    :class:`PollingRecorderAdapter`.
+
+    Accepts ``on_chunk_progress`` / ``on_auto_stop`` kwargs the same
+    way the real adapter does, and silently ignores the other adapter
+    kwargs (``silence_seconds``, ``stt_engine``, ``language``,
+    ``recorder``) via ``**kwargs``. Tests use ``emit_chunk`` /
+    ``emit_auto_stop`` to simulate the adapter's poll loop without
+    running a real asyncio task.
     """
 
     def __init__(self, **kwargs: Any) -> None:
@@ -74,9 +87,15 @@ async def voice_pilot():
 
 
 def _patch_recorder(monkeypatch, cls=FakeRecorder) -> None:
-    from llm_code.tools import voice as voice_module
+    """Replace ``PollingRecorderAdapter`` with a callback-style fake.
 
-    monkeypatch.setattr(voice_module, "AudioRecorder", cls)
+    Must patch the adapter at its defining module so that backend's
+    lazy ``from llm_code.view.repl.recorder_adapter import
+    PollingRecorderAdapter`` picks up the fake.
+    """
+    from llm_code.view.repl import recorder_adapter
+
+    monkeypatch.setattr(recorder_adapter, "PollingRecorderAdapter", cls)
 
 
 # === Toggle lifecycle ===
