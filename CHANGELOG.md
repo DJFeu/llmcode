@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.19.0 — Architecture Refactor Finish, /voice Wire, /help Modal Rewrite, Py3.9 Compat
+
+### New Features
+- **Declarative FallbackChain** — `ModelRoutingConfig.fallbacks: tuple[str, ...]` with a stateless `FallbackChain.next(current, error_kind)` API. The legacy single-shot `fallback: str` is promoted to a 1-element chain so existing configs keep working. Non-retryable errors (auth, model-not-found, 413) short-circuit so they don't consume fallback budget. Enables chains like `sonnet → haiku → gpt-4o → local`.
+- **`/voice` actually works** — the command was a dead stub that only flipped `_voice_active`; no code ever imported `voice.recorder` or `voice.stt`. Now wires the full pipeline: `/voice on` detects a recording backend (sounddevice / sox / arecord), builds an `STTEngine` from config, and starts capture. `/voice off` stops the recorder and runs transcription in `asyncio.to_thread`, then inserts the text into the InputBar on the UI thread. Bare `/voice` shows status, backend, and language.
+- **`/export` implementation** — writes the live conversation to a Markdown file via a new `_render_session_markdown` helper that walks `session.messages` for every block type (text, thinking, tool_use, tool_result, image, server_tool_use, server_tool_result). Thinking blocks collapse in `<details>` for GitHub. `/export` defaults to `./llmcode-export-<id>-<date>.md`; `/export <path>` takes an explicit target. The command was declared in the registry but had no handler before this release.
+- **Python 3.9 / 3.10 support** — the advertised `python>=3.9` now actually runs. Audited 320 `llm_code/*.py` + 434 `tests/*.py`: no `match`/`except*`/runtime PEP 604 unions/`TaskGroup`/`ParamSpec`. The single 3.11+ blocker was `tomllib` in `model_profile._load_toml`; now falls back to the `tomli` package (same API) on older interpreters. `pyproject.toml` declares `tomli>=2.0; python_version < "3.11"`.
+
+### Fixed
+- **`/help` modal was double-broken** — `_refresh_content` funneled a `RichText` through `Console(force_terminal=True)` to an ANSI string and fed it to `Static.update()`, but Textual's `Static` does not decode ANSI. Escape bytes became literal characters, garbling margins and breaking height math. Separately, the list tabs tracked a `>` cursor marker inside a single `Static`, so the surrounding `VerticalScroll` had no idea where the cursor was and silently dropped `down`/`PageDown`/`End` — only the first ~13 commands were ever reachable. Rewrote `HelpScreen` to use Textual's built-in `OptionList` for the commands / custom-commands tabs; keyboard nav, scrollbar, focus highlight all work natively. Verified headless with `pilot.press("down") × 50 + end + home`: `highlighted` and `scroll_y` track correctly across all 52 options.
+- **4 slash commands had no autocomplete hint** — `/update`, `/theme`, `/cache`, `/personas` had working `_cmd_*` handlers but no `CommandDef` in `COMMAND_REGISTRY`. They ran if typed in full but never appeared in the `/` dropdown, Tab-completion, or `/help`. Added registry entries.
+- **`/export` was a dead hint** — the opposite drift: registry declared it but dispatcher had no `_cmd_export`, so selecting `/export` resolved to "Unknown command". Implemented (see above).
+
+### Architecture refactor (2026-04-11 plan — 100% complete)
+- **Phase 2.1** — `HookDispatcher` extracted from `conversation.py`. `_fire_hook` becomes a thin delegator; the ~26 call sites inside `conversation.py` (pre_compact, prompt_submit, http_fallback, …) don't need to change.
+- **Phase 5.3** — `voice/*.py` (7 files, ~366 LOC) consolidated into `tools/voice.py`. Old package kept as backward-compatibility shims so `tests/test_voice/` passes unchanged.
+- **Phase 5.4** — `sandbox/docker_sandbox.py` + `pty_runner.py` consolidated into `tools/sandbox.py`. `bash.py`, `tui/app.py`, `runtime/config.py` point at the canonical location; old `sandbox/` package stays as shim.
+- **Phase 5.5** — `hida/{types,profiles,engine,classifier}.py` (4 files) consolidated into `runtime/hida.py`. 50-test `tests/test_hida/` suite untouched thanks to shim layer.
+
+### Tests
+- **5228 passing** (+20 vs v1.18.2): 6 HookDispatcher, 9 FallbackChain, 6 voice wire-up, 7 `/export` markdown renderer.
+- `test_dispatcher_has_all_52_commands` now derives expected names from `COMMAND_REGISTRY` at runtime instead of a hard-coded list.
+- New `test_registry_has_no_dead_handlers` enforces the opposite direction: every `_cmd_*` must have a registry entry. Prevents both drifts (dead hints, missing hints) from recurring.
+
+### Docs / CI
+- Complete 52-command reference table added to `README.md` as a collapsible `<details>` block after the Terminal UI highlight list.
+- CI matrix filled in to `["3.9", "3.10", "3.11", "3.12", "3.13"]` — the earlier `["3.9", "3.11", …]` skipped 3.10.
+
 ## v1.15.1 — SSE Streaming, Docker Sandbox, PTY, Plan Mode Tools, Arena Pattern
 
 ### New Features
