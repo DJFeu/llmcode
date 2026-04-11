@@ -286,26 +286,86 @@ async def test_stop_voice_when_inactive_is_noop(voice_pilot, monkeypatch):
     assert backend._voice_active is False
 
 
-# === Toggle 10× stress (R3 risk smoke test) ===
+# === Toggle stress (R3 risk hardening) ===
 
 
 @pytest.mark.asyncio
 async def test_toggle_stress_no_deadlock(voice_pilot, monkeypatch):
-    """Spec section 10.1 R3: voice + asyncio.Lock deadlock risk.
+    """Spec section 10.1 R3 hardening: 100× toggle cycles.
 
-    Plan suggests 100× stress; 10× is enough for CI speed while still
-    exercising the start/stop cycle and the background-thread forwarding.
+    Scaled up from 10 → 100 in M9.5 to cover sustained
+    background-thread → main-loop marshalling under realistic load.
+    Wall-clock budget stays under 2s because the per-iter sleep is 5ms.
     """
     _patch_recorder(monkeypatch)
     backend, _ = voice_pilot
 
-    for _ in range(10):
+    for i in range(100):
         backend._toggle_voice()  # start
-        backend._on_recorder_chunk(seconds=0.1, peak=0.05)
+        backend._on_recorder_chunk(seconds=0.1 * (i % 10), peak=0.05)
         backend._toggle_voice()  # stop
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.005)
 
     assert backend._voice_active is False
+    assert backend._coordinator.current_status.voice_active is False
+
+
+@pytest.mark.asyncio
+async def test_voice_during_active_streaming(voice_pilot, monkeypatch):
+    """Voice toggle while a streaming response is live must not deadlock.
+
+    Exercises the M6 LiveResponseRegion + M9 voice overlay happening
+    concurrently — the scenario the M9.5 tech-debt audit flagged as
+    the highest-risk race for the R3 deadlock category.
+    """
+    _patch_recorder(monkeypatch)
+    backend, _ = voice_pilot
+    from llm_code.view.types import Role
+
+    # Start a streaming region — the Live region is now rendering
+    # in-place on a background refresh thread owned by Rich.
+    handle = backend.start_streaming_message(role=Role.ASSISTANT)
+    handle.feed("partial ")
+
+    # Voice on during streaming.
+    backend._toggle_voice()
+    backend._on_recorder_chunk(seconds=1.0, peak=0.3)
+    await asyncio.sleep(0.02)
+    assert backend._coordinator.current_status.voice_active is True
+
+    # Voice off; streaming still active.
+    backend._toggle_voice()
+    await asyncio.sleep(0.02)
+
+    # Commit the stream.
+    handle.feed("rest")
+    handle.commit()
+
+    assert backend._voice_active is False
+    assert backend._coordinator.current_status.voice_active is False
+
+
+@pytest.mark.asyncio
+async def test_rapid_voice_restart(voice_pilot, monkeypatch):
+    """Start → stop → start → stop back-to-back stays coherent.
+
+    Guards against latent state from one voice session leaking into
+    the next — e.g. a stale ``_recorder`` reference or a ``voice_active``
+    flag that didn't reset — which would surface as either a second
+    start being a no-op or a double-call crash.
+    """
+    _patch_recorder(monkeypatch)
+    backend, _ = voice_pilot
+
+    backend._toggle_voice()  # start 1
+    backend._toggle_voice()  # stop 1
+    await asyncio.sleep(0.01)
+    backend._toggle_voice()  # start 2
+    backend._toggle_voice()  # stop 2
+    await asyncio.sleep(0.01)
+
+    assert backend._voice_active is False
+    assert backend._coordinator.current_status.voice_active is False
 
 
 # === voice_progress with zero values ===
