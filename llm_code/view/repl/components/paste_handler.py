@@ -17,7 +17,7 @@ handler degrades gracefully when either is missing.
 from __future__ import annotations
 
 import io
-from typing import Any, Optional
+from typing import Optional
 
 from prompt_toolkit.buffer import Buffer
 

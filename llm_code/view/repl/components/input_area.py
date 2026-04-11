@@ -30,7 +30,6 @@ from prompt_toolkit.layout.menus import (
 
 from llm_code.view.repl.components.history_ghost import HistoryGhostProcessor
 from llm_code.view.repl.components.path_completer import (
-    PathCompleter,
     build_input_completer,
 )
 from llm_code.view.repl.components.slash_popover import SlashCompleter

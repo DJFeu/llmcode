@@ -7,7 +7,7 @@ submit (or Ctrl+O) to the full content.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, Literal, Optional
 
 __all__ = ["PastedContent", "PastedContentRegistry"]

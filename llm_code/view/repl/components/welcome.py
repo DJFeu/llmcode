@@ -20,7 +20,6 @@ from rich.text import Text
 
 from llm_code.view.repl import style
 from llm_code.view.repl.components.logo import (
-    LOGO_HEIGHT,
     render_llmcode_logo,
     render_llmcode_logo_compact,
 )

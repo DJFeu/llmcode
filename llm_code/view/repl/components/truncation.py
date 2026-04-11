@@ -10,7 +10,7 @@ non-fullscreen prompt_toolkit layout.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Literal, Optional
 
 from rich.console import Console

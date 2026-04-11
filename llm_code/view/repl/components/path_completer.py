@@ -55,20 +55,17 @@ class PathCompleter(Completer):
         if token.startswith("@"):
             prefix = token[1:]
             base = self._cwd
-            strip = 1  # account for the @ prefix
         elif token.startswith("./"):
             prefix = token[2:]
             base = self._cwd
-            strip = 2
         elif token.startswith("/") and not token.startswith("/" + "c"):
             # Absolute path, but skip slash commands — SlashCompleter
             # handles those. We scan the /-prefixed paths only when the
             # buffer's very start is NOT a /command pattern.
-            if document.text.startswith("/") and not " " in document.text:
+            if document.text.startswith("/") and " " not in document.text:
                 return
             prefix = token
             base = Path("/")
-            strip = 1
         else:
             return
 

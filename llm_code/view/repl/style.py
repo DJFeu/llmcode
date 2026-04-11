@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, fields, replace
-from typing import Any, Optional
+from typing import Any
 
 __all__ = [
     # brand stops
