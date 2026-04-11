@@ -24,12 +24,18 @@ from prompt_toolkit import Application
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.key_binding import merge_key_bindings
 from prompt_toolkit.layout import FloatContainer, HSplit, Layout, Window
 from prompt_toolkit.layout.containers import ConditionalContainer
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.styles import Style
 from rich.console import Console
 
+from llm_code.view.repl.components.dialog_popover import (
+    DialogPopover,
+    build_dialog_float,
+    build_dialog_key_bindings,
+)
 from llm_code.view.repl.components.input_area import InputArea
 from llm_code.view.repl.components.status_line import StatusLine
 from llm_code.view.repl.history import PromptHistory, default_history_path
@@ -101,13 +107,23 @@ class ScreenCoordinator:
         # factory from keybindings.py. Replaces the M3 inline closures.
         self._history = PromptHistory(path=default_history_path())
         self._input_area = InputArea()
-        self._key_bindings = build_keybindings(
-            input_buffer=self._input_area.buffer,
-            history=self._history,
-            on_submit=self._handle_submit,
-            on_exit=self.request_exit,
-            on_voice_toggle=None,  # M9 wires this
-        )
+
+        # M8: dialog popover hosts confirm/select/text/checklist overlays.
+        self._dialog_popover = DialogPopover()
+
+        # Main input bindings + dialog bindings merged together. Dialog
+        # bindings have Condition filters that only fire while a dialog
+        # is active, so they don't interfere with normal input flow.
+        self._key_bindings = merge_key_bindings([
+            build_keybindings(
+                input_buffer=self._input_area.buffer,
+                history=self._history,
+                on_submit=self._handle_submit,
+                on_exit=self.request_exit,
+                on_voice_toggle=None,  # M9 wires this
+            ),
+            build_dialog_key_bindings(self._dialog_popover),
+        ])
 
     # M3 Buffer is now owned by InputArea; expose a pass-through property
     # so any external caller that historically used `coord._input_buffer`
@@ -115,6 +131,11 @@ class ScreenCoordinator:
     @property
     def input_buffer(self) -> Buffer:
         return self._input_area.buffer
+
+    @property
+    def dialog_popover(self) -> DialogPopover:
+        """Exposed to REPLBackend for delegating show_confirm/select/etc."""
+        return self._dialog_popover
 
     def _handle_submit(self, text: str) -> None:
         """Called by the Enter keybinding with the submitted text.
@@ -222,6 +243,7 @@ class ScreenCoordinator:
         )
         input_window = self._input_area.build_window()
         popover_float = self._input_area.build_popover_float()
+        dialog_float = build_dialog_float(self._dialog_popover)
         return Layout(
             FloatContainer(
                 content=HSplit([
@@ -229,7 +251,7 @@ class ScreenCoordinator:
                     status_window,
                     input_window,
                 ]),
-                floats=[popover_float],
+                floats=[popover_float, dialog_float],
             )
         )
 
@@ -246,6 +268,15 @@ class ScreenCoordinator:
             "status.spinner": "reverse fg:ansicyan",
             "rate-limit": "fg:ansired reverse",
             "input": "",
+            # M8: dialog popover styles
+            "dialog.frame": "fg:ansiwhite bg:ansiblack",
+            "dialog.header": "fg:ansicyan bold",
+            "dialog.selected": "reverse",
+            "dialog.normal": "",
+            "dialog.elevated": "fg:ansiyellow",
+            "dialog.high": "fg:ansired bold",
+            "dialog.critical": "fg:ansired reverse bold",
+            "dialog.error": "fg:ansired",
         })
 
     # === Output methods delegated by REPLBackend ===

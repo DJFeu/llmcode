@@ -175,7 +175,7 @@ async def test_bare_up_does_not_recall_history(repl_pilot, tmp_path):
 
     # We can't press bare 'up' via our helper because no binding is
     # registered for it — which is exactly the property we want to pin.
-    with pytest.raises(AssertionError, match="no binding"):
+    with pytest.raises(AssertionError, match="no active binding"):
         await repl_pilot.press("up")
 
     assert not coord._history.is_navigating()
@@ -238,7 +238,7 @@ async def test_ctrl_c_on_empty_buffer_requests_exit(repl_pilot):
 @pytest.mark.asyncio
 async def test_voice_hotkey_absent_when_not_wired(repl_pilot):
     """By default the coordinator does not register a Ctrl+G binding."""
-    with pytest.raises(AssertionError, match="no binding"):
+    with pytest.raises(AssertionError, match="no active binding"):
         await repl_pilot.press("c-g")
 
 

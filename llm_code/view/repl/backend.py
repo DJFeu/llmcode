@@ -16,7 +16,7 @@ from typing import Any, Dict, Optional, Sequence, TypeVar
 from rich.console import Console
 
 from llm_code.view.base import InputHandler, ViewBackend
-from llm_code.view.dialog_types import Choice, DialogCancelled, TextValidator
+from llm_code.view.dialog_types import Choice, TextValidator
 from llm_code.view.repl.components.live_response_region import LiveResponseRegion
 from llm_code.view.repl.components.tool_event_renderer import ToolEventRegion
 from llm_code.view.repl.coordinator import ScreenCoordinator
@@ -132,7 +132,7 @@ class REPLBackend(ViewBackend):
     def update_status(self, status: StatusUpdate) -> None:
         self._coordinator.update_status(status)
 
-    # === Dialogs (M3 placeholder: always return default; M8 replaces) ===
+    # === Dialogs (delegated to coordinator.dialog_popover) ===
 
     async def show_confirm(
         self,
@@ -140,8 +140,9 @@ class REPLBackend(ViewBackend):
         default: bool = False,
         risk: RiskLevel = RiskLevel.NORMAL,
     ) -> bool:
-        self._coordinator.print_info_sync(f"[confirm] {prompt} (auto: {default})")
-        return default
+        return await self._coordinator.dialog_popover.show_confirm(
+            prompt, default=default, risk=risk,
+        )
 
     async def show_select(
         self,
@@ -149,12 +150,9 @@ class REPLBackend(ViewBackend):
         choices: Sequence[Choice[T]],
         default: Optional[T] = None,
     ) -> T:
-        self._coordinator.print_info_sync(f"[select] {prompt}")
-        if default is not None:
-            return default
-        if choices:
-            return choices[0].value
-        raise DialogCancelled("no choices available")
+        return await self._coordinator.dialog_popover.show_select(
+            prompt, choices, default=default,
+        )
 
     async def show_text_input(
         self,
@@ -163,8 +161,9 @@ class REPLBackend(ViewBackend):
         validator: Optional[TextValidator] = None,
         secret: bool = False,
     ) -> str:
-        self._coordinator.print_info_sync(f"[text] {prompt}")
-        return default or ""
+        return await self._coordinator.dialog_popover.show_text_input(
+            prompt, default=default, validator=validator, secret=secret,
+        )
 
     async def show_checklist(
         self,
@@ -172,8 +171,9 @@ class REPLBackend(ViewBackend):
         choices: Sequence[Choice[T]],
         defaults: Optional[Sequence[T]] = None,
     ) -> Sequence[T]:
-        self._coordinator.print_info_sync(f"[checklist] {prompt}")
-        return list(defaults) if defaults else []
+        return await self._coordinator.dialog_popover.show_checklist(
+            prompt, choices, defaults=defaults,
+        )
 
     # === Convenience output ===
 

@@ -185,8 +185,10 @@ class RealREPLPilot:
         had pressed that key.
 
         Resolves the key name through prompt_toolkit's own parser so we
-        match the same Keys enum the coordinator registered. Single-key
-        bindings only (no multi-key sequences). Missing binding raises
+        match the same Keys enum the coordinator registered. Filters
+        the matching bindings by their PT ``Filter`` so wildcard
+        bindings (``<any>``) don't shadow specific keys when their
+        filter condition is False. Missing/inactive binding raises
         ``AssertionError`` so tests fail fast on typos.
         """
         # Use private parser — the only way to match kb.bindings' key
@@ -196,15 +198,17 @@ class RealREPLPilot:
         kb = self.backend.coordinator._key_bindings
         parsed = _parse_key(key_name)
         matches = kb.get_bindings_for_keys((parsed,))
-        if not matches:
+        # Keep only bindings whose PT Filter is currently active.
+        active = [b for b in matches if bool(b.filter())]
+        if not active:
             raise AssertionError(
-                f"no binding found for {key_name!r} "
-                f"(parsed as {parsed!r})"
+                f"no active binding found for {key_name!r} "
+                f"(parsed as {parsed!r}, {len(matches)} matches ignored)"
             )
 
         # Minimal fake KeyPressEvent. The real handlers we register only
-        # call event.app.exit() and event.app.invalidate(), so this
-        # mock surface is enough.
+        # call event.app.exit() and event.app.invalidate(), plus (for
+        # the dialog <any> handler) read event.data for printable chars.
         class _FakeApp:
             def exit(self) -> None:
                 pass
@@ -214,11 +218,12 @@ class RealREPLPilot:
 
         class _FakeEvent:
             app = _FakeApp()
+            data = ""  # filled in by type-a-char helpers if needed
 
         event = _FakeEvent()
-        # Call the most specific binding (last registered wins, same
-        # semantics as prompt_toolkit's own key processor).
-        matches[-1].handler(event)
+        # PT dispatches the most recently registered active binding
+        # first — emulate that by taking the last in list order.
+        active[-1].handler(event)
 
     async def type_text(self, text: str) -> None:
         """Insert ``text`` into the input buffer at the cursor position."""
