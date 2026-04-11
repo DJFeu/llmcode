@@ -581,6 +581,62 @@ class AnthropicSTT:
 _STT_NOISE_SILENCED = False
 
 
+def _silence_fd_stderr():
+    """Process-global fd-level stderr redirect to /dev/null.
+
+    Returned as a context manager. Used around ``faster_whisper``
+    model load + inference so C-level writes (ctranslate2's spdlog
+    warnings about compute type, etc.) don't leak into the REPL's
+    scrollback. Python-level ``sys.stderr.write`` is NOT affected
+    because we dup at the OS fd level; Python logging still works,
+    but anything it writes is routed to /dev/null during the
+    window.
+
+    Does not touch fd 1, so prompt_toolkit's layout drawing is
+    unaffected. Falls through silently if the dup fails.
+    """
+    import contextlib
+
+    @contextlib.contextmanager
+    def _cm():
+        try:
+            devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        except OSError:
+            yield
+            return
+        saved_fd = -1
+        try:
+            try:
+                saved_fd = os.dup(2)
+            except OSError:
+                yield
+                return
+            try:
+                os.dup2(devnull_fd, 2)
+            except OSError:
+                yield
+                return
+            try:
+                yield
+            finally:
+                try:
+                    os.dup2(saved_fd, 2)
+                except OSError:
+                    pass
+        finally:
+            try:
+                os.close(devnull_fd)
+            except OSError:
+                pass
+            if saved_fd >= 0:
+                try:
+                    os.close(saved_fd)
+                except OSError:
+                    pass
+
+    return _cm()
+
+
 def _silence_local_stt_noise() -> None:
     """Point the noisy faster-whisper / HF Hub / ctranslate2 loggers
     at nothing.
@@ -682,42 +738,54 @@ class LocalWhisperSTT:
         # model load. Both land in the REPL's scrollback otherwise.
         _silence_local_stt_noise()
 
-        if self._model is None:
+        # Wrap the whole transcribe path in an fd-level stderr
+        # redirect so ctranslate2's spdlog warnings (which go
+        # through C++ std::cerr, bypassing Python logging) don't
+        # reach the terminal. Covers both the model load and the
+        # actual inference call — faster-whisper can emit "no
+        # speech detected" warnings from the VAD pipeline too.
+        with _silence_fd_stderr():
+            if self._model is None:
+                try:
+                    from faster_whisper import (  # type: ignore[import-not-found]
+                        WhisperModel,
+                    )
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "faster-whisper is not installed. Run "
+                        "`pip install llmcode-cli[voice-local]` to enable "
+                        "the local Whisper backend."
+                    ) from exc
+                self._model = WhisperModel(
+                    self._model_size,
+                    device=self._device,
+                    compute_type=self._compute_type,
+                )
+
+            # faster-whisper accepts a file path OR a numpy array of
+            # float32 samples. We already hold raw PCM bytes, so the
+            # cheapest path is to wrap them as a WAV in a temp file.
+            import tempfile
+
+            wav_data = _pcm_to_wav(audio_bytes)
+            with tempfile.NamedTemporaryFile(
+                suffix=".wav", delete=False,
+            ) as f:
+                f.write(wav_data)
+                tmp_path = f.name
+
             try:
-                from faster_whisper import WhisperModel  # type: ignore[import-not-found]
-            except ImportError as exc:
-                raise RuntimeError(
-                    "faster-whisper is not installed. Run "
-                    "`pip install llmcode-cli[voice-local]` to enable the "
-                    "local Whisper backend."
-                ) from exc
-            self._model = WhisperModel(
-                self._model_size,
-                device=self._device,
-                compute_type=self._compute_type,
-            )
-
-        # faster-whisper accepts a file path OR a numpy array of float32
-        # samples. We already hold raw PCM bytes, so the cheapest path is
-        # to wrap them as a WAV in a temp file — avoids a numpy dep on
-        # the import path for callers that don't use this backend.
-        import tempfile
-
-        wav_data = _pcm_to_wav(audio_bytes)
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            f.write(wav_data)
-            tmp_path = f.name
-
-        try:
-            segments, _info = self._model.transcribe(
-                tmp_path, language=language or None
-            )
-            return " ".join(seg.text.strip() for seg in segments).strip()
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+                segments, _info = self._model.transcribe(
+                    tmp_path, language=language or None,
+                )
+                return " ".join(
+                    seg.text.strip() for seg in segments
+                ).strip()
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
 
 # ── Factory ─────────────────────────────────────────────────────────────
