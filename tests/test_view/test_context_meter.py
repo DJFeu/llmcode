@@ -17,7 +17,6 @@ def test_returns_label_and_bar() -> None:
 
 def test_low_fill_uses_success_color() -> None:
     out = render_context_meter(100, 1000)
-    _, bar_style = out[1][0], out[1][0]
     assert style.palette.status_success in out[1][0]
 
 

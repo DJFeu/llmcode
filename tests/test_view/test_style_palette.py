@@ -7,7 +7,6 @@ import pytest
 
 from llm_code.view.repl import style
 from llm_code.view.repl.style import (
-    BrandPalette,
     context_color,
     default_palette,
     hyperlink,

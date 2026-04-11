@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from rich.console import Console
 
-from llm_code.view.repl import style
 from llm_code.view.repl.components.design_system import (
     divider,
     keyboard_hint,

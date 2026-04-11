@@ -43,12 +43,8 @@ def test_all_seven_letters_present_as_block_chars() -> None:
 
 def test_gradient_stops_all_appear_in_span_list() -> None:
     text = render_llmcode_logo()
-    seen_colors = {span.style.color.name if getattr(span.style, "color", None)
-                   else str(span.style)
-                   for span in text.spans}
-    # Rich stores color as a complex object — easier to check by
-    # walking the raw markup or spans list. Just verify the text
-    # renders with >1 distinct style (i.e. a gradient).
+    # Rich stores color as a complex object — walk the spans and
+    # check for multiple distinct styles (evidence of a gradient).
     distinct_styles = {str(span.style) for span in text.spans}
     assert len(distinct_styles) >= 3, (
         f"expected multiple gradient stops, got: {distinct_styles}"

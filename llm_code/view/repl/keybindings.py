@@ -14,7 +14,6 @@ from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.filters import (
     Condition,
     has_completions,
-    completion_is_selected,
 )
 from prompt_toolkit.key_binding import KeyBindings
 
