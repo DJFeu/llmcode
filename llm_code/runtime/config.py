@@ -100,7 +100,12 @@ class VisionConfig:
 class ModelRoutingConfig:
     sub_agent: str = ""
     compaction: str = ""
+    # Legacy single-shot fallback. Kept for backward compatibility —
+    # promoted to a 1-element FallbackChain when `fallbacks` is empty.
     fallback: str = ""
+    # Wave2-3: declarative multi-step fallback chain. Evaluated in
+    # order; empty tuple means "no chain, use legacy `fallback` if set".
+    fallbacks: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -379,10 +384,14 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
     )
 
     routing_raw = data.get("model_routing", {})
+    _fallbacks_raw = routing_raw.get("fallbacks", ()) or ()
+    if isinstance(_fallbacks_raw, str):
+        _fallbacks_raw = (_fallbacks_raw,)
     model_routing = ModelRoutingConfig(
         sub_agent=routing_raw.get("sub_agent", ""),
         compaction=routing_raw.get("compaction", ""),
         fallback=routing_raw.get("fallback", ""),
+        fallbacks=tuple(str(m) for m in _fallbacks_raw if m),
     )
 
     allow_tools = permissions.get("allow_tools", data.get("allowed_tools", []))

@@ -1321,12 +1321,17 @@ class ConversationRuntime:
                     _close_llm_span_with_error(exc)
                     raise
                 else:
-                    # Layer 3: model fallback — track consecutive provider errors
+                    # Layer 3: model fallback — track consecutive provider
+                    # errors and walk the declarative FallbackChain when a
+                    # model has exhausted its retry budget.
                     self._consecutive_failures += 1
-                    _fallback = getattr(
-                        getattr(self._config, "model_routing", None), "fallback", ""
+                    from llm_code.runtime.fallback import FallbackChain
+                    _chain = FallbackChain.from_routing(
+                        getattr(self._config, "model_routing", None)
+                        or type("_Empty", (), {"fallback": "", "fallbacks": ()})()
                     )
-                    if _fallback and self._active_model != _fallback:
+                    _next_model = _chain.next(self._active_model) if _chain else None
+                    if _next_model:
                         # Still have retries remaining before switching — retry same model
                         if self._consecutive_failures < 3:
                             self._fire_hook("http_retry", {"attempt": self._consecutive_failures, "model": self._active_model})
@@ -1337,20 +1342,28 @@ class ConversationRuntime:
                             )
                             _close_llm_span_with_error(exc)
                             continue  # retry this iteration
-                        # 3rd consecutive failure: switch to fallback model
-                        self._fire_hook("http_fallback", {"reason": "consecutive_failures", "from": self._active_model, "to": _fallback})
-                        logger.warning(
-                            "3 consecutive provider errors; switching from %s to fallback model %s",
-                            self._active_model,
-                            _fallback,
+                        # 3rd consecutive failure: walk one step down the chain.
+                        self._fire_hook(
+                            "http_fallback",
+                            {
+                                "reason": "consecutive_failures",
+                                "from": self._active_model,
+                                "to": _next_model,
+                            },
                         )
-                        self._active_model = _fallback
+                        logger.warning(
+                            "3 consecutive provider errors; switching from %s → %s (chain: %s)",
+                            self._active_model,
+                            _next_model,
+                            list(_chain),
+                        )
+                        self._active_model = _next_model
                         # Wave2-3 Fix 2: keep cost_tracker in sync so token
                         # usage after fallback is attributed to the correct
                         # model instead of the (failed) primary.
                         if self._cost_tracker is not None:
                             try:
-                                self._cost_tracker.model = _fallback
+                                self._cost_tracker.model = _next_model
                             except Exception:
                                 logger.debug("cost_tracker.model sync skipped", exc_info=True)
                         self._consecutive_failures = 0
