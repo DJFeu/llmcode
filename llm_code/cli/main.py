@@ -327,22 +327,60 @@ def main(
     else:
         backend.set_input_handler(dispatcher.run_turn)
 
-    asyncio.run(_run_repl(backend))
+    asyncio.run(_run_repl(backend, state))
 
 
-async def _run_repl(backend) -> None:
+async def _run_repl(backend, state) -> None:
     """Start + run + stop the REPL backend with proper lifecycle.
 
-    Kept as a coroutine so ``asyncio.run`` only appears once in the
-    main(), and so a future wrapper (profiling, VCR capture, etc.) can
-    sit between the entry point and the backend lifecycle without
-    touching main().
+    Prints a minimal welcome banner between ``start`` and ``run`` so
+    the user sees version / model / cwd / key hotkeys on first
+    entry. The banner flows through the same
+    ``prompt_toolkit.patch_stdout`` wrapper the coordinator's
+    ``run_async`` uses, so it lands cleanly above the status line +
+    input area and isn't stomped by PT's first draw.
     """
     await backend.start()
+    _print_welcome(backend, state)
     try:
         await backend.run()
     finally:
         await backend.stop()
+
+
+def _print_welcome(backend, state) -> None:
+    """Print a compact two-line welcome banner once the backend is ready.
+
+    Intentionally small — scrollback is precious, and the status
+    line already shows model / cost / context / cwd continuously.
+    v1.x Textual showed a large logo header; v2.0.0 REPL trades
+    that for two terse info lines that scroll away once real
+    content starts.
+    """
+    try:
+        from importlib.metadata import version as _pkg_version
+        try:
+            version = _pkg_version("llmcode-cli")
+        except Exception:
+            version = "2.0.0"
+        model = (
+            getattr(state.config, "model", None)
+            if state.config is not None
+            else None
+        ) or "(no model)"
+        cwd_display = state.cwd.name or str(state.cwd)
+        backend.print_info(
+            f"[bold]llmcode[/bold] v{version} · "
+            f"model: {model} · cwd: {cwd_display}"
+        )
+        backend.print_info(
+            "[dim]Ctrl+G voice · "
+            "/ for commands · "
+            "Ctrl+D to quit[/dim]"
+        )
+    except Exception:
+        # Welcome banner must never block startup
+        pass
 
 
 _OLLAMA_DEFAULT_URL = "http://localhost:11434"

@@ -114,32 +114,40 @@ def send_line(proc: "pexpect.spawn", text: str) -> None:
     proc.send(text + "\r")
 
 
-def wait_ready(proc: "pexpect.spawn", cold_start_seconds: float = 2.0) -> None:
+def wait_ready(proc: "pexpect.spawn", cold_start_seconds: float = 3.0) -> None:
     """Wait for the REPL's cold-start sequence to finish.
 
     The v2.0.0 REPL doesn't emit a ``>`` prompt per line — its input
     area is rendered by prompt_toolkit at the bottom of the terminal.
     We can't ``expect("> ")``; instead we sleep a generous window to
-    let the status line + input area settle, then drain pending output.
+    let the welcome banner + status line + input area settle, then
+    drain any pending PT drawing commands from the buffer.
+
+    3.0s default was calibrated for patch_stdout + welcome banner
+    + cold model profile import; dropped below that and tests race
+    with PT's initial layout render under pexpect's pseudo-TTY.
     """
     import time
     time.sleep(cold_start_seconds)
     try:
-        proc.expect([pexpect.TIMEOUT, pexpect.EOF], timeout=0.3)
+        proc.expect([pexpect.TIMEOUT, pexpect.EOF], timeout=0.5)
     except Exception:
         pass
 
 
-def capture(proc: "pexpect.spawn", wait: float = 0.4) -> str:
+def capture(proc: "pexpect.spawn", wait: float = 0.6) -> str:
     """Wait briefly and return whatever's currently in the pexpect buffer.
 
     Used after submitting a command to let the REPL's print calls land
-    before asserting on them.
+    before asserting on them. The 0.6s default is enough for a single
+    command to dispatch, render, and drain through ``patch_stdout``'s
+    PT redraw cycle; longer commands (e.g. /help) can pass an explicit
+    ``wait=0.8`` or higher.
     """
     import time
     time.sleep(wait)
     try:
-        proc.expect([pexpect.TIMEOUT, pexpect.EOF], timeout=0.3)
+        proc.expect([pexpect.TIMEOUT, pexpect.EOF], timeout=0.5)
     except Exception:
         pass
     return proc.before or ""

@@ -260,10 +260,23 @@ class REPLBackend(ViewBackend):
                     PollingRecorderAdapter,
                 )
                 stt = self._build_stt_engine()
+                cfg = self._voice_cfg()
+                # Read silence_seconds + silence_threshold from config
+                # so a user with a quieter mic can tune both without
+                # editing source. Defaults match the config loader
+                # (2.0s, 500) rather than the older AudioRecorder
+                # defaults (0.0s, 3000) — the 3000 threshold was too
+                # high for the average laptop mic and caused the VAD
+                # auto-stop to silently never fire in v1.x.
                 self._recorder = PollingRecorderAdapter(
                     on_chunk_progress=self._on_recorder_chunk,
                     on_auto_stop=self._on_recorder_auto_stop,
-                    silence_seconds=2.0,
+                    silence_seconds=float(
+                        getattr(cfg, "silence_seconds", 2.0) or 2.0
+                    ),
+                    silence_threshold=int(
+                        getattr(cfg, "silence_threshold", 500) or 500
+                    ),
                     stt_engine=stt,
                     language=self._voice_language(),
                 )
@@ -280,6 +293,17 @@ class REPLBackend(ViewBackend):
             self._coordinator.print_error_sync(
                 f"voice start failed: {exc}"
             )
+
+    def _voice_cfg(self) -> Any:
+        """Return the ``config.voice`` sub-config, or None.
+
+        Centralizes the "cfg may be None" defensive reads so the
+        call sites in ``_start_voice`` / ``_build_stt_engine`` /
+        ``_voice_language`` all see the same object.
+        """
+        return (
+            getattr(self._config, "voice", None) if self._config else None
+        )
 
     def _build_stt_engine(self) -> Any:
         """Build an STTEngine from self._config.voice, or None if

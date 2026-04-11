@@ -241,13 +241,30 @@ class ScreenCoordinator:
         self._app = None
 
     async def run(self) -> None:
-        """Main event loop. Blocks until the user requests exit."""
+        """Main event loop. Blocks until the user requests exit.
+
+        Wraps ``run_async`` in ``prompt_toolkit.patch_stdout`` so any
+        ``print`` / Rich ``console.print`` / stdout write from a
+        worker thread (streaming renderer, voice STT, background
+        tools) flows through PT's output buffer. Without this, raw
+        stdout writes interleave with PT's drawing commands — the
+        status line + input area drift away from the terminal
+        bottom, and scrolling breaks.
+
+        This is the single biggest PT non-fullscreen mode idiom: any
+        app that also writes to stdout outside PT's own draw loop
+        MUST use ``patch_stdout`` or the layout will corrupt the
+        moment a non-PT thread prints something.
+        """
+        from prompt_toolkit.patch_stdout import patch_stdout
+
         if self._app is None:
             await self.start()
         assert self._app is not None
 
         try:
-            await self._app.run_async()
+            with patch_stdout(raw=True):
+                await self._app.run_async()
         except (EOFError, KeyboardInterrupt):
             pass
 

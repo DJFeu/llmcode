@@ -56,6 +56,7 @@ class PollingRecorderAdapter:
         on_chunk_progress: Callable[[float, float], None],
         on_auto_stop: Callable[[str], None],
         silence_seconds: float = 2.0,
+        silence_threshold: int = 500,
         stt_engine: Any = None,
         language: str = "en",
         recorder: Optional[AudioRecorder] = None,
@@ -64,9 +65,14 @@ class PollingRecorderAdapter:
         self._on_auto = on_auto_stop
         # ``recorder`` injection is for unit tests: production calls do
         # not pass it, and the adapter constructs a real ``AudioRecorder``
-        # configured with the requested silence window.
+        # configured with the requested silence window + amplitude
+        # threshold. The threshold default of 500 matches the config
+        # loader's default (``RuntimeConfig.voice.silence_threshold``);
+        # callers should thread their own value through from config so
+        # a quieter mic can still fire the VAD auto-stop.
         self._recorder = recorder or AudioRecorder(
             silence_seconds=silence_seconds,
+            silence_threshold=silence_threshold,
         )
         self._stt = stt_engine
         self._language = language

@@ -578,6 +578,71 @@ class AnthropicSTT:
 # ── Local Whisper backend ───────────────────────────────────────────────
 
 
+_STT_NOISE_SILENCED = False
+
+
+def _silence_local_stt_noise() -> None:
+    """Point the noisy faster-whisper / HF Hub / ctranslate2 loggers
+    at nothing.
+
+    Called lazily from ``LocalWhisperSTT.transcribe`` on first use
+    so the one-liner warnings these libraries print during model
+    load / first inference do not corrupt the REPL's scrollback.
+    Idempotent — safe to call on every transcribe.
+
+    Specifically silences:
+    - ``HF_HUB_DISABLE_PROGRESS_BARS``: hides the download
+      progress bar stream.
+    - ``HF_HUB_DISABLE_TELEMETRY``: suppresses the "Please set a
+      HF_TOKEN" warning from ``huggingface_hub.file_download``.
+    - ``TRANSFORMERS_VERBOSITY``: quiets the
+      ``transformers.utils.logging`` root logger.
+    - ``huggingface_hub`` logger → ERROR level.
+    - ``ctranslate2.set_log_level(Error)`` if the library exposes
+      it — otherwise we fall back to the logging module for the
+      C-level "compute type inferred" warning which the Python
+      bindings forward.
+    """
+    global _STT_NOISE_SILENCED
+    if _STT_NOISE_SILENCED:
+        return
+    _STT_NOISE_SILENCED = True
+
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+    os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+    os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+    os.environ.setdefault("HF_HUB_VERBOSITY", "error")
+
+    try:
+        import logging as _logging
+        for name in (
+            "huggingface_hub",
+            "huggingface_hub.file_download",
+            "transformers",
+            "faster_whisper",
+            "ctranslate2",
+        ):
+            _logging.getLogger(name).setLevel(_logging.ERROR)
+    except Exception:
+        pass
+
+    # ctranslate2's own log-level setter (the "compute type"
+    # warning is a C++ absl log that the Python bindings expose
+    # via set_log_level). API differs across versions — try both
+    # the enum form and the string form, ignore ImportError.
+    try:
+        import ctranslate2  # type: ignore[import-not-found]
+        try:
+            ctranslate2.set_log_level(ctranslate2.LogLevel.Error)
+        except Exception:
+            try:
+                ctranslate2.set_log_level("ERROR")
+            except Exception:
+                pass
+    except ImportError:
+        pass
+
+
 class LocalWhisperSTT:
     """Embedded Whisper inference via ``faster-whisper`` — no HTTP server.
 
@@ -609,6 +674,14 @@ class LocalWhisperSTT:
         self._model = None
 
     def transcribe(self, audio_bytes: bytes, language: str) -> str:
+        # Silence the noisy transitive dependencies BEFORE the
+        # faster_whisper import runs. HuggingFace Hub prints a
+        # "Please set a HF_TOKEN" line on first download even when
+        # the user doesn't need a token, and ctranslate2 prints a
+        # "compute type inferred from saved model" warning on every
+        # model load. Both land in the REPL's scrollback otherwise.
+        _silence_local_stt_noise()
+
         if self._model is None:
             try:
                 from faster_whisper import WhisperModel  # type: ignore[import-not-found]
