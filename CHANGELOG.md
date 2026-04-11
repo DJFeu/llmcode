@@ -1,5 +1,63 @@
 # Changelog
 
+## v1.22.0 — Voice UX Pass: VAD, Timer, Hotkey, Typo-Safe Prompts
+
+This release turns `/voice` from "it works if you type the commands
+exactly right" into a polished hands-free workflow. Three UX additions
+plus one usability bug fix, all driven by real-session friction.
+
+### New Features
+
+- **🎤 Voice activity detection (VAD) — auto-stop after silence** —
+  `AudioRecorder` now tracks an RMS-proxy energy floor on every incoming
+  PCM chunk. When the speaker stays quiet for `voice.silence_seconds`
+  (default `2.0`), the recorder flags itself and a TUI poll timer
+  tears capture down automatically, same path as `/voice off`. No
+  more "did I just forget to stop recording?". Pure Python — uses
+  `array.array("h")` for int16 unpacking, no numpy dependency added.
+  Opt-out with `"silence_seconds": 0` in config. Tune for noisy
+  environments with `"silence_threshold"` (default `500`; raise for
+  HVAC / open office).
+- **Status-bar recording timer (🎤 MM:SS)** — live elapsed readout
+  appended to the bottom status bar while the recorder is running,
+  priority-98 so width pressure drops it last. Ticks every 200ms,
+  zeros out the moment recording ends. Uses a dedicated `set_interval`
+  on `LLMCodeTUI` that also drives the VAD poll, so one timer
+  services both features.
+- **Ctrl+Space hotkey — toggle voice without typing a command** —
+  press once to start recording, press again to stop + transcribe.
+  Accepts both `ctrl+space` (kitty-protocol terminals) and `ctrl+@`
+  (legacy ANSI where Ctrl+Space is a NUL byte), so it works across
+  Warp, iTerm2, Terminal.app, and the Linux VTs. Push-to-talk (hold-
+  to-speak) isn't possible — terminals don't deliver keyup events —
+  so toggle is the only physically meaningful option.
+
+### Fixed
+
+- **`/voice /oof` (and any other typo) used to silently turn into a
+  status query** — the `_cmd_voice` fall-through printed "Voice:
+  recording 🎤" without doing anything, so a user who mis-typed `off`
+  believed they had stopped recording while the recorder kept running
+  in the background. Now the dispatcher:
+    - Only treats the **empty** argument as a bare status query.
+    - Rejects any other argument with `Unknown /voice subcommand: …`
+      plus the full usage line.
+    - When a recording is currently active and the user just typo'd
+      the stop command, appends a loud `⚠️ Still recording — run
+      /voice off (literal) to stop and transcribe` warning so the
+      mistake can't hide.
+
+### Tests
+
+- **5282 passing** (+14 vs v1.21.0): 9 `AudioRecorder` VAD (disabled /
+  window-start / loud-resets / time-based auto-stop / not-recording /
+  odd-bytes / empty-chunk), 4 `Ctrl+Space` hotkey (idle→on, recording
+  →off, `ctrl+@` alias, missing-dispatcher safety), 4 `/voice` typo-
+  rejection (typo preserves recording state / bare shows status /
+  recording-state hint / idle-state hint).
+
+---
+
 ## v1.21.0 — Local Whisper, Recovery Pass, CHANGELOG Backfill
 
 This release is the "loose ends" cut: every deferred Wave2 item from the
