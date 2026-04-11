@@ -1,8 +1,22 @@
-"""Sandbox execution backends for shell commands.
+"""Sandbox execution backends — backward-compatibility re-exports.
 
-Provides Docker/Podman container isolation so the bash tool can
-execute untrusted commands without affecting the host system.
+The canonical module is now ``llm_code.tools.sandbox`` (Phase 5.4 of the
+2026-04-11 architecture refactor). This package survives only as a thin
+re-export layer so legacy imports like ``from llm_code.sandbox import
+DockerSandbox`` keep working.
 """
-from llm_code.sandbox.docker_sandbox import DockerSandbox, SandboxConfig
+from llm_code.tools.sandbox import (  # noqa: F401
+    DockerSandbox,
+    PTYResult,
+    SandboxConfig,
+    SandboxResult,
+    run_pty,
+)
 
-__all__ = ["DockerSandbox", "SandboxConfig"]
+__all__ = [
+    "DockerSandbox",
+    "PTYResult",
+    "SandboxConfig",
+    "SandboxResult",
+    "run_pty",
+]

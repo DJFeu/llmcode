@@ -614,7 +614,7 @@ class BashTool(Tool):
 
     def _run_pty(self, command: str, timeout: int) -> ToolResult:
         """Execute command in a PTY for interactive programs."""
-        from llm_code.sandbox.pty_runner import run_pty
+        from llm_code.tools.sandbox import run_pty
         result = run_pty(command, timeout=timeout)
         output = result.output
         if result.timed_out:

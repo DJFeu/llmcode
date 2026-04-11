@@ -176,7 +176,7 @@ class BashRulesConfig:
 
 
 def _default_sandbox_config():
-    from llm_code.sandbox.docker_sandbox import SandboxConfig
+    from llm_code.tools.sandbox import SandboxConfig
     return SandboxConfig()
 
 

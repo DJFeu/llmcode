@@ -241,7 +241,7 @@ def _make_sandbox(config):
     try:
         sandbox_cfg = getattr(config, "sandbox", None)
         if sandbox_cfg is not None and getattr(sandbox_cfg, "enabled", False):
-            from llm_code.sandbox.docker_sandbox import DockerSandbox
+            from llm_code.tools.sandbox import DockerSandbox
             return DockerSandbox(sandbox_cfg)
     except Exception:
         pass
