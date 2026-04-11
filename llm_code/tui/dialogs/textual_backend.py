@@ -12,7 +12,7 @@ inside the TUI process. For headless / CI / test use cases, see
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Sequence, TypeVar
+from typing import Any, List, Optional, Sequence, TypeVar
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -270,7 +270,7 @@ class SelectScreen(ModalScreen[Any]):
 # ── TextInputScreen ───────────────────────────────────────────────────
 
 
-class TextInputScreen(ModalScreen[str | None]):
+class TextInputScreen(ModalScreen[Optional[str]]):
     """Free-form text input modal.
 
     Single-line uses a Textual ``Input`` widget; multiline uses
@@ -378,7 +378,7 @@ class _CheckItem(Static):
     """
 
 
-class ChecklistScreen(ModalScreen[list[Any] | None]):
+class ChecklistScreen(ModalScreen[Optional[List[Any]]]):
     """Pick-zero-or-more modal with checkbox toggles."""
 
     DEFAULT_CSS = _DIALOG_CSS + """
