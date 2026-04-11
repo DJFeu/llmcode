@@ -9,17 +9,17 @@ description = "Open-source AI agent runtime for any LLM — production-grade cod
 license = {text = "MIT"}
 authors = [{name = "Adam Hung"}]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
@@ -31,16 +31,9 @@ dependencies = [
     "textual>=1.0",
     "filelock>=3.12",
     "pyyaml>=6.0",
-    # tomllib entered the stdlib in 3.11; pull tomli (same API) on older
-    # interpreters so model_profile._load_toml keeps working on 3.9/3.10.
+    # tomllib entered the stdlib in 3.11; pull tomli (same API) on 3.10
+    # so model_profile._load_toml keeps working there.
     'tomli>=2.0 ; python_version < "3.11"',
-    # Pydantic resolves model field annotations at class creation time.
-    # `from __future__ import annotations` stores them as strings, but
-    # Pydantic still resolves those strings, and PEP 604 unions like
-    # `str | None` are runtime-legal only on Python 3.10+. This backport
-    # package rewrites the AST so the resolution succeeds on 3.9 —
-    # Pydantic itself points users to this package in its error message.
-    'eval_type_backport>=0.2 ; python_version < "3.10"',
 ]
 
 [project.urls]
@@ -103,5 +96,5 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.ruff]
-target-version = "py39"
+target-version = "py310"
 line-length = 100

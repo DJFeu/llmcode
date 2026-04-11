@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/python-3.9+-blue" alt="Python 3.9+">
+  <img src="https://img.shields.io/badge/python-3.10+-blue" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/tests-5160%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/cold%20start-~400ms-brightgreen" alt="Cold start">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
@@ -605,7 +605,7 @@ Looking for contributors interested in:
 
 ### Requirements
 
-- Python 3.9+
+- Python 3.10+
 - An LLM server (vLLM, Ollama, LM Studio, or any OpenAI-compatible cloud API)
 
 ---
