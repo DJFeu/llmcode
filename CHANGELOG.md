@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.21.0 — Local Whisper, Recovery Pass, CHANGELOG Backfill
+
+This release is the "loose ends" cut: every deferred Wave2 item from the
+2026-04-11 deep-check gets shipped, the CI matrix stops warning on
+deprecated Node actions, and the CHANGELOG finally covers the four
+intermediate releases (v1.16 → v1.18.2) that had no entry before.
+
+### New Features
+- **`/voice` backend: `local`** — embedded `faster-whisper` inference, no HTTP server required. Set `voice.backend = "local"` in config and optionally pick a model size with `voice.local_model` (`tiny` / `base` / `small` / `medium` / `large-v3`). Weights download lazily on first `/voice on` into the faster-whisper cache, so config-time cost is zero. New pip extras: `pip install llmcode-cli[voice-local]` pulls `sounddevice>=0.5` + `faster-whisper>=1.0` together. The factory now accepts four backends: `local` / `whisper` / `google` / `anthropic`.
+- **Wave2-1a thinking_order recovery** — new `llm_code.runtime.recovery.thinking_order` with `repair_assistant_content_order(blocks, mode="reorder"|"strip")`. Partitions `ThinkingBlock` instances to the front of the content tuple without modifying their signature bytes (required for Anthropic extended thinking verbatim round-trip). `"strip"` mode drops any late thinking block for callers that already invalidated signatures. Sibling of the existing `api/content_order.py` validator — validator raises, recovery repairs. 12 unit tests cover well-ordered / out-of-order / signature preservation / mode selection.
+- **Wave2-3 telemetry `record_fallback`** — `Telemetry.record_fallback(from_model, to_model, reason)` emits an `llm.fallback` OTel span with `llm.fallback.{from,to,reason}` attributes. Called from `ConversationRuntime` at the same site as the `http_fallback` hook so external tracing backends (Jaeger / Honeycomb / Tempo) can chart fallback-chain walks without parsing logs. Disabled / no-package paths remain no-op.
+- **Wave2-2 cost_tracker round-trip** — `CheckpointRecovery.load_checkpoint(session_id, *, cost_tracker=...)` and `detect_last_checkpoint(cost_tracker=...)` now restore the tracker's running token and cost totals from the checkpoint, instead of silently dropping them on reload. `save_checkpoint` already embedded the payload; only the load path was missing. The `/checkpoint resume` command passes the live cost tracker through so a resumed session continues cost accounting from where it left off. 5 new checkpoint round-trip tests cover legacy-checkpoint compatibility.
+
+### Fixed
+- **Voice error string: package name** — `detect_backend()` raised "Install sounddevice (`pip install llm-code[voice]`)" on failure, but the actual PyPI package is `llmcode-cli`. The hyphenated name would not resolve on PyPI; now emits `pip install llmcode-cli[voice]`.
+- **`/voice` guard copy** — the "voice not configured" message now lists all four backends (`local`, `whisper`, `google`, `anthropic`) and points at `config.json` instead of a non-existent `config.toml`.
+
+### Infrastructure
+- **CI actions upgraded to Node 24** — `actions/checkout@v4` → `v5`, `codecov/codecov-action@v4` → `v5`. Both ship the Node 24 runtime so GitHub's 2026-06 deprecation warnings stop firing on every run. `actions/setup-python@v5` stays until v6 releases (still Node 20 upstream).
+
+### Docs
+- **CHANGELOG backfill** — added full entries for v1.16.0, v1.16.1, v1.17.0, v1.18.0, v1.18.1, and v1.18.2. The file previously jumped from v1.15.1 to v1.19.0 with no coverage of the architecture refactor, VS Code extension, 6-phase agent upgrade, gold-gradient logo, `/update` command, `/theme` command, or centralized tool registry work.
+
+### Tests
+- **5268 passing** (+25 vs v1.20.0): 12 thinking_order recovery, 2 telemetry record_fallback (noop + mocked-otel), 5 checkpoint cost_tracker round-trip, 6 LocalWhisperSTT (protocol / lazy load / missing-dep error / mocked pipeline / factory routing), unchanged Pydantic + dialog 3.10+ compat.
+
+---
+
 ## v1.20.0 — Prompt History, Right-Arrow Autocomplete, Python 3.10+ Floor
 
 ### New Features
@@ -40,6 +68,94 @@
 ### Docs / CI
 - Complete 52-command reference table added to `README.md` as a collapsible `<details>` block after the Terminal UI highlight list.
 - CI matrix filled in to `["3.9", "3.10", "3.11", "3.12", "3.13"]` — the earlier `["3.9", "3.11", …]` skipped 3.10.
+
+## v1.18.2 — Architecture Refactor Round 1 (app.py/conversation.py decomposition)
+
+### Refactor — large-file decomposition
+- **`app.py` 3999 → 1200 lines** — extracted `CommandDispatcher` (51 `_cmd_*` methods), `StreamingHandler` (430-line `_run_turn`), and `RuntimeInitializer` (440-line `_init_runtime`) into dedicated modules under `tui/`.
+- **`conversation.py`** — extracted `PermissionManager` and `ToolExecutionPipeline`, each with a well-defined collaborator boundary.
+- **`runtime/memory/` unified** — `KVMemoryEntry` rename + lint merged into validator.
+- **`config.py` split** — feature submodules (701 → 611 lines); enterprise/vision/voice configs now live in `config_features.py`, `config_enterprise.py`, `config_migration.py`.
+- **`enterprise/` → `runtime/enterprise.py`** — auth / RBAC / OIDC / audit logger collapsed into a single module.
+- **`streaming/` → `tui/stream_parser.py`** — `stream_parser.py` moved to its only consumer.
+- **Tool consolidation** — `swarm_*.py`, `task_*.py`, `cron_*.py` tool wrappers (10 files) merged into `tools/swarm_tools.py`, `tools/task_tools.py`, `tools/cron_tools.py`.
+- **Centralized tool registry** — `tools/registry.py` + `tools/builtin.py`; adding a new tool is now a single `CommandDef`-style registration.
+
+### Features
+- Wired 6 previously-orphan modules into runtime: `agent_loader`, `tool_visibility`, `tool_distill`, `prompt_snippets`, `denial_parser`, `exec_policy`.
+
+### Fixed
+- Source-inspection tests updated to the new file locations.
+- Ruff F401 / TYPE_CHECKING regressions introduced by the refactor.
+
+---
+
+## v1.18.1 — `/update` Command + 8 Built-In Themes
+
+### Features
+- **`/update` command** — checks PyPI for a newer version, shows current → latest, and runs `pip install --upgrade llmcode-cli` in-place. Startup banner performs a cached background check (6-hour TTL) so the user sees an update hint without manual polling.
+- **8 built-in themes** — dracula, monokai, tokyo-night, github-dark, solarized-dark, nord, gruvbox, plus the original default. Switch with `/theme <name>`.
+
+### Docs
+- README comparison table gained Codex CLI + Gemini CLI columns.
+
+---
+
+## v1.18.0 — Codex / Gemini CLI Patterns + Local Model Recovery
+
+### Features
+- **7-phase Codex / Gemini CLI design adoption** — imported patterns from the upstream CLIs (permission staging, tool-output shaping, retry triage) into llmcode's conversation loop.
+
+### Fixed
+- **Local model retry recovery** — when a local LLM retry path previously aborted on malformed tool results, the tool results are now preserved on the next iteration.
+- **Text-only iteration after tool results** — local models that don't handle tool/text interleaving well now force a text-only follow-up iteration instead of looping on the same tool call.
+
+### Docs
+- Competitor list updated: replaced Continue.dev (IDE assistant, not a CLI agent) with actual CLI-agent peers.
+
+---
+
+## v1.17.0 — 6-Phase Agent System + Logo Refresh + TUI Scroll Fix
+
+### Features
+- **6-phase agent system upgrade** — borrowed from `claude-code`: tiered filtering, fork-cache, frontmatter agents, memory scopes, contextvars, worktree isolation.
+- **Gold gradient logo** — TUI welcome banner + README SVG now share a pixel-perfect gold gradient rendering via Rich's `export_svg()`. Several iterations on block-art preservation (keep original font; swap gradient only; rect pixels for SVG; bust GitHub camo cache with a filename change).
+
+### Fixed
+- **TUI scroll regression** — addressed as part of the agent-system rework.
+- **Local model tool nudge** — small models drop tool calls when the system prompt is too long; now get a short nudge.
+- Ruff F401 unused-import lint in test files.
+
+---
+
+## v1.16.1 — Model Tuning Bump
+
+Version bump only — carries the v1.16.0 model-profile feature set to PyPI.
+
+---
+
+## v1.16.0 — Model Profile Tuning, Dream Consolidation, VS Code Extension
+
+### Features
+- **Per-model profile tuning** — temperature, reasoning effort, and small-model auto-downgrade now live on the `ModelProfile` so llmcode can adapt the same conversation to radically different backends without config churn.
+- **4-stage dream consolidation** — `DreamManager` gains trigger guards, date normalization, and memory pruning so the "sleep" consolidation pass doesn't run on empty sessions or re-process the same window.
+- **Cache breakpoint detection** — Anthropic prompt-cache breakpoint lookup and placement, plus anti-recursive sub-agent spawn (prevents a `task` tool invocation from immediately dispatching the same tool again).
+- **Circuit breaker** — `ConversationRuntime` stops retrying after 3 consecutive compact failures instead of spinning forever on an unrecoverable prompt-too-long loop.
+- **VS Code extension scaffold** — bridge + chat panel + code actions + WebSocket client + status bar. Full extension source under `extensions/vscode/`. Code actions include "Ask about selection" and "Fix with llmcode".
+
+### Security
+- **Path case normalization + SSRF defenses** — added port blocking and DNS rebinding defense to the `web_fetch` / `web_search` path; path normalization prevents case-insensitive bypass of permission allowlists on macOS / Windows.
+
+### Fixed
+- CI failures around `ParsedToolCall.args`, pair-integrity checks, test-count badge drift.
+
+### Docs
+- i18n comparison corrected — CJK support is partial, not full.
+- IDE extensions added to the vs-other-tools comparison table; rows re-ordered.
+- Qwen Code added to the comparison table.
+- VS Code extension design spec (bridge + chat panel + code actions).
+
+---
 
 ## v1.15.1 — SSE Streaming, Docker Sandbox, PTY, Plan Mode Tools, Arena Pattern
 
