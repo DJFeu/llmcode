@@ -691,3 +691,464 @@ def test_every_batch_a_command_is_registered(
     d = dispatcher_factory()
     # dispatch returns True on known, False on unknown
     assert d.dispatch(name, "") is True or d.dispatch(name, "") is True
+
+
+# === Batch B: runtime / config / state mutation ===
+
+
+def test_compact_without_runtime_errors(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    state = _make_state(tmp_path, runtime=None)
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("compact", "")
+    assert any("Compaction unavailable" in e for e in backend.error_lines)
+
+
+def test_export_empty_session_prints_info(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    # FakeRuntime.session has an empty messages list
+    runtime = FakeRuntime()
+    state = _make_state(tmp_path, runtime=runtime)
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("export", "")
+    assert any(
+        "conversation is empty" in i for i in backend.info_lines
+    )
+
+
+def test_undo_without_checkpoint_mgr(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    state = _make_state(tmp_path, checkpoint_mgr=None)
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("undo", "")
+    assert any("not in a git" in i.lower() for i in backend.info_lines)
+
+
+def test_model_without_args_shows_current(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    from llm_code.runtime.config import RuntimeConfig
+    cfg = RuntimeConfig(model="claude-4.6")
+    state = _make_state(tmp_path, config=cfg)
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("model", "")
+    assert any("claude-4.6" in i for i in backend.info_lines)
+
+
+def test_model_switch_mutates_config(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    from llm_code.runtime.config import RuntimeConfig
+    cfg = RuntimeConfig(model="old-model")
+    runtime = FakeRuntime()
+    runtime._config = cfg
+    state = _make_state(tmp_path, runtime=runtime, config=cfg)
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("model", "new-model")
+    assert state.config.model == "new-model"
+    assert runtime._config.model == "new-model"
+
+
+def test_model_route_shows_routing_table(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    from llm_code.runtime.config import RuntimeConfig
+    cfg = RuntimeConfig(model="primary")
+    state = _make_state(tmp_path, config=cfg)
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("model", "route")
+    info = "\n".join(backend.info_lines)
+    assert "Model routing" in info or "No model routing" in info
+
+
+def test_cache_list_prints_header(
+    dispatcher_factory, backend,
+) -> None:
+    d = dispatcher_factory()
+    d.dispatch("cache", "")
+    assert any("Persistent caches" in i for i in backend.info_lines)
+
+
+def test_cache_unknown_sub_shows_usage(
+    dispatcher_factory, backend,
+) -> None:
+    d = dispatcher_factory()
+    d.dispatch("cache", "banana")
+    assert any("Usage" in i for i in backend.info_lines)
+
+
+def test_theme_is_stubbed(dispatcher_factory, backend) -> None:
+    d = dispatcher_factory()
+    d.dispatch("theme", "")
+    assert any("legacy TUI feature" in i for i in backend.info_lines)
+
+
+def test_config_without_config_prints_message(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    state = _make_state(tmp_path, config=None)
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("config", "")
+    assert any("No config loaded" in i for i in backend.info_lines)
+
+
+def test_config_prints_summary(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    from llm_code.runtime.config import RuntimeConfig
+    state = _make_state(tmp_path, config=RuntimeConfig(model="m1"))
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("config", "")
+    info = "\n".join(backend.info_lines)
+    assert "model: m1" in info
+    assert "thinking" in info
+
+
+def test_set_without_args_shows_usage(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    from llm_code.runtime.config import RuntimeConfig
+    state = _make_state(tmp_path, config=RuntimeConfig())
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("set", "")
+    assert any("Usage: /set" in i for i in backend.info_lines)
+
+
+def test_settings_without_config(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    state = _make_state(tmp_path, config=None)
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("settings", "")
+    assert any("No config loaded" in i for i in backend.info_lines)
+
+
+def test_index_without_index_shows_message(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    state = _make_state(tmp_path)
+    state.project_index = None
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("index", "")
+    assert any("No index available" in i for i in backend.info_lines)
+
+
+def test_harness_without_runtime(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    state = _make_state(tmp_path, runtime=None)
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("harness", "")
+    assert any("not available" in i.lower() for i in backend.info_lines)
+
+
+def test_session_prints_hint(dispatcher_factory, backend) -> None:
+    d = dispatcher_factory()
+    d.dispatch("session", "")
+    assert any("/checkpoint" in i for i in backend.info_lines)
+
+
+def test_checkpoint_list_empty(
+    dispatcher_factory, backend, tmp_path, monkeypatch,
+) -> None:
+    from llm_code.runtime import checkpoint_recovery
+
+    class FakeRecovery:
+        def __init__(self, *a, **kw): pass
+        def list_checkpoints(self): return []
+        def save_checkpoint(self, session): return "path"
+        def load_checkpoint(self, sid, cost_tracker=None): return None
+        def detect_last_checkpoint(self, cost_tracker=None): return None
+
+    monkeypatch.setattr(
+        checkpoint_recovery, "CheckpointRecovery", FakeRecovery,
+    )
+    d = dispatcher_factory()
+    d.dispatch("checkpoint", "list")
+    assert any("No checkpoints found" in i for i in backend.info_lines)
+
+
+# === Batch C: feature modules ===
+
+
+def test_search_without_query_shows_usage(
+    dispatcher_factory, backend,
+) -> None:
+    d = dispatcher_factory()
+    d.dispatch("search", "")
+    assert any("Usage: /search" in i for i in backend.info_lines)
+
+
+def test_memory_not_initialized(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    state = _make_state(tmp_path)
+    state.memory = None
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("memory", "")
+    assert any("Memory not initialized" in i for i in backend.info_lines)
+
+
+def test_memory_set_and_get(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    class FakeMemory:
+        def __init__(self):
+            self._data = {}
+        def store(self, k, v):
+            self._data[k] = v
+        def recall(self, k):
+            return self._data.get(k)
+        def delete(self, k):
+            self._data.pop(k, None)
+        def get_all(self):
+            class _Entry:
+                def __init__(self, v): self.value = v
+            return {k: _Entry(v) for k, v in self._data.items()}
+        def load_consolidated_summaries(self, limit):
+            return []
+
+    state = _make_state(tmp_path)
+    state.memory = FakeMemory()
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("memory", "set key hello world")
+    assert any("Stored: key" in i for i in backend.info_lines)
+    backend.info_lines.clear()
+    d.dispatch("memory", "get key")
+    assert any("hello world" in i for i in backend.info_lines)
+
+
+def test_mcp_list_default(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    from llm_code.runtime.config import RuntimeConfig
+    cfg = RuntimeConfig(mcp_servers={"foo": {"command": "npx", "args": ["-y", "foo-pkg"]}})
+    state = _make_state(tmp_path, config=cfg)
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("mcp", "")
+    info = "\n".join(backend.info_lines)
+    assert "foo" in info
+    assert "Usage: /mcp" in info
+
+
+def test_ide_not_configured(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    state = _make_state(tmp_path)
+    state.ide_bridge = None
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("ide", "")
+    assert any("disabled" in i.lower() for i in backend.info_lines)
+
+
+def test_hida_without_runtime(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    state = _make_state(tmp_path, runtime=None)
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("hida", "")
+    assert any("not initialized" in i for i in backend.info_lines)
+
+
+def test_lsp_not_started(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    state = _make_state(tmp_path)
+    state.lsp_manager = None
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("lsp", "")
+    assert any("not started" in i for i in backend.info_lines)
+
+
+def test_skill_list_default(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    skills = SimpleNamespace(auto_skills=[], command_skills=[])
+    state = _make_state(tmp_path, skills=skills)
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("skill", "")
+    assert any("Installed skills" in i for i in backend.info_lines)
+
+
+def test_skill_install_invalid_repo(
+    dispatcher_factory, backend,
+) -> None:
+    d = dispatcher_factory()
+    d.dispatch("skill", "install not-a-repo-format")
+    assert any("Usage: /skill install" in e for e in backend.error_lines)
+
+
+def test_plugin_install_invalid_repo(
+    dispatcher_factory, backend,
+) -> None:
+    d = dispatcher_factory()
+    d.dispatch("plugin", "install not-a-repo")
+    assert any("Usage: /plugin install" in e for e in backend.error_lines)
+
+
+def test_voice_not_configured(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    state = _make_state(tmp_path)
+    state.voice_active = False
+    state.voice_recorder = None
+    state.voice_stt = None
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("voice", "")
+    assert any("not configured" in i for i in backend.info_lines)
+
+
+def test_cron_not_available(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    state = _make_state(tmp_path)
+    state.cron_storage = None
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("cron", "")
+    assert any("not available" in i.lower() for i in backend.info_lines)
+
+
+def test_task_default_hint(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    state = _make_state(tmp_path)
+    state.task_manager = None
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("task", "")
+    assert any("task tools" in i for i in backend.info_lines)
+
+
+def test_swarm_not_enabled(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    state = _make_state(tmp_path)
+    state.swarm_manager = None
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("swarm", "")
+    assert any("not enabled" in i for i in backend.info_lines)
+
+
+def test_vcr_default_status(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    d = dispatcher_factory()
+    d.dispatch("vcr", "")
+    assert any("VCR:" in i for i in backend.info_lines)
+
+
+def test_personas_lists_builtin(
+    dispatcher_factory, backend,
+) -> None:
+    d = dispatcher_factory()
+    d.dispatch("personas", "")
+    assert any("built-in personas" in i for i in backend.info_lines)
+
+
+def test_orchestrate_without_task_shows_usage(
+    dispatcher_factory, backend,
+) -> None:
+    d = dispatcher_factory()
+    d.dispatch("orchestrate", "")
+    assert any("Usage: /orchestrate" in i for i in backend.info_lines)
+
+
+def test_map_handles_error(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    """The /map happy path requires a real repo; assert it doesn't
+    crash and at least prints an info or error line."""
+    d = dispatcher_factory()
+    d.dispatch("map", "")
+    # Either an info line or an error line — we just want no crash
+    assert backend.info_lines or backend.error_lines
+
+
+# === Batch D: copy / image / vim ===
+
+
+def test_copy_without_runtime_prints_message(
+    dispatcher_factory, backend, tmp_path,
+) -> None:
+    state = _make_state(tmp_path, runtime=None)
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("copy", "")
+    assert any("No response to copy" in i for i in backend.info_lines)
+
+
+def test_image_without_args_shows_usage(
+    dispatcher_factory, backend,
+) -> None:
+    d = dispatcher_factory()
+    d.dispatch("image", "")
+    assert any("Usage: /image" in i for i in backend.info_lines)
+
+
+def test_image_missing_file(
+    dispatcher_factory, backend,
+) -> None:
+    d = dispatcher_factory()
+    d.dispatch("image", "/nonexistent/absolutely/not/here.png")
+    assert any("Image not found" in e or "Image load failed" in e for e in backend.error_lines)
+
+
+def test_vim_prints_info_hint(
+    dispatcher_factory, backend,
+) -> None:
+    d = dispatcher_factory()
+    d.dispatch("vim", "")
+    assert any("Vim mode" in i for i in backend.info_lines)
+
+
+# === Full registry smoke: every v1 command name is present ===
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "compact", "export", "update", "theme", "model", "cache",
+        "profile", "gain", "diff", "init", "index", "thinking",
+        "vim", "image", "lsp", "cancel", "plan", "yolo", "mode",
+        "harness", "knowledge", "dump", "analyze", "diff_check",
+        "search", "set", "settings", "config", "session", "voice",
+        "cron", "task", "personas", "orchestrate", "swarm", "vcr",
+        "checkpoint", "memory", "map", "mcp", "ide", "hida",
+        "skill", "plugin", "copy", "undo", "help", "clear",
+        "exit", "quit", "cost", "cd", "budget",
+    ],
+)
+def test_every_v1_command_is_registered(
+    dispatcher_factory, name: str,
+) -> None:
+    """Full M10.6 coverage: every command from v1's
+    ``tui/command_dispatcher.py`` (52 total + /quit alias) must be
+    registered on ``CommandDispatcher``."""
+    d = dispatcher_factory()
+    handler = getattr(d, f"_cmd_{name}", None)
+    assert handler is not None, f"missing handler: _cmd_{name}"
