@@ -199,6 +199,34 @@ class InputBar(Widget):
                 self.post_message(self.Cancelled())
             return
 
+        # ── Voice hotkey toggle ───────────────────────────────────────
+        # Terminals don't deliver keyup events, so a true push-to-talk
+        # is impossible in most shells. Instead we toggle: first press
+        # runs `/voice on`, second press runs `/voice off`. The default
+        # binding is Ctrl+Space, which shows up under several different
+        # normalizations depending on the terminal emulator:
+        #   - Textual with the kitty keyboard protocol → "ctrl+space"
+        #   - Legacy ANSI terminals → "ctrl+@" (NUL byte)
+        # We accept both so the feature works across Warp, iTerm2,
+        # Terminal.app, and the stock Linux VTs.
+        if event.key in ("ctrl+space", "ctrl+@"):
+            try:
+                app_ref = self.app
+                dispatcher = getattr(app_ref, "_cmd_dispatcher", None)
+                if dispatcher is not None:
+                    subcommand = (
+                        "off"
+                        if getattr(app_ref, "_voice_active", False)
+                        else "on"
+                    )
+                    dispatcher.dispatch("voice", subcommand)
+            except Exception:
+                # Hotkey failure must never break the input bar.
+                pass
+            event.prevent_default()
+            event.stop()
+            return
+
         # Dropdown navigation (when dropdown is visible)
         if self._show_dropdown and self._dropdown_items:
             if event.key == "up":

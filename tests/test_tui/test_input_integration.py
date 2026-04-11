@@ -184,3 +184,83 @@ class TestNoArgCommandExecution:
         """SLASH_COMMAND_DESCS should not have duplicate command entries."""
         cmds = [cmd for cmd, _ in SLASH_COMMAND_DESCS]
         assert len(cmds) == len(set(cmds))
+
+
+# ── Voice hotkey (Ctrl+Space toggle) ───────────────────────────────────
+
+
+class TestVoiceHotkey:
+    """Ctrl+Space in the InputBar should toggle `/voice on` / `/voice off`.
+
+    The keypress is dispatched through the app's CommandDispatcher so
+    all the voice wire-up (recorder init, VAD monitor, status-bar
+    timer, transcription worker) runs identically to what happens when
+    the user types `/voice` at the prompt. Only two things differ:
+    the hotkey accepts both "ctrl+space" (modern terminals) and
+    "ctrl+@" (legacy ANSI, where Ctrl+Space is a NUL byte), and the
+    current recording state decides whether to send "on" or "off".
+    """
+
+    def _make_key_event(self, key: str):
+        """Build a lightweight Key event stand-in."""
+        from unittest.mock import MagicMock
+
+        event = MagicMock()
+        event.key = key
+        event.character = None
+        return event
+
+    def _run_hotkey(self, *, voice_active: bool, key: str, dispatcher):
+        """Invoke on_key with a patched app reference and return the
+        dispatcher for assertion."""
+        from unittest.mock import MagicMock, PropertyMock, patch
+
+        bar = InputBar()
+        fake_app = MagicMock()
+        fake_app._voice_active = voice_active
+        fake_app._cmd_dispatcher = dispatcher
+
+        with patch.object(
+            InputBar, "app", new_callable=PropertyMock, return_value=fake_app
+        ):
+            event = self._make_key_event(key)
+            bar.on_key(event)
+        return event
+
+    def test_ctrl_space_dispatches_voice_on_when_idle(self) -> None:
+        from unittest.mock import MagicMock
+        dispatcher = MagicMock()
+        event = self._run_hotkey(
+            voice_active=False, key="ctrl+space", dispatcher=dispatcher
+        )
+        dispatcher.dispatch.assert_called_once_with("voice", "on")
+        event.prevent_default.assert_called_once()
+        event.stop.assert_called_once()
+
+    def test_ctrl_space_dispatches_voice_off_when_recording(self) -> None:
+        from unittest.mock import MagicMock
+        dispatcher = MagicMock()
+        self._run_hotkey(
+            voice_active=True, key="ctrl+space", dispatcher=dispatcher
+        )
+        dispatcher.dispatch.assert_called_once_with("voice", "off")
+
+    def test_ctrl_at_alias_also_toggles(self) -> None:
+        """Legacy ANSI terminals deliver Ctrl+Space as the NUL byte,
+        which Textual surfaces as 'ctrl+@'. Must toggle the same."""
+        from unittest.mock import MagicMock
+        dispatcher = MagicMock()
+        self._run_hotkey(
+            voice_active=False, key="ctrl+@", dispatcher=dispatcher
+        )
+        dispatcher.dispatch.assert_called_once_with("voice", "on")
+
+    def test_dispatcher_missing_is_silent(self) -> None:
+        """If for some reason the dispatcher hasn't been wired yet,
+        the keypress must still be swallowed (not crash into
+        character-insert) so the buffer doesn't grow a stray NUL."""
+        event = self._run_hotkey(
+            voice_active=False, key="ctrl+space", dispatcher=None
+        )
+        event.prevent_default.assert_called_once()
+        event.stop.assert_called_once()
