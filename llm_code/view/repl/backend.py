@@ -18,6 +18,7 @@ from rich.console import Console
 from llm_code.view.base import InputHandler, ViewBackend
 from llm_code.view.dialog_types import Choice, DialogCancelled, TextValidator
 from llm_code.view.repl.components.live_response_region import LiveResponseRegion
+from llm_code.view.repl.components.tool_event_renderer import ToolEventRegion
 from llm_code.view.repl.coordinator import ScreenCoordinator
 from llm_code.view.types import (
     MessageEvent,
@@ -29,67 +30,6 @@ from llm_code.view.types import (
 )
 
 T = TypeVar("T")
-
-
-class _NullToolEventHandle:
-    """M3 placeholder. Real implementation in M7 (ToolEventRegion)."""
-
-    def __init__(
-        self,
-        coordinator: ScreenCoordinator,
-        tool_name: str,
-        args: Dict[str, Any],
-    ) -> None:
-        self._coordinator = coordinator
-        self._tool_name = tool_name
-        self._args = args
-        self._committed = False
-
-        # Print start line immediately
-        self._coordinator._console.print(
-            f"[dim]▶[/dim] {tool_name}"
-        )
-
-    def feed_stdout(self, line: str) -> None:
-        pass
-
-    def feed_stderr(self, line: str) -> None:
-        pass
-
-    def feed_diff(self, diff_text: str) -> None:
-        pass
-
-    def commit_success(
-        self,
-        *,
-        summary: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        if self._committed:
-            return
-        self._committed = True
-        summary_text = summary or "done"
-        self._coordinator._console.print(
-            f"[green]✓[/green] {self._tool_name} · {summary_text}"
-        )
-
-    def commit_failure(
-        self,
-        *,
-        error: str,
-        exit_code: Optional[int] = None,
-    ) -> None:
-        if self._committed:
-            return
-        self._committed = True
-        exit_str = f" · exit {exit_code}" if exit_code is not None else ""
-        self._coordinator._console.print(
-            f"[red]✗[/red] {self._tool_name} · {error}{exit_str}"
-        )
-
-    @property
-    def is_active(self) -> bool:
-        return not self._committed
 
 
 class REPLBackend(ViewBackend):
@@ -183,7 +123,11 @@ class REPLBackend(ViewBackend):
         tool_name: str,
         args: Dict[str, Any],
     ) -> ToolEventHandle:
-        return _NullToolEventHandle(self._coordinator, tool_name, args)
+        return ToolEventRegion(
+            console=self._coordinator._console,
+            tool_name=tool_name,
+            args=args,
+        )
 
     def update_status(self, status: StatusUpdate) -> None:
         self._coordinator.update_status(status)
