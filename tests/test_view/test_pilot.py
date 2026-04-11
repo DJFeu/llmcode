@@ -248,3 +248,84 @@ async def test_echo_dispatcher_fixture(stub_repl_pilot_with_echo_dispatcher):
     assert all(m.role == Role.USER for m in pilot.rendered_messages)
     assert pilot.turn_starts == 2
     assert pilot.turn_ends == 2
+
+
+# === Real REPLBackend pilot meta-tests ===
+
+
+@pytest.mark.asyncio
+async def test_real_pilot_info_capture(repl_pilot):
+    """print_info via the real backend writes to the captured Console."""
+    repl_pilot.backend.print_info("hello from real")
+    assert repl_pilot.captured_contains("hello from real")
+
+
+@pytest.mark.asyncio
+async def test_real_pilot_error_capture(repl_pilot):
+    repl_pilot.backend.print_error("oops")
+    assert repl_pilot.captured_contains("oops")
+
+
+@pytest.mark.asyncio
+async def test_real_pilot_panel_capture(repl_pilot):
+    repl_pilot.backend.print_panel("body", title="T")
+    assert repl_pilot.captured_contains("body")
+    assert repl_pilot.captured_contains("T")
+
+
+@pytest.mark.asyncio
+async def test_real_pilot_render_message(repl_pilot):
+    """render_message produces terminal output we can assert on."""
+    repl_pilot.backend.render_message(
+        MessageEvent(role=Role.USER, content="user says hi")
+    )
+    assert repl_pilot.captured_contains("user says hi")
+
+
+@pytest.mark.asyncio
+async def test_real_pilot_status_update_does_not_crash(repl_pilot):
+    """update_status on the real backend merges without error."""
+    repl_pilot.backend.update_status(StatusUpdate(model="test"))
+    repl_pilot.backend.update_status(StatusUpdate(cost_usd=0.01))
+    status = repl_pilot.coordinator.current_status
+    assert status.model == "test"
+    assert status.cost_usd == 0.01
+
+
+@pytest.mark.asyncio
+async def test_real_pilot_streaming_handle_feeds_and_commits(repl_pilot):
+    """start_streaming_message returns a working handle."""
+    handle = repl_pilot.backend.start_streaming_message(role=Role.ASSISTANT)
+    handle.feed("hello ")
+    handle.feed("world")
+    assert handle.is_active
+    handle.commit()
+    assert not handle.is_active
+    # After commit the buffered content is printed to the capture
+    assert repl_pilot.captured_contains("hello world")
+
+
+@pytest.mark.asyncio
+async def test_real_pilot_tool_event_handle(repl_pilot):
+    """start_tool_event prints start + commit lines to capture."""
+    handle = repl_pilot.backend.start_tool_event(
+        tool_name="read_file", args={"path": "foo.py"},
+    )
+    handle.commit_success(summary="47 lines")
+    out = repl_pilot.captured_output
+    assert "read_file" in out
+    # Rich auto-highlights numbers, so ANSI codes split "47 lines" —
+    # assert on the parts separately.
+    assert "47" in out
+    assert "lines" in out
+
+
+@pytest.mark.asyncio
+async def test_real_pilot_tool_event_failure(repl_pilot):
+    handle = repl_pilot.backend.start_tool_event(
+        tool_name="bash", args={"cmd": "false"},
+    )
+    handle.commit_failure(error="nonzero", exit_code=1)
+    out = repl_pilot.captured_output
+    assert "bash" in out
+    assert "nonzero" in out
