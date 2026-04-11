@@ -356,6 +356,15 @@ async def _run_repl(backend, state) -> None:
        cleanly above the anchored layout.
     """
     import asyncio
+    # M15: load the user's theme overrides into the brand palette
+    # BEFORE any component reads it (welcome banner, status line,
+    # logo, etc). Silent on failure — a bad theme key must not
+    # block startup.
+    try:
+        from llm_code.view.repl import style as _style
+        _style.set_palette(_style.load_palette(state.config))
+    except Exception:
+        pass
     await backend.start()
     _push_cursor_to_bottom()
 
@@ -377,15 +386,18 @@ async def _run_repl(backend, state) -> None:
 
 
 def _print_welcome(backend, state) -> None:
-    """Print a Rich ``Panel`` welcome banner once PT's event loop is up.
+    """Print the M15 welcome panel once PT's event loop is up.
 
-    Uses ``view.print_panel`` so the Rich ``Panel`` — with a title bar
-    and a box border — shows up as a proper "welcome screen" at
-    startup, rather than the two terse info lines the first M14
-    draft had. The panel contents are one line each so the body
-    never wraps at narrow widths.
+    Uses the full-featured LLMCODE block-letter gradient logo + info
+    grid + hint footer from :mod:`llm_code.view.repl.components.welcome`.
+    The panel is rendered directly onto the coordinator's console so
+    the gradient colors survive the Rich rendering pipeline (the
+    older ``print_panel(content, title)`` string API can't carry per-
+    char styling).
     """
     try:
+        from llm_code.view.repl.components.welcome import render_welcome_panel
+
         version = _resolve_version()
         model = (
             getattr(state.config, "model", None)
@@ -393,14 +405,36 @@ def _print_welcome(backend, state) -> None:
             else None
         ) or "(no model)"
         cwd_display = state.cwd.name or str(state.cwd)
-        body = (
-            f"[bold cyan]model[/bold cyan]  {model}\n"
-            f"[bold cyan]cwd[/bold cyan]    {cwd_display}\n"
-            "\n"
-            "[dim]Ctrl+G voice · [bold]/[/bold] commands · "
-            "Ctrl+D quit[/dim]"
+        permission_mode = (
+            getattr(state.config, "permission_mode", None)
+            if state.config is not None
+            else None
         )
-        backend.print_panel(body, title=f"llmcode v{version}")
+        thinking_mode = None
+        if state.config is not None:
+            thinking_cfg = getattr(state.config, "thinking", None)
+            if thinking_cfg is not None:
+                thinking_mode = getattr(thinking_cfg, "mode", None)
+        try:
+            rows = shutil.get_terminal_size((80, 24)).lines
+        except Exception:
+            rows = 24
+        panel = render_welcome_panel(
+            version=version,
+            model=model,
+            cwd=cwd_display,
+            permission_mode=permission_mode,
+            thinking_mode=thinking_mode,
+            terminal_rows=rows,
+        )
+        # Route through the coordinator's Rich console so the
+        # per-char gradient spans render correctly.
+        coordinator = getattr(backend, "coordinator", None)
+        if coordinator is not None and getattr(coordinator, "_console", None):
+            coordinator._console.print(panel)
+        else:
+            # Fallback: stringify and use the plain panel API.
+            backend.print_panel(str(panel), title=f"llmcode v{version}")
     except Exception:
         # Welcome banner must never block startup
         pass

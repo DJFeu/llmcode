@@ -36,7 +36,9 @@ from llm_code.view.repl.components.dialog_popover import (
     build_dialog_float,
     build_dialog_key_bindings,
 )
+from llm_code.view.repl.components.footer_hint import FooterHint
 from llm_code.view.repl.components.input_area import InputArea
+from llm_code.view.repl.components.mode_indicator import ModeIndicator
 from llm_code.view.repl.components.status_line import StatusLine
 from llm_code.view.repl.components.voice_overlay import VoiceOverlay
 from llm_code.view.repl.history import PromptHistory, default_history_path
@@ -108,6 +110,8 @@ class ScreenCoordinator:
         # M5: StatusLine owns merged status state + formatted rendering.
         # Replaces M3's raw StatusUpdate + inline format function.
         self._status_line = StatusLine()
+        self._footer_hint = FooterHint()
+        self._mode_indicator = ModeIndicator()
 
         # M4: input area + slash popover + history, plus the KeyBindings
         # factory from keybindings.py. Replaces the M3 inline closures.
@@ -316,16 +320,36 @@ class ScreenCoordinator:
         input_window = self._input_area.build_window()
         popover_float = self._input_area.build_popover_float()
         dialog_float = build_dialog_float(self._dialog_popover)
+        footer_window = Window(
+            FormattedTextControl(self._footer_text),
+            height=1,
+            style="class:footer-hint",
+        )
+        footer_container = ConditionalContainer(
+            content=footer_window,
+            # Hide the footer strip while a dialog popover is active
+            # so the popover's own hint row doesn't fight with ours.
+            filter=~Condition(lambda: self._dialog_popover.is_active),
+        )
         return Layout(
             FloatContainer(
                 content=HSplit([
                     rate_limit_container,
                     status_window,
                     input_window,
+                    footer_container,
                 ]),
                 floats=[popover_float, dialog_float],
             )
         )
+
+    def _footer_text(self) -> FormattedText:
+        """Render the footer hint + mode indicator row."""
+        hint = self._footer_hint.render()
+        mode = self._mode_indicator.render()
+        # Separator between hints and mode label.
+        sep = [("", "   ")]
+        return FormattedText(hint + sep + mode)
 
     def _status_text(self) -> FormattedText:
         """Render the status line. Called by FormattedTextControl on each
