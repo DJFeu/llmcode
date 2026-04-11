@@ -38,6 +38,7 @@ from llm_code.view.repl.components.dialog_popover import (
 )
 from llm_code.view.repl.components.input_area import InputArea
 from llm_code.view.repl.components.status_line import StatusLine
+from llm_code.view.repl.components.voice_overlay import VoiceOverlay
 from llm_code.view.repl.history import PromptHistory, default_history_path
 from llm_code.view.repl.keybindings import build_keybindings
 from llm_code.view.types import (
@@ -111,19 +112,16 @@ class ScreenCoordinator:
         # M8: dialog popover hosts confirm/select/text/checklist overlays.
         self._dialog_popover = DialogPopover()
 
+        # M9: voice overlay flips the status line into recording mode.
+        self._voice_overlay = VoiceOverlay(self)
+        # Backend installs the Ctrl+G handler via set_voice_toggle_callback
+        # before start() constructs the Application.
+        self._voice_toggle_callback: Optional[Callable[[], None]] = None
+
         # Main input bindings + dialog bindings merged together. Dialog
         # bindings have Condition filters that only fire while a dialog
         # is active, so they don't interfere with normal input flow.
-        self._key_bindings = merge_key_bindings([
-            build_keybindings(
-                input_buffer=self._input_area.buffer,
-                history=self._history,
-                on_submit=self._handle_submit,
-                on_exit=self.request_exit,
-                on_voice_toggle=None,  # M9 wires this
-            ),
-            build_dialog_key_bindings(self._dialog_popover),
-        ])
+        self._rebuild_key_bindings()
 
     # M3 Buffer is now owned by InputArea; expose a pass-through property
     # so any external caller that historically used `coord._input_buffer`
@@ -136,6 +134,58 @@ class ScreenCoordinator:
     def dialog_popover(self) -> DialogPopover:
         """Exposed to REPLBackend for delegating show_confirm/select/etc."""
         return self._dialog_popover
+
+    @property
+    def voice_overlay(self) -> VoiceOverlay:
+        """Exposed to REPLBackend for voice_* state queries."""
+        return self._voice_overlay
+
+    def _rebuild_key_bindings(self) -> None:
+        """Reconstruct the merged key bindings.
+
+        Called from __init__ and whenever the voice toggle callback
+        changes. Must be invoked BEFORE ``start()`` — once the PT
+        Application is constructed it captures the current key bindings
+        and later rebuilds don't take effect.
+        """
+        self._key_bindings = merge_key_bindings([
+            build_keybindings(
+                input_buffer=self._input_area.buffer,
+                history=self._history,
+                on_submit=self._handle_submit,
+                on_exit=self.request_exit,
+                on_voice_toggle=self._voice_toggle_callback,
+            ),
+            build_dialog_key_bindings(self._dialog_popover),
+        ])
+
+    def set_voice_toggle_callback(
+        self, callback: Optional[Callable[[], None]],
+    ) -> None:
+        """Install the Ctrl+G voice hotkey handler.
+
+        Must be called BEFORE ``start()`` so the rebuilt key bindings
+        are the ones the PT Application uses.
+        """
+        self._voice_toggle_callback = callback
+        self._rebuild_key_bindings()
+
+    # === Voice state forwarding (called by backend) ===
+
+    def voice_started(self) -> None:
+        self._voice_overlay.start()
+        if self._app is not None and self._app.is_running:
+            self._app.invalidate()
+
+    def voice_progress(self, seconds: float, peak: float) -> None:
+        self._voice_overlay.update(seconds, peak)
+        if self._app is not None and self._app.is_running:
+            self._app.invalidate()
+
+    def voice_stopped(self, reason: str) -> None:
+        self._voice_overlay.stop(reason)
+        if self._app is not None and self._app.is_running:
+            self._app.invalidate()
 
     def _handle_submit(self, text: str) -> None:
         """Called by the Enter keybinding with the submitted text.
