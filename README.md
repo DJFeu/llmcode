@@ -351,6 +351,68 @@ Native httpx-based provider for Anthropic's Messages API:
 - **Background task indicator** — status bar shows running/pending tasks
 - **Vim mode** — full motions, operators, text objects
 
+<details>
+<summary><strong>Complete slash command reference (52)</strong></summary>
+
+| Command | Description |
+|---|---|
+| `/help` | Show help |
+| `/clear` | Clear conversation |
+| `/model <name>` | Switch model |
+| `/theme <name>` | Switch TUI color theme |
+| `/cost` | Token usage |
+| `/cache [list\|clear\|probe]` | Manage persistent caches |
+| `/budget <tokens>` | Set token budget |
+| `/undo` | Undo last change |
+| `/cd <path>` | Change directory |
+| `/config` | Runtime config |
+| `/settings` | Open settings panel |
+| `/set <key> <value>` | Set config value |
+| `/thinking` | Toggle thinking |
+| `/vim` | Toggle vim mode |
+| `/image <path>` | Attach image |
+| `/search <query>` | Search history |
+| `/index` | Project index |
+| `/session` | Sessions |
+| `/skill` | Browse skills |
+| `/plugin` | Browse plugins |
+| `/mcp` | MCP servers |
+| `/memory` | Project memory |
+| `/cron` | Scheduled tasks |
+| `/task` | Task lifecycle |
+| `/swarm` | Swarm coordination |
+| `/personas` | List built-in swarm personas |
+| `/orchestrate <task>` | Category-routed persona dispatch |
+| `/voice [on\|off]` | Voice input (STT) |
+| `/ide` | IDE bridge |
+| `/vcr` | VCR recording |
+| `/checkpoint` | Checkpoints |
+| `/diff` | Diff since checkpoint |
+| `/hida` | HIDA task classification |
+| `/lsp` | LSP status |
+| `/cancel` | Cancel generation |
+| `/plan` | Plan/Act mode |
+| `/mode` | Switch mode (suggest/normal/plan) |
+| `/analyze` | Code analysis |
+| `/diff_check` | Diff analysis |
+| `/dump` | Dump context |
+| `/map` | Repo map |
+| `/harness` | Harness controls |
+| `/knowledge [rebuild]` | Knowledge base |
+| `/gain` | Token savings report |
+| `/profile` | Per-model token/cost breakdown |
+| `/init` | Generate `AGENTS.md` from repo analysis |
+| `/yolo` | Toggle YOLO mode |
+| `/copy` | Copy last response to clipboard |
+| `/compact [keep]` | Compact conversation |
+| `/export [path]` | Export conversation to markdown |
+| `/update` | Check PyPI + upgrade in-place |
+| `/exit`, `/quit` | Quit |
+
+Type `/` in the TUI for autocomplete with inline descriptions, or run `/help` for the interactive browser.
+
+</details>
+
 ### Hooks (24 events)
 
 ```json
