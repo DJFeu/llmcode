@@ -17,6 +17,7 @@ from rich.console import Console
 
 from llm_code.view.base import InputHandler, ViewBackend
 from llm_code.view.dialog_types import Choice, DialogCancelled, TextValidator
+from llm_code.view.repl.components.live_response_region import LiveResponseRegion
 from llm_code.view.repl.coordinator import ScreenCoordinator
 from llm_code.view.types import (
     MessageEvent,
@@ -28,42 +29,6 @@ from llm_code.view.types import (
 )
 
 T = TypeVar("T")
-
-
-class _NullStreamingHandle:
-    """M3 placeholder. Real implementation in M6 (LiveResponseRegion).
-
-    Feeds chunks into an internal buffer, commits by printing the
-    buffered text as a plain Rich render. No Live region yet.
-    """
-
-    def __init__(self, coordinator: ScreenCoordinator, role: Role) -> None:
-        self._coordinator = coordinator
-        self._role = role
-        self._buffer = ""
-        self._committed = False
-        self._aborted = False
-
-    def feed(self, chunk: str) -> None:
-        if self._committed or self._aborted:
-            return
-        self._buffer += chunk
-
-    def commit(self) -> None:
-        if self._committed or self._aborted:
-            return
-        self._committed = True
-        from rich.markdown import Markdown
-        self._coordinator._console.print(Markdown(self._buffer))
-
-    def abort(self) -> None:
-        if self._committed or self._aborted:
-            return
-        self._aborted = True
-
-    @property
-    def is_active(self) -> bool:
-        return not (self._committed or self._aborted)
 
 
 class _NullToolEventHandle:
@@ -148,6 +113,11 @@ class REPLBackend(ViewBackend):
         self._config = config
         self._runtime = runtime
         self._coordinator = ScreenCoordinator(console=console)
+        # Tracks the currently-active streaming region (M6). Starting a
+        # new stream while one is already active aborts the previous —
+        # a defensive guard against dispatcher bugs; normal flow always
+        # commits or aborts before starting the next turn.
+        self._active_streaming_region: Optional[LiveResponseRegion] = None
 
     @property
     def coordinator(self) -> ScreenCoordinator:
@@ -191,7 +161,22 @@ class REPLBackend(ViewBackend):
         role: Role,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> StreamingMessageHandle:
-        return _NullStreamingHandle(self._coordinator, role)
+        # Abort any still-active previous region (shouldn't happen in
+        # normal flow but protects against dispatcher bugs).
+        if (
+            self._active_streaming_region is not None
+            and self._active_streaming_region.is_active
+        ):
+            self._active_streaming_region.abort()
+
+        region = LiveResponseRegion(
+            console=self._coordinator._console,
+            coordinator=self._coordinator,
+            role=role,
+        )
+        region.start()
+        self._active_streaming_region = region
+        return region
 
     def start_tool_event(
         self,
