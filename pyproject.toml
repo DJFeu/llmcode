@@ -28,7 +28,6 @@ dependencies = [
     "prompt-toolkit>=3.0.47",
     "pydantic>=2.0",
     "click>=8.0",
-    "textual>=1.0",
     "filelock>=3.12",
     "pyyaml>=6.0",
     # tomllib entered the stdlib in 3.11; pull tomli (same API) on 3.10
