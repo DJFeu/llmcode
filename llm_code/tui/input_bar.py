@@ -63,6 +63,11 @@ class InputBar(Widget):
         self._dropdown_items = []
         self._dropdown_cursor = 0
         self._keybindings = load_keybindings(Path.home() / ".llmcode" / "keybindings.json")
+        # Shell-style prompt history. Up/Down walks past submissions when
+        # the dropdown is hidden and the buffer is single-line. Persists
+        # to ~/.llmcode/prompt_history.txt with dedup + 1000-entry cap.
+        from llm_code.tui.prompt_history import PromptHistory, default_history_path
+        self._history = PromptHistory(path=default_history_path())
 
     class Submitted(Message):
         """Fired when user presses Enter."""
@@ -208,7 +213,13 @@ class InputBar(Widget):
                 event.prevent_default()
                 event.stop()
                 return
-            elif event.key in ("enter", "tab"):
+            elif event.key in ("enter", "tab", "right"):
+                # `right` acts like `tab` when the dropdown is up — shell-
+                # style "accept completion". It does not interfere with
+                # cursor-right navigation because this branch only runs
+                # while the dropdown is visible, which only happens when
+                # the buffer starts with `/` and has no space yet (see
+                # _update_dropdown).
                 selected_cmd = self._dropdown_items[self._dropdown_cursor][0]
                 self._show_dropdown = False
                 self._dropdown_items = []
@@ -216,6 +227,7 @@ class InputBar(Widget):
                 if selected_cmd in _NO_ARG_COMMANDS:
                     # Execute immediately
                     self.value = selected_cmd
+                    self._history.add(selected_cmd)
                     self.post_message(self.Submitted(selected_cmd))
                     self.value = ""
                     self._cursor = 0
@@ -231,6 +243,31 @@ class InputBar(Widget):
                 self._dropdown_cursor = 0
                 self.refresh(layout=True)
                 return
+
+        # Shell-style history recall — ↑/↓ when the dropdown is hidden
+        # and the buffer is single-line (multi-line buffers reserve ↑/↓
+        # for intra-line navigation via keybindings). Also suppress in
+        # vim mode since vim's j/k/gg/G own up-and-down semantics there.
+        if (
+            event.key in ("up", "down")
+            and not self._show_dropdown
+            and self._vim_engine is None
+            and "\n" not in self.value
+        ):
+            if event.key == "up":
+                recalled = self._history.prev(current=self.value)
+            else:
+                recalled = self._history.next()
+            if recalled is not None:
+                self.value = recalled
+                self._cursor = len(self.value)
+                self.refresh(layout=True)
+                event.prevent_default()
+                event.stop()
+                return
+            # Nothing to recall in that direction — fall through so
+            # keybindings can still claim the key (e.g. history-absent
+            # scrollback behavior).
 
         # Tab autocomplete (before vim routing) — fallback when dropdown not shown
         if event.key == "tab" and self.value.startswith("/"):
@@ -256,6 +293,7 @@ class InputBar(Widget):
             # Handle enter in insert mode for submission
             if event.key == "enter" and self._vim_engine.mode == VimMode.INSERT:
                 if self.value.strip():
+                    self._history.add(self.value)
                     self.post_message(self.Submitted(self.value))
                     self.value = ""
                     self._vim_engine.set_buffer("")
@@ -282,6 +320,11 @@ class InputBar(Widget):
             new_value = self.value[:cur] + event.character + self.value[cur:]
             self._cursor = cur + 1
             self.value = new_value
+            # Typing breaks out of history navigation — the user is now
+            # editing whatever was recalled and should not jump away from
+            # it on the next ↑/↓.
+            if self._history.is_navigating():
+                self._history.reset()
             event.prevent_default()
             event.stop()
 
@@ -289,6 +332,7 @@ class InputBar(Widget):
         """Execute a named keybinding action."""
         if action == "submit":
             if self.value.strip():
+                self._history.add(self.value)
                 self.post_message(self.Submitted(self.value))
                 self.value = ""
                 self._cursor = 0
@@ -299,9 +343,13 @@ class InputBar(Widget):
             if self._cursor > 0:
                 self.value = self.value[:self._cursor - 1] + self.value[self._cursor:]
                 self._cursor -= 1
+                if self._history.is_navigating():
+                    self._history.reset()
         elif action == "delete_forward":
             if self._cursor < len(self.value):
                 self.value = self.value[:self._cursor] + self.value[self._cursor + 1:]
+                if self._history.is_navigating():
+                    self._history.reset()
         elif action == "cursor_left":
             if self._cursor > 0:
                 self._cursor -= 1
