@@ -236,10 +236,18 @@ async def test_ctrl_c_on_empty_buffer_requests_exit(repl_pilot):
 
 
 @pytest.mark.asyncio
-async def test_voice_hotkey_absent_when_not_wired(repl_pilot):
-    """By default the coordinator does not register a Ctrl+G binding."""
-    with pytest.raises(AssertionError, match="no active binding"):
-        await repl_pilot.press("c-g")
+async def test_voice_hotkey_wired_by_backend_start(repl_pilot):
+    """M9: REPLBackend.start() installs a Ctrl+G voice toggle handler.
+
+    The press() helper raises AssertionError("no active binding...")
+    if the key binding is missing or its Filter is False. So simply
+    reaching the end of press("c-g") without raising is evidence the
+    voice toggle is wired and active. Whether voice actually *starts*
+    depends on the real AudioRecorder's constructor signature (which
+    the M9 backend glue doesn't match yet — M10/M11 closes that gap),
+    so we don't assert on ``_voice_active``.
+    """
+    await repl_pilot.press("c-g")  # must not raise
 
 
 @pytest.mark.asyncio
