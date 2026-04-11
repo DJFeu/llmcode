@@ -95,6 +95,9 @@ exclude = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "unit: unit test — exercises a single function/class with no I/O or external deps",
+]
 
 [tool.ruff]
 target-version = "py310"

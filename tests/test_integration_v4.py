@@ -1,6 +1,6 @@
 """Integration tests for v4 features: checkpoints, git tools, and CLI integration."""
 import subprocess
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -54,10 +54,18 @@ def _make_runtime(responses, tmp_path, with_checkpoint=False):
         idx = min(call_count - 1, len(responses) - 1)
         return _AsyncGenWrapper(responses[idx])
 
+    # ProviderClient has a mixed API: stream_message() / close() are
+    # async but supports_native_tools() / supports_images() /
+    # supports_reasoning() are sync. Using a bare AsyncMock wraps every
+    # method as async, so the sync calls produce never-awaited
+    # coroutines when runtime invokes them. Explicitly re-declaring the
+    # sync methods as MagicMock gives them the right shape and silences
+    # the RuntimeWarning.
     provider = AsyncMock()
     provider.stream_message = mock_stream
-    provider.supports_native_tools.return_value = False
-    provider.supports_images.return_value = False
+    provider.supports_native_tools = MagicMock(return_value=False)
+    provider.supports_images = MagicMock(return_value=False)
+    provider.supports_reasoning = MagicMock(return_value=False)
 
     registry = ToolRegistry()
     registry.register(ReadFileTool())
