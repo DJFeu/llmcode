@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Awaitable, Callable, Optional
 
-import pytest
 import pytest_asyncio
 
 from llm_code.view.repl.backend import REPLBackend

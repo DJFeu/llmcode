@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from llm_code.view.dialog_types import Choice
-from llm_code.view.types import MessageEvent, Role, RiskLevel, StatusUpdate
+from llm_code.view.types import MessageEvent, Role, StatusUpdate
 
 
 @pytest.mark.asyncio
