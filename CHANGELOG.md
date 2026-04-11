@@ -1,5 +1,141 @@
 # Changelog
 
+## v1.23.0 — 52 Commands × Deep E2E: the "pytest green ≠ user-runnable" gap, closed
+
+This release is about one thing: **every slash command now has a deep
+end-to-end pilot scenario that boots the real TUI and asserts on
+observable state.** Historically the unit tests were green while shipped
+builds had broken autocomplete dropdowns, unscrollable modals, silent
+voice failures, and mis-routed keybindings — the gap between "pytest
+passes" and "user-runnable" was costing an entire bug class per release.
+v1.23.0 closes that gap.
+
+### Highlights
+
+- **🧪 Full E2E pilot suite for every slash command** — 185 scenarios
+  across 13 files under `tests/test_e2e_tui/`, driving a real
+  `LLMCodeTUI` instance via Textual's `App.run_test()` pilot API.
+  Every one of the 52 `CommandDef` entries in `COMMAND_REGISTRY` has
+  a matching DEEP or MODAL scenario; the only SKIP entries are
+  `/exit` (quits the loop) and `/settings` (empty-Static modal).
+  The suite runs in **~55 seconds** on a 2026 M-series MacBook Pro,
+  with zero external dependencies — no network, no mic, no LLM
+  credentials, no real git repo. Fully deterministic: no
+  `time.sleep`, no retries, no flaky assertions.
+- **Coverage matrix documented in `tests/test_e2e_tui/README.md`** —
+  every command is tagged DEEP / SMOKE / MODAL / SKIP with a
+  direct link to its test file and a one-line note on what the
+  scenario asserts. Adding a new command now has an obvious
+  checklist: "add a row to the matrix, add a scenario file."
+- **Two meta-invariant tests prevent the exact drift that caused
+  four commands to ship without autocomplete hints in v1.22.x:**
+  `test_dispatcher_has_all_52_commands` walks `COMMAND_REGISTRY` and
+  asserts every entry has a matching `_cmd_*` handler;
+  `test_registry_has_no_dead_handlers` walks the dispatcher class
+  and asserts every `_cmd_*` has a registry entry. If either side
+  drifts, CI fails with a pointed error — no more "only learns
+  about it from the source code".
+
+### Deep E2E Coverage by Category
+
+| Category | Commands | New Scenarios |
+|---|---|---|
+| Core UX (`/help` /clear /copy /cancel /yolo /thinking /vim /model /theme /update) | 10 | 18 |
+| Voice (`/voice` + Ctrl+G + VAD + banner) | 1 | 7 |
+| Input / interaction (slash dropdown, prompt history, multiline, cycle-agent, `/image`) | 5 features | 23 |
+| Info / config (`/cost` /gain /profile /cache /personas /budget /set /config /cd /map /dump) | 11 | 25 |
+| Session / memory / history (`/session` /memory /undo /diff /compact /checkpoint /export) | 7 | 26 |
+| Workflow (`/plan` /mode /harness /search /cron /task /swarm /orchestrate /hida) | 9 | 27 |
+| 外掛生態系 (`/plugin` /skill /mcp) | 3 | 17 |
+| Heavy / IO-bound (`/init` /index /knowledge /analyze /lsp /vcr /ide) | 7 | 21 |
+| Meta / cross-cutting (`test_all_slash_commands.py`) | — | 15 |
+| Boot / banner | — | 6 |
+
+**Total: 52 commands, 185 scenarios, +122 vs the partial E2E suite in
+v1.22.1.**
+
+### What the deep scenarios actually verify (a sampling)
+
+- **Modal scroll bugs caught at boot** — `test_help_modal.py` opens
+  `/help`, navigates past item 13 with `pilot.press("down")`, and
+  asserts the 52-item list scrolls past the viewport. Earlier
+  iterations shipped with an OptionList that couldn't scroll because
+  of an overflow: hidden on the modal container — that bug is now
+  regression-locked.
+- **Slash dropdown navigation under real focus** —
+  `test_slash_dropdown.py` types `/he`, asserts `/help` surfaces as
+  the top filter hit, then exercises Tab / Enter / → accept paths
+  and Escape dismiss. The dropdown had three separate broken
+  states over the v1.22.x line (focus stolen by Static, → not
+  wired to accept, Esc leaving ghost state) — all three now have
+  named scenarios.
+- **`/voice` full mic flow including macOS permission symptom** —
+  `test_voice_flow.py` covers Ctrl+G hotkey toggle, typo reject
+  (`/voice /oof` must not silently stop recording), VAD auto-stop,
+  speech-gate latch (silence window can't open before the first
+  chunk of real speech), and the dedicated "No audio captured /
+  check macOS Microphone permissions" troubleshooting path that
+  fires when `recorder._has_heard_speech is False` + empty buffer.
+- **Checkpoint cost-tracker round-trip** —
+  `test_checkpoint_flow.py` saves a checkpoint with a populated
+  cost tracker, resumes it, and asserts the restored runtime has
+  the same token counts. This is the regression that almost
+  shipped in v1.22.1 before the Wave2-2 fix landed.
+- **Plugin / skill / mcp install + remove paths** —
+  `test_plugin_skill_mcp.py` covers unsafe-name guards, clone +
+  enable + reload flows (with `PluginInstaller` mocked at the
+  module boundary), marker-file enable/disable, directory
+  deletion on remove, and the `MarketplaceBrowser` push path
+  (via `push_screen` interception to sidestep a pilot mount race).
+- **Heavy worker dispatch without side effects** —
+  `test_heavy_commands.py` intercepts `app.run_worker` so `/init`,
+  `/update`, `/analyze`, etc. can be verified to schedule the
+  right worker with the right name without actually running the
+  LLM / pip / `run_analysis` path.
+
+### Fixed (pre-release, post v1.22.1)
+- **`/voice off` showed a cryptic "No audio captured" line** when
+  the macOS Microphone permission was denied — the user had no
+  way to tell whether it was a hardware bug, a driver problem, or
+  a permission issue. Now surfaces the full `System Settings →
+  Privacy & Security → Microphone` path plus the current VAD peak
+  and mean telemetry, so power users can also diagnose genuine
+  low-gain hardware issues.
+- **`_cmd_voice` typo rejection guard** — `/voice /oof` used to
+  fall through to the bare-status branch, leaving recording active
+  while the user assumed they had stopped. Now explicitly rejected
+  with a "Still recording — unknown subcommand" chat entry.
+
+### Tests
+- **5474 passing** (+122 vs v1.22.1). **12 skipped** unchanged.
+- E2E pilot suite: **63 → 185 scenarios** (+122), **~55s** runtime.
+- New files: `test_basic_toggles.py` (12), `test_info_commands.py` (25),
+  `test_session_memory.py` (18), `test_workflow_commands.py` (27),
+  `test_plugin_skill_mcp.py` (17), `test_heavy_commands.py` (21),
+  plus the earlier-landed `test_boot_banner.py` / `test_help_modal.py`
+  / `test_slash_dropdown.py` / `test_prompt_history_e2e.py` /
+  `test_voice_flow.py` / `test_export_flow.py` / `test_all_slash_commands.py`
+  / `test_theme_switch.py` / `test_multiline_input.py` /
+  `test_cycle_agent.py` / `test_image_flow.py` /
+  `test_checkpoint_flow.py`.
+- Coverage matrix + authoring guide: `tests/test_e2e_tui/README.md`.
+
+### Migration
+None. This is a test-suite-only release. No runtime behavior changed
+from v1.22.1 except for the two small voice UX fixes listed under
+"Fixed", which are additive chat-entry improvements.
+
+### Why this matters
+A bug that pytest can't catch has to be found by a human running the
+TUI and noticing it. That's slow, flaky, and doesn't scale. With 185
+deterministic pilot scenarios running in under a minute, the same
+class of bugs that slipped through the v1.22.x line — broken modal
+scroll, missing autocomplete hints, silent voice failures,
+mis-routed Ctrl+G dispatch — will now fail CI before the commit
+lands. "Product complete" means the tests say so.
+
+---
+
 ## v1.22.1 — Voice UX patch: VAD peak detection, Ctrl+G hotkey, banner hint
 
 Field-test patch for v1.22.0. Two bugs showed up in the first hands-on
