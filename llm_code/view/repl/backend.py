@@ -1,20 +1,23 @@
-"""REPLBackend stub — temporary no-op implementation for M2 pilot tests.
+"""REPLBackend — v2.0.0 REPL implementation of ViewBackend.
 
-Replaced in M3 with the real ScreenCoordinator-backed implementation.
-Until then, this stub records every method call into self._recorded
-so the pilot can assert on call patterns without needing a real
-terminal.
+Delegates all display work to ScreenCoordinator. The backend itself
+is thin: it wires Protocol methods to coordinator methods, manages
+handle objects for streaming/tool events, and holds config/runtime
+references.
 
-DO NOT import this from production code. M3 rewrites the file, at
-which point the stub's introspection attributes disappear.
+M3 ships the skeleton (coordinator + empty layout). M4-M9 add the
+components (status, input, popover, live response, tool events,
+dialogs, voice).
 """
 from __future__ import annotations
 
-import asyncio
-from typing import Any, Callable, Dict, Optional, Sequence, TypeVar
+from typing import Any, Dict, Optional, Sequence, TypeVar
+
+from rich.console import Console
 
 from llm_code.view.base import InputHandler, ViewBackend
-from llm_code.view.dialog_types import Choice, TextValidator
+from llm_code.view.dialog_types import Choice, DialogCancelled, TextValidator
+from llm_code.view.repl.coordinator import ScreenCoordinator
 from llm_code.view.types import (
     MessageEvent,
     Role,
@@ -27,74 +30,69 @@ from llm_code.view.types import (
 T = TypeVar("T")
 
 
-class _StubStreamingHandle:
-    """Records feeds and commit state for test introspection."""
+class _NullStreamingHandle:
+    """M3 placeholder. Real implementation in M6 (LiveResponseRegion).
 
-    def __init__(
-        self,
-        role: Role,
-        on_commit: Callable[["_StubStreamingHandle"], None],
-    ) -> None:
-        self.role = role
-        self.chunks: list[str] = []
-        self.committed: bool = False
-        self.aborted: bool = False
-        self._on_commit = on_commit
+    Feeds chunks into an internal buffer, commits by printing the
+    buffered text as a plain Rich render. No Live region yet.
+    """
+
+    def __init__(self, coordinator: ScreenCoordinator, role: Role) -> None:
+        self._coordinator = coordinator
+        self._role = role
+        self._buffer = ""
+        self._committed = False
+        self._aborted = False
 
     def feed(self, chunk: str) -> None:
-        if self.committed or self.aborted:
+        if self._committed or self._aborted:
             return
-        self.chunks.append(chunk)
+        self._buffer += chunk
 
     def commit(self) -> None:
-        if self.committed or self.aborted:
+        if self._committed or self._aborted:
             return
-        self.committed = True
-        self._on_commit(self)
+        self._committed = True
+        from rich.markdown import Markdown
+        self._coordinator._console.print(Markdown(self._buffer))
 
     def abort(self) -> None:
-        if self.committed or self.aborted:
+        if self._committed or self._aborted:
             return
-        self.aborted = True
+        self._aborted = True
 
     @property
     def is_active(self) -> bool:
-        return not (self.committed or self.aborted)
-
-    @property
-    def buffer(self) -> str:
-        return "".join(self.chunks)
+        return not (self._committed or self._aborted)
 
 
-class _StubToolEventHandle:
-    """Records tool event lifecycle for test introspection."""
+class _NullToolEventHandle:
+    """M3 placeholder. Real implementation in M7 (ToolEventRegion)."""
 
     def __init__(
         self,
+        coordinator: ScreenCoordinator,
         tool_name: str,
         args: Dict[str, Any],
-        on_commit: Callable[["_StubToolEventHandle"], None],
     ) -> None:
-        self.tool_name = tool_name
-        self.args = args
-        self.stdout_lines: list[str] = []
-        self.stderr_lines: list[str] = []
-        self.diff_text: str = ""
-        self.committed: bool = False
-        self.success: Optional[bool] = None
-        self.summary: Optional[str] = None
-        self.error: Optional[str] = None
-        self.exit_code: Optional[int] = None
-        self._on_commit = on_commit
+        self._coordinator = coordinator
+        self._tool_name = tool_name
+        self._args = args
+        self._committed = False
+
+        # Print start line immediately
+        self._coordinator._console.print(
+            f"[dim]▶[/dim] {tool_name}"
+        )
 
     def feed_stdout(self, line: str) -> None:
-        self.stdout_lines.append(line)
+        pass
 
     def feed_stderr(self, line: str) -> None:
-        self.stderr_lines.append(line)
+        pass
 
     def feed_diff(self, diff_text: str) -> None:
-        self.diff_text = diff_text
+        pass
 
     def commit_success(
         self,
@@ -102,12 +100,13 @@ class _StubToolEventHandle:
         summary: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
-        if self.committed:
+        if self._committed:
             return
-        self.committed = True
-        self.success = True
-        self.summary = summary
-        self._on_commit(self)
+        self._committed = True
+        summary_text = summary or "done"
+        self._coordinator._console.print(
+            f"[green]✓[/green] {self._tool_name} · {summary_text}"
+        )
 
     def commit_failure(
         self,
@@ -115,26 +114,28 @@ class _StubToolEventHandle:
         error: str,
         exit_code: Optional[int] = None,
     ) -> None:
-        if self.committed:
+        if self._committed:
             return
-        self.committed = True
-        self.success = False
-        self.error = error
-        self.exit_code = exit_code
-        self._on_commit(self)
+        self._committed = True
+        exit_str = f" · exit {exit_code}" if exit_code is not None else ""
+        self._coordinator._console.print(
+            f"[red]✗[/red] {self._tool_name} · {error}{exit_str}"
+        )
 
     @property
     def is_active(self) -> bool:
-        return not self.committed
+        return not self._committed
 
 
 class REPLBackend(ViewBackend):
-    """Stub implementation for M2 pilot testing.
+    """REPL ViewBackend — prompt_toolkit + Rich implementation.
 
-    Records all method calls into public attributes so tests can
-    assert on dispatcher -> backend interaction patterns without a
-    real terminal. M3 replaces this with a ScreenCoordinator-backed
-    implementation.
+    All display concerns delegate to ``self._coordinator``. The backend
+    itself exists to implement the ViewBackend ABC and hold references
+    to config/runtime for future use.
+
+    M3 scope: coordinator skeleton, null-style handles for streaming
+    and tool events. M6/M7 replace the null handles with real ones.
     """
 
     def __init__(
@@ -142,90 +143,67 @@ class REPLBackend(ViewBackend):
         *,
         config: Any = None,
         runtime: Any = None,
+        console: Optional[Console] = None,
     ) -> None:
         self._config = config
         self._runtime = runtime
-        self._input_handler: Optional[InputHandler] = None
-        self._running = False
+        self._coordinator = ScreenCoordinator(console=console)
 
-        # Test introspection state
-        self.rendered_messages: list[MessageEvent] = []
-        self.status_updates: list[StatusUpdate] = []
-        self.streaming_handles: list[_StubStreamingHandle] = []
-        self.tool_event_handles: list[_StubToolEventHandle] = []
-        self.dialog_calls: list[tuple[str, dict]] = []
-        self.info_lines: list[str] = []
-        self.warning_lines: list[str] = []
-        self.error_lines: list[str] = []
-        self.panels: list[tuple[str, Optional[str]]] = []
-        self.voice_events: list[tuple[str, dict]] = []
-        self.turn_starts: int = 0
-        self.turn_ends: int = 0
-        self.session_compactions: list[int] = []
-        self.session_loads: list[tuple[str, int]] = []
-        self.fatal_errors: list[tuple[str, str, bool]] = []
-
-        # Scripted dialog responses (tests inject these)
-        self.scripted_confirm: list[bool] = []
-        self.scripted_select: list[Any] = []
-        self.scripted_text: list[str] = []
-        self.scripted_checklist: list[list[Any]] = []
-        self.scripted_editor: list[str] = []
+    @property
+    def coordinator(self) -> ScreenCoordinator:
+        """Exposed for tests and component wiring. Production code
+        outside view/repl/ should NOT use this — use Protocol methods."""
+        return self._coordinator
 
     # === Lifecycle ===
 
     async def start(self) -> None:
-        self._running = True
+        await self._coordinator.start()
 
     async def stop(self) -> None:
-        self._running = False
+        await self._coordinator.stop()
 
     async def run(self) -> None:
-        """Stub run() loop — drained externally by the pilot via
-        ``await backend._input_handler(text)`` directly."""
-        self._running = True
-        while self._running:
-            await asyncio.sleep(0.01)
+        await self._coordinator.run()
 
-    def mark_fatal_error(self, code: str, message: str, retryable: bool = True) -> None:
-        self.fatal_errors.append((code, message, retryable))
+    def mark_fatal_error(
+        self,
+        code: str,
+        message: str,
+        retryable: bool = True,
+    ) -> None:
+        self._coordinator.print_error_sync(
+            f"[{code}] {message} (retryable={retryable})"
+        )
 
     # === Input ===
 
     def set_input_handler(self, handler: InputHandler) -> None:
-        self._input_handler = handler
+        self._coordinator.set_input_callback(handler)
 
     # === Messages ===
 
     def render_message(self, event: MessageEvent) -> None:
-        self.rendered_messages.append(event)
+        self._coordinator.render_message_sync(event)
 
     def start_streaming_message(
         self,
         role: Role,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> StreamingMessageHandle:
-        handle = _StubStreamingHandle(role=role, on_commit=lambda h: None)
-        self.streaming_handles.append(handle)
-        return handle
+        return _NullStreamingHandle(self._coordinator, role)
 
     def start_tool_event(
         self,
         tool_name: str,
         args: Dict[str, Any],
     ) -> ToolEventHandle:
-        handle = _StubToolEventHandle(
-            tool_name=tool_name,
-            args=args,
-            on_commit=lambda h: None,
-        )
-        self.tool_event_handles.append(handle)
-        return handle
+        return _NullToolEventHandle(self._coordinator, tool_name, args)
 
     def update_status(self, status: StatusUpdate) -> None:
-        self.status_updates.append(status)
+        self._coordinator.update_status(status)
 
-    # === Dialogs ===
+    # === Dialogs (M3 placeholder: always return default; M8 replaces) ===
 
     async def show_confirm(
         self,
@@ -233,11 +211,7 @@ class REPLBackend(ViewBackend):
         default: bool = False,
         risk: RiskLevel = RiskLevel.NORMAL,
     ) -> bool:
-        self.dialog_calls.append(("confirm", {
-            "prompt": prompt, "default": default, "risk": risk,
-        }))
-        if self.scripted_confirm:
-            return self.scripted_confirm.pop(0)
+        self._coordinator.print_info_sync(f"[confirm] {prompt} (auto: {default})")
         return default
 
     async def show_select(
@@ -246,14 +220,12 @@ class REPLBackend(ViewBackend):
         choices: Sequence[Choice[T]],
         default: Optional[T] = None,
     ) -> T:
-        self.dialog_calls.append(("select", {
-            "prompt": prompt, "choices": list(choices), "default": default,
-        }))
-        if self.scripted_select:
-            return self.scripted_select.pop(0)
+        self._coordinator.print_info_sync(f"[select] {prompt}")
         if default is not None:
             return default
-        return choices[0].value
+        if choices:
+            return choices[0].value
+        raise DialogCancelled("no choices available")
 
     async def show_text_input(
         self,
@@ -262,11 +234,7 @@ class REPLBackend(ViewBackend):
         validator: Optional[TextValidator] = None,
         secret: bool = False,
     ) -> str:
-        self.dialog_calls.append(("text", {
-            "prompt": prompt, "default": default, "secret": secret,
-        }))
-        if self.scripted_text:
-            return self.scripted_text.pop(0)
+        self._coordinator.print_info_sync(f"[text] {prompt}")
         return default or ""
 
     async def show_checklist(
@@ -275,62 +243,34 @@ class REPLBackend(ViewBackend):
         choices: Sequence[Choice[T]],
         defaults: Optional[Sequence[T]] = None,
     ) -> Sequence[T]:
-        self.dialog_calls.append(("checklist", {
-            "prompt": prompt, "choices": list(choices), "defaults": defaults,
-        }))
-        if self.scripted_checklist:
-            return self.scripted_checklist.pop(0)
+        self._coordinator.print_info_sync(f"[checklist] {prompt}")
         return list(defaults) if defaults else []
-
-    # === Voice ===
-
-    def voice_started(self) -> None:
-        self.voice_events.append(("started", {}))
-
-    def voice_progress(self, seconds: float, peak: float) -> None:
-        self.voice_events.append(("progress", {"seconds": seconds, "peak": peak}))
-
-    def voice_stopped(self, reason: str) -> None:
-        self.voice_events.append(("stopped", {"reason": reason}))
 
     # === Convenience output ===
 
     def print_info(self, text: str) -> None:
-        self.info_lines.append(text)
+        self._coordinator.print_info_sync(text)
 
     def print_warning(self, text: str) -> None:
-        self.warning_lines.append(text)
+        self._coordinator.print_warning_sync(text)
 
     def print_error(self, text: str) -> None:
-        self.error_lines.append(text)
+        self._coordinator.print_error_sync(text)
 
     def print_panel(self, content: str, title: Optional[str] = None) -> None:
-        self.panels.append((content, title))
+        self._coordinator.print_panel_sync(content, title)
 
-    # === Session hooks ===
+    def clear_screen(self) -> None:
+        self._coordinator.clear_screen_sync()
 
-    def on_turn_start(self) -> None:
-        self.turn_starts += 1
-
-    def on_turn_end(self) -> None:
-        self.turn_ends += 1
-
-    def on_session_compaction(self, removed_tokens: int) -> None:
-        self.session_compactions.append(removed_tokens)
-
-    def on_session_load(self, session_id: str, message_count: int) -> None:
-        self.session_loads.append((session_id, message_count))
-
-    # === External editor ===
+    # === External editor (M3 placeholder; real impl via $EDITOR in M9 or later) ===
 
     async def open_external_editor(
         self,
         initial_text: str = "",
         filename_hint: str = ".md",
     ) -> str:
-        self.dialog_calls.append(("editor", {
-            "initial_text": initial_text, "filename_hint": filename_hint,
-        }))
-        if self.scripted_editor:
-            return self.scripted_editor.pop(0)
+        self._coordinator.print_info_sync(
+            "[editor] external editor not implemented yet (M3 placeholder)"
+        )
         return initial_text
