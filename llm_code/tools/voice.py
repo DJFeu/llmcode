@@ -106,7 +106,7 @@ def detect_backend() -> RecorderBackend:
 
     raise RuntimeError(
         "No audio recording backend available. "
-        "Install sounddevice (`pip install llm-code[voice]`) or ensure sox/arecord is on PATH."
+        "Install sounddevice (`pip install llmcode-cli[voice]`) or ensure sox/arecord is on PATH."
     )
 
 
