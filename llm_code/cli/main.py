@@ -302,7 +302,31 @@ def main(
     dispatcher = CommandDispatcher(
         view=backend, state=state, renderer=renderer,
     )
-    backend.set_input_handler(dispatcher.run_turn)
+
+    # LLMCODE_TEST_MODE=1 makes every plain-text submission echo as
+    # `echo: {text}` instead of calling the real LLM. Slash commands,
+    # custom commands, and skill commands still go through the real
+    # dispatcher path so pexpect smoke tests can exercise `/version`,
+    # `/help`, `/quit`, etc. without an API key or network.
+    #
+    # Added in M12 as the audit §H3 fix: the M11-M14 audit discovered
+    # that the M12 plan template referenced this env var but no code
+    # actually honored it.
+    if os.environ.get("LLMCODE_TEST_MODE") == "1":
+        real_run_turn = dispatcher.run_turn
+
+        async def _test_mode_run_turn(text: str, images=None) -> None:
+            stripped = text.strip()
+            if stripped.startswith("/"):
+                await real_run_turn(text, images=images)
+                return
+            if stripped:
+                backend.print_info(f"echo: {text}")
+
+        backend.set_input_handler(_test_mode_run_turn)
+    else:
+        backend.set_input_handler(dispatcher.run_turn)
+
     asyncio.run(_run_repl(backend))
 
 
