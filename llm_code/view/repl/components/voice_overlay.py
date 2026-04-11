@@ -54,10 +54,17 @@ class VoiceOverlay:
 
         Must be called on the main event loop (background-thread
         callers use ``loop.call_soon_threadsafe``).
+
+        ``voice_active=True`` is re-asserted on every call because
+        StatusUpdate's default for that field is ``False`` and the
+        StatusLine merge treats ``False`` on voice_active as a
+        meaningful clear — without re-asserting, each progress tick
+        would flip the status line out of voice mode.
         """
         if not self._active:
             return
         self._coordinator.update_status(StatusUpdate(
+            voice_active=True,
             voice_seconds=seconds,
             voice_peak=peak,
         ))
