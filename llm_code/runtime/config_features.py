@@ -31,6 +31,14 @@ class VoiceConfig:
     # One of: tiny | base | small | medium | large-v3. Larger = slower
     # but more accurate; downloaded lazily into ~/.cache/huggingface/.
     local_model: str = "base"
+    # Voice-activity detection: after this many seconds of silence,
+    # the recorder flags itself for auto-stop so the TUI can tear the
+    # capture down without waiting for an explicit `/voice off`.
+    # 0 disables VAD entirely (old behavior — user must stop manually).
+    silence_seconds: float = 2.0
+    # RMS proxy threshold (mean absolute 16-bit sample value) below
+    # which a chunk counts as silent. Tune up in noisy environments.
+    silence_threshold: int = 500
 
 
 @dataclass(frozen=True)

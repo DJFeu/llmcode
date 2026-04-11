@@ -407,6 +407,8 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
         language=voice_raw.get("language", "en"),
         hotkey=voice_raw.get("hotkey", "ctrl+space"),
         local_model=voice_raw.get("local_model", "base"),
+        silence_seconds=float(voice_raw.get("silence_seconds", 2.0)),
+        silence_threshold=int(voice_raw.get("silence_threshold", 500)),
     )
 
     thinking_raw = data.get("thinking", {})

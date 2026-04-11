@@ -111,13 +111,30 @@ def detect_backend() -> RecorderBackend:
 
 
 class AudioRecorder:
-    """Records 16kHz mono 16-bit PCM audio from the microphone."""
+    """Records 16kHz mono 16-bit PCM audio from the microphone.
+
+    Supports optional voice-activity detection (VAD): when ``silence_
+    seconds > 0``, the recorder tracks an RMS energy floor on each
+    incoming audio chunk and flips :attr:`is_silent` to ``True`` after
+    that many seconds of sustained silence. Callers can poll
+    :meth:`should_auto_stop` from a UI timer and tear the capture
+    down automatically — no per-chunk callback plumbing required.
+    """
+
+    # Threshold chosen for 16-bit PCM microphone input. 500 is roughly
+    # "very quiet room" — a real voice pushes this into the thousands
+    # on the first vowel. Tune via the ``silence_threshold`` ctor arg
+    # if your environment is noisy.
+    _DEFAULT_SILENCE_THRESHOLD = 500
 
     def __init__(
         self,
         backend: RecorderBackend | None = None,
         sample_rate: int = 16000,
         channels: int = 1,
+        *,
+        silence_seconds: float = 0.0,
+        silence_threshold: int = _DEFAULT_SILENCE_THRESHOLD,
     ):
         self._backend = backend or RecorderBackend.SOUNDDEVICE
         self.sample_rate = sample_rate
@@ -128,12 +145,21 @@ class AudioRecorder:
         self._stream = None
         self._process: subprocess.Popen | None = None
         self._thread: threading.Thread | None = None
+        # VAD — 0 disables silence detection entirely.
+        self._silence_seconds = silence_seconds
+        self._silence_threshold = silence_threshold
+        self._silence_start: float | None = None
+        # Set by should_auto_stop() once the silence window is hit so
+        # the TUI knows whether to stop on its own vs. at user command.
+        self._auto_stopped = False
 
     def start(self) -> None:
         """Begin recording audio."""
         self._buffer = bytearray()
         self._recording = True
         self._start_time = time.monotonic()
+        self._silence_start = None
+        self._auto_stopped = False
 
         if self._backend == RecorderBackend.SOUNDDEVICE:
             self._start_sounddevice()
@@ -170,6 +196,7 @@ class AudioRecorder:
         result = bytes(self._buffer)
         self._buffer = bytearray()
         self._start_time = None
+        self._silence_start = None
         return result
 
     def elapsed_seconds(self) -> float:
@@ -178,12 +205,66 @@ class AudioRecorder:
             return 0.0
         return time.monotonic() - self._start_time
 
+    def should_auto_stop(self) -> bool:
+        """Return ``True`` when VAD says the speaker has gone quiet.
+
+        Poll this from a UI timer (~every 200 ms is fine) to drive the
+        "stop automatically after N seconds of silence" flow. Returns
+        ``False`` when VAD is disabled (``silence_seconds == 0``) or
+        no silence window has accumulated yet. Once it returns
+        ``True``, subsequent calls keep returning ``True`` until the
+        recorder is stopped — no flip-flopping.
+        """
+        if self._silence_seconds <= 0.0 or not self._recording:
+            return False
+        if self._silence_start is None:
+            return False
+        elapsed = time.monotonic() - self._silence_start
+        if elapsed >= self._silence_seconds:
+            self._auto_stopped = True
+            return True
+        return False
+
+    @property
+    def auto_stopped(self) -> bool:
+        """True if the last stop was triggered by VAD, not by the caller."""
+        return self._auto_stopped
+
+    def _update_silence_tracker(self, chunk: bytes) -> None:
+        """Internal: update the silence timer from a freshly-read PCM chunk.
+
+        Computes the chunk's mean absolute sample value (a cheap RMS
+        proxy — good enough for "is there anyone talking" and avoids
+        a numpy dependency). Values below ``_silence_threshold`` start
+        / continue a silence window; values above reset it.
+        """
+        if self._silence_seconds <= 0.0 or not chunk:
+            return
+        # Interpret as int16 little-endian. `array` beats struct for
+        # big chunks because it does the unpacking in C.
+        import array
+        samples = array.array("h")
+        # Discard trailing half-sample if the chunk length is odd.
+        usable = len(chunk) - (len(chunk) & 1)
+        samples.frombytes(chunk[:usable])
+        if not samples:
+            return
+        mean_abs = sum(abs(s) for s in samples) / len(samples)
+        now = time.monotonic()
+        if mean_abs < self._silence_threshold:
+            if self._silence_start is None:
+                self._silence_start = now
+        else:
+            self._silence_start = None
+
     def _start_sounddevice(self) -> None:
         import sounddevice as sd  # type: ignore[import]
 
         def callback(indata, frames, time_info, status):
             if self._recording:
-                self._buffer.extend(indata.tobytes())
+                chunk = indata.tobytes()
+                self._buffer.extend(chunk)
+                self._update_silence_tracker(chunk)
 
         self._stream = sd.RawInputStream(
             samplerate=self.sample_rate,
@@ -208,6 +289,7 @@ class AudioRecorder:
                 if not chunk:
                     break
                 self._buffer.extend(chunk)
+                self._update_silence_tracker(chunk)
 
         self._thread = threading.Thread(target=_read_loop, daemon=True)
         self._thread.start()
