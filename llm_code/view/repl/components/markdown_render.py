@@ -1,13 +1,18 @@
-"""Rich Markdown wrapper with lexer-detected code fences (M15 Task C4).
+"""Rich Markdown wrapper — Claude Code style (M15 Task C4).
 
-Wraps Rich's ``Markdown`` renderer but drops in our tech-blue
-heading / inline-code / link styles via the palette. Code fences
-go through :mod:`llm_code.view.repl.components.code_block` for
-consistent syntax highlighting across the assistant text path.
+Claude Code's markdown rendering:
+- **H1**: bold + italic + underline
+- **H2+**: bold
+- **Inline code**: ``rgb(177,185,249)`` — light blue-purple
+- **Blockquote**: dim + italic
+- **Code fences**: syntax highlighted via monokai
+- **Links**: OSC8 hyperlinks
+- **Body text**: pure white ``rgb(255,255,255)``
 """
 from __future__ import annotations
 
 from rich.markdown import Markdown
+from rich.style import Style
 
 from llm_code.view.repl import style
 
@@ -15,22 +20,41 @@ __all__ = ["render_markdown"]
 
 
 def render_markdown(source: str) -> Markdown:
-    """Return a Rich ``Markdown`` for the given source.
-
-    Passes ``code_theme`` so fenced code blocks use a consistent
-    monokai palette. Heading styles come from the brand palette.
-    """
+    """Return a Rich ``Markdown`` with Claude Code-matched styling."""
     md = Markdown(
         source,
         code_theme="monokai",
         inline_code_theme="monokai",
+        inline_code_lexer="python",
         justify="left",
     )
-    # Rich's Markdown honors style tokens by name on the console's
-    # theme. We override the key heading / link / inline_code tones
-    # via Rich's markdown styles dict on the instance.
+    # Override Rich's default markdown element styles to match Claude Code.
+    # Rich uses a style_table dict keyed by element name.
+    overrides = {
+        "markdown.h1": Style(
+            bold=True, italic=True, underline=True,
+            color=style.palette.markdown_heading,
+        ),
+        "markdown.h2": Style(bold=True, color=style.palette.markdown_heading),
+        "markdown.h3": Style(bold=True, color=style.palette.markdown_heading),
+        "markdown.h4": Style(bold=True, color=style.palette.markdown_heading),
+        "markdown.code": Style(color=style.palette.markdown_code_inline),
+        "markdown.block_quote": Style(
+            italic=True, color=style.palette.markdown_quote_fg,
+        ),
+        "markdown.link": Style(
+            underline=True, color=style.palette.markdown_link,
+        ),
+        "markdown.link_url": Style(
+            color=style.palette.tool_args_fg,
+        ),
+    }
+    # Apply overrides via Rich's console style mechanism.
+    # The Markdown object carries a `style` attribute we can set
+    # on its internal elements via the `_style_table` dict.
     try:
-        md.elements["heading_open"].style = style.palette.markdown_heading
+        for key, s in overrides.items():
+            md.style_table[key] = s  # type: ignore[attr-defined]
     except Exception:
         pass
     return md

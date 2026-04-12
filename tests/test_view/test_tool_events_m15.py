@@ -25,31 +25,34 @@ def _render(renderable) -> str:
 # === D1 Progress line ===
 
 
-def test_start_line_has_start_glyph_and_tool_name() -> None:
+def test_start_line_has_tool_name() -> None:
     out = _render(render_start("bash", {"cmd": "ls"}))
-    assert "▶" in out
     assert "bash" in out
-    assert "cmd=ls" in out
 
 
-def test_success_line_has_success_glyph() -> None:
+def test_start_line_shows_priority_arg() -> None:
+    out = _render(render_start("read_file", {"path": "foo.py", "limit": 100}))
+    assert "foo.py" in out
+
+
+def test_success_line_has_hook_and_checkmark() -> None:
     out = _render(render_success("edit_file", "42 lines", elapsed=0.8))
     assert "✓" in out
-    assert "edit_file" in out
+    assert "⎿" in out
     assert "42 lines" in out
     assert "0.8s" in out
 
 
-def test_failure_line_has_failure_glyph() -> None:
+def test_failure_line_has_hook_and_cross() -> None:
     out = _render(render_failure("bash", "command not found", exit_code=127))
     assert "✗" in out
-    assert "bash" in out
+    assert "⎿" in out
     assert "exit 127" in out
     assert "command not found" in out
 
 
 def test_long_args_truncate() -> None:
-    big_args = {"x": "a" * 100}
+    big_args = {"path": "a" * 100}
     out = _render(render_start("tool", big_args))
     assert "…" in out
 

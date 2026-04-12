@@ -101,76 +101,73 @@ class BrandPalette:
 
     # --- message bodies ---
     #
+    # Colors matched to Claude Code's dark theme (from sourcemap).
     # Use hex throughout so every slot is valid in BOTH Rich Text
-    # styles AND prompt_toolkit ``fg:`` tokens. Rich accepts named
-    # colors like ``bright_white``, PT does not — hex is the
-    # portable intersection.
-    assistant_fg: str = "#ffffff"
-    assistant_bullet: str = LLMCODE_BLUE_MID
+    # styles AND prompt_toolkit ``fg:`` tokens.
+    assistant_fg: str = "#ffffff"                   # rgb(255,255,255) — pure white
+    assistant_bullet: str = LLMCODE_BLUE_MID        # brand accent dot
     user_fg: str = "#ffffff"
     user_prefix: str = LLMCODE_BLUE_LIGHT
-    system_fg: str = "#c7c7c7"
-    thinking_fg: str = "#9ca3af"
+    system_fg: str = "#999999"                      # Claude Code "inactive" token
+    thinking_fg: str = "#999999"
     thinking_header_fg: str = LLMCODE_BLUE_LIGHT
 
     # --- tool events ---
     #
-    # NOTE: all slot values must be valid Rich AND prompt_toolkit
-    # color tokens. PT's ``fg:<x>`` accepts a hex literal or an
-    # ANSI named color ("cyan", "red", "ansibrightblack"), but
-    # does NOT accept Rich's ``dim`` intensity modifier. We use
-    # gray hex values to approximate ``dim`` everywhere a slot
-    # may be inlined into a PT FormattedText style string.
-    tool_name_fg: str = "cyan"
-    tool_args_fg: str = "#909090"
-    tool_ok_fg: str = "green"
-    tool_fail_fg: str = "red"
-    tool_start_fg: str = "#5fafd7"
-    tool_elapsed_fg: str = "#808080"
+    # Claude Code uses `⎿` (U+23BF) hook for indented tool progress,
+    # dimColor for args/elapsed. Tool name uses terminal default (bold).
+    tool_name_fg: str = "#ffffff"                   # white bold (like CC)
+    tool_args_fg: str = "#505050"                   # Claude Code "subtle"
+    tool_ok_fg: str = "#4eba65"                     # Claude Code "success" rgb(78,186,101)
+    tool_fail_fg: str = "#ff6b80"                   # Claude Code "error" rgb(255,107,128)
+    tool_start_fg: str = "#505050"                  # subtle dim start marker
+    tool_elapsed_fg: str = "#505050"
+    tool_progress_hook: str = "#505050"             # ⎿ hook character color
 
     # --- file paths + commands ---
     file_path_fg: str = LLMCODE_BLUE_LIGHT
     command_fg: str = LLMCODE_BLUE_MID
-    command_alias_fg: str = "#808080"
+    command_alias_fg: str = "#999999"
 
     # --- bash mode ---
-    bash_cmd_fg: str = "#6dd76d"
-    bash_out_fg: str = "#c7c7c7"
-    bash_err_fg: str = "red"
+    bash_cmd_fg: str = "#4eba65"                    # success green
+    bash_out_fg: str = "#ffffff"
+    bash_err_fg: str = "#ff6b80"                    # error red
+    bash_border_fg: str = "#fd5db1"                 # Claude Code "bashBorder" rgb(253,93,177)
 
     # --- diff ---
-    diff_add_bg: str = "#0e4429"
-    diff_add_fg: str = "#6dd76d"
-    diff_del_bg: str = "#3a0d0d"
-    diff_del_fg: str = "#ff6b6b"
-    diff_hunk_fg: str = "cyan"
-    diff_lineno_fg: str = "#707070"
+    diff_add_bg: str = "#225c2b"                    # Claude Code "diffAdded" rgb(34,92,43)
+    diff_add_fg: str = "#4eba65"
+    diff_del_bg: str = "#7a2936"                    # Claude Code "diffRemoved" rgb(122,41,54)
+    diff_del_fg: str = "#ff6b80"
+    diff_hunk_fg: str = "#999999"
+    diff_lineno_fg: str = "#505050"
 
-    # --- markdown ---
-    markdown_heading: str = LLMCODE_BLUE_LIGHT
-    markdown_code_inline: str = "#e6db74"
+    # --- markdown (Claude Code inline styles) ---
+    markdown_heading: str = "#ffffff"               # bold (H1 also italic+underline)
+    markdown_code_inline: str = "#b1b9f9"           # Claude Code "permission" rgb(177,185,249)
     markdown_link: str = LLMCODE_BLUE_LIGHT
-    markdown_quote_fg: str = "#909090"
+    markdown_quote_fg: str = "#999999"              # dim + italic
 
     # --- status line ---
     token_count_fg: str = LLMCODE_BLUE_LIGHT
 
-    # --- generic status aliases ---
-    status_success: str = "green"
-    status_warning: str = "yellow"
-    status_error: str = "red"
+    # --- generic status aliases (Claude Code dark theme) ---
+    status_success: str = "#4eba65"                 # rgb(78,186,101)
+    status_warning: str = "#ffc107"                 # rgb(255,193,7)
+    status_error: str = "#ff6b80"                   # rgb(255,107,128)
     status_info: str = LLMCODE_BLUE_MID
-    status_dim: str = "#808080"
+    status_dim: str = "#505050"                     # rgb(80,80,80) "subtle"
 
     # --- mode indicators ---
-    mode_plan_fg: str = LLMCODE_BLUE_MID
-    mode_yolo_fg: str = "yellow"
-    mode_bash_fg: str = "#6dd76d"
+    mode_plan_fg: str = "#48968c"                   # Claude Code "planMode" rgb(72,150,140)
+    mode_yolo_fg: str = "#ffc107"                   # warning amber
+    mode_bash_fg: str = "#fd5db1"                   # bash pink
     mode_vim_fg: str = "magenta"
 
     # --- hints + pasted markers ---
-    hint_fg: str = "#808080"
-    pasted_marker_fg: str = "#909090"
+    hint_fg: str = "#999999"                        # "inactive" gray
+    pasted_marker_fg: str = "#999999"
 
     # --- brand accent (borders + panel title) ---
     brand_accent: str = LLMCODE_BLUE_MID

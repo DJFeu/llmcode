@@ -122,7 +122,10 @@ class ToolEventRegion:
         self._error: Optional[str] = None
         self._exit_code: Optional[int] = None
 
-        # Print the start line immediately (M15: colored progress line)
+        # Print the start line immediately (M15: colored progress line).
+        # A blank line above separates tool blocks visually
+        # (Claude Code uses marginTop=1 between message blocks).
+        self._console.print()
         self._console.print(render_start(tool_name, args))
 
     @property

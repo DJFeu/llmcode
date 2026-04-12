@@ -31,6 +31,7 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.styles import Style
 from rich.console import Console
 
+from llm_code.view.repl import style
 from llm_code.view.repl.components.dialog_popover import (
     DialogPopover,
     build_dialog_float,
@@ -577,17 +578,29 @@ class ScreenCoordinator:
         self._console.print(f"{prefix}{event.content}")
 
     def print_info_sync(self, text: str) -> None:
-        self._console.print(f"[blue]ℹ[/blue] {text}")
+        p = style.palette
+        self._console.print(f"[{p.status_info}]ℹ[/{p.status_info}] {text}")
 
     def print_warning_sync(self, text: str) -> None:
-        self._console.print(f"[yellow]⚠[/yellow] {text}")
+        p = style.palette
+        self._console.print(
+            f"[{p.status_warning}]⚠[/{p.status_warning}] "
+            f"[{p.status_warning}]{text}[/{p.status_warning}]"
+        )
 
     def print_error_sync(self, text: str) -> None:
-        self._console.print(f"[red]✗[/red] {text}")
+        p = style.palette
+        self._console.print(
+            f"[{p.tool_fail_fg}]✗[/{p.tool_fail_fg}] "
+            f"[{p.tool_fail_fg}]{text}[/{p.tool_fail_fg}]"
+        )
 
     def print_panel_sync(self, content: str, title: Optional[str] = None) -> None:
         from rich.panel import Panel
-        self._console.print(Panel(content, title=title, border_style="cyan"))
+        self._console.print(Panel(
+            content, title=title,
+            border_style=style.palette.brand_accent,
+        ))
 
     def clear_screen_sync(self) -> None:
         """Clear the terminal. Uses Rich's console.clear() which
