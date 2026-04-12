@@ -410,10 +410,39 @@ class ScreenCoordinator:
                 self._app.invalidate()
 
     def _finish_inline_select(self) -> None:
-        """Called by the inline-select keybinding after Enter/Esc."""
+        """Called by the inline-select keybinding after Enter/Esc.
+
+        After clearing the inline select, re-push the cursor to the
+        bottom of the terminal so the input area anchors at the
+        bottom again. Without this, PT re-renders the now-small
+        layout at the cursor position left by the tall selection
+        list (near the top of the terminal).
+        """
         self._inline_select = None
+        self._re_anchor_bottom()
         if self._app is not None:
             self._app.invalidate()
+
+    def _re_anchor_bottom(self) -> None:
+        """Push the terminal cursor to the bottom of the viewport.
+
+        Same technique as ``cli.main._push_cursor_to_bottom()`` but
+        callable from within a running PT session. Writes newlines
+        through the console so they flow through ``patch_stdout``.
+        """
+        import shutil
+        import sys
+        try:
+            rows = shutil.get_terminal_size((80, 24)).lines
+        except Exception:
+            rows = 24
+        # Layout = status(1) + input(1-12) + footer(1) = 3-14 rows.
+        # Fill enough to push the cursor to the bottom.
+        reserved = 5
+        fill = max(0, rows - reserved)
+        if fill > 0:
+            sys.stdout.write("\n" * fill)
+            sys.stdout.flush()
 
     def _footer_text(self) -> FormattedText:
         """Render the footer hint + mode indicator row."""
