@@ -12,21 +12,15 @@ instance + its managed Window.
 """
 from __future__ import annotations
 
-import shutil
-
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.layout.containers import (
     ConditionalContainer,
     Float,
-    HSplit,
     Window,
 )
 from prompt_toolkit.layout.controls import BufferControl
-from prompt_toolkit.layout.menus import (
-    CompletionsMenu,
-    MultiColumnCompletionsMenu,
-)
+from prompt_toolkit.layout.menus import CompletionsMenu
 
 from llm_code.view.repl.components.history_ghost import HistoryGhostProcessor
 from llm_code.view.repl.components.path_completer import (
@@ -111,38 +105,19 @@ class InputArea:
     def build_popover_float(self) -> Float:
         """Construct the Float that hosts the slash-completion popover.
 
-        Uses :class:`MultiColumnCompletionsMenu` on terminals wider
-        than 60 columns, falling back to a single-column
-        :class:`CompletionsMenu` on narrower widths so completions
-        remain readable. The popover only shows when the input
-        starts with '/'.
+        Uses a single-column vertical :class:`CompletionsMenu` with
+        ``display_meta`` showing command descriptions — matching
+        Claude Code's vertical list style. ``max_height=16`` so
+        the user sees enough commands to navigate comfortably with
+        ↑/↓/Tab/Right.
         """
         has_slash = Condition(lambda: self.buffer.text.startswith("/"))
-
-        def _is_wide_terminal() -> bool:
-            try:
-                cols = shutil.get_terminal_size((80, 24)).columns
-            except Exception:
-                cols = 80
-            return cols >= 60
-
-        multi = ConditionalContainer(
-            content=MultiColumnCompletionsMenu(
-                show_meta=True,
-                suggested_max_column_width=28,
-            ),
-            filter=has_slash & Condition(_is_wide_terminal),
-        )
-        single = ConditionalContainer(
-            content=CompletionsMenu(max_height=8, scroll_offset=1),
-            filter=has_slash & ~Condition(_is_wide_terminal),
-        )
 
         return Float(
             xcursor=True,
             ycursor=True,
             content=ConditionalContainer(
-                content=HSplit([multi, single]),
+                content=CompletionsMenu(max_height=16, scroll_offset=2),
                 filter=has_slash,
             ),
         )
