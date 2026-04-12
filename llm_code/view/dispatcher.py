@@ -1779,17 +1779,16 @@ class CommandDispatcher:
             logger.warning("skill reload failed: %r", exc)
 
     async def _interactive_skill_browser(self) -> None:
-        """M15: Interactive skill browser.
+        """M15: Interactive skill browser with ↑/↓ keyboard selection.
 
-        Non-fullscreen PT layouts can't host large Float dialogs
-        (``Window too small``), so this method prints a numbered
-        Rich table to scrollback and then prompts for a number via
-        ``show_text_input`` — which only needs 2-3 rows in the
-        Float and works reliably across all terminal sizes.
+        Uses the coordinator's ``start_inline_select`` which renders
+        the selection list directly in the main HSplit layout
+        (replacing the input area temporarily). This avoids the
+        Float size constraint entirely.
         """
-        from llm_code.view.dialog_types import Choice
+        from llm_code.view.repl.components.inline_select import SelectionChoice
 
-        entries: list[dict] = []  # {name, kind, desc, repo?}
+        choices: list[SelectionChoice] = []
 
         # Installed skills
         installed_names: set[str] = set()
@@ -1801,11 +1800,11 @@ class CommandDispatcher:
                 installed_names.add(s.name)
                 mode = "auto" if getattr(s, "auto", False) else f"/{s.trigger}"
                 tokens = len(s.content) // 4
-                entries.append({
-                    "name": s.name,
-                    "kind": "installed",
-                    "desc": f"{mode}, ~{tokens} tokens",
-                })
+                choices.append(SelectionChoice(
+                    value=f"installed:{s.name}",
+                    label=f"✓ {s.name}",
+                    hint=f"{mode}, ~{tokens} tokens",
+                ))
 
         # Marketplace (not yet installed)
         try:
@@ -1817,81 +1816,58 @@ class CommandDispatcher:
                 if p["name"] not in installed_names
             ]
             for p in known:
-                entries.append({
-                    "name": p["name"],
-                    "kind": "marketplace",
-                    "desc": p.get("desc", ""),
-                    "repo": p.get("repo", ""),
-                })
+                choices.append(SelectionChoice(
+                    value=f"marketplace:{p['name']}:{p.get('repo', '')}",
+                    label=f"  {p['name']}",
+                    hint=p.get("desc", ""),
+                ))
         except Exception:
             pass
 
-        if not entries:
+        if not choices:
             self._view.print_info("No skills found (installed or marketplace).")
             return
 
-        # Print numbered list to scrollback via Rich
-        lines: list[str] = []
-        for i, e in enumerate(entries, 1):
-            status = "✓" if e["kind"] == "installed" else " "
-            lines.append(f"  {status} [bold]{i:>3}[/bold]  {e['name']}  [dim]{e['desc']}[/dim]")
-        header = "[bold cyan]Skills[/bold cyan] (✓ = installed)"
-        self._view.print_info(
-            f"{header}\n" + "\n".join(lines)
-            + "\n\n[dim]Enter a number to manage, or press Esc to cancel[/dim]"
-        )
-
-        # Small text-input dialog (only needs 2-3 Float rows)
-        try:
-            answer = await self._view.show_text_input(
-                "Skill #:",
-                validator=lambda t: (
-                    None if t.strip().isdigit() and 1 <= int(t.strip()) <= len(entries)
-                    else f"Enter 1-{len(entries)}"
-                ),
-            )
-        except Exception:
+        # Get the coordinator for inline select
+        coordinator = getattr(self._view, "coordinator", None)
+        if coordinator is None:
+            self._list_skills_flat()
             return
 
-        idx = int(answer.strip()) - 1
-        entry = entries[idx]
-        name = entry["name"]
+        result = await coordinator.start_inline_select(
+            prompt="Select a skill (↑/↓ navigate, Enter select, Esc cancel):",
+            choices=choices,
+        )
+        if result is None:
+            return
 
-        if entry["kind"] == "installed":
-            # Offer actions — small 3-choice select (fits in Float)
+        parts = result.split(":", 2)
+        kind = parts[0]
+        name = parts[1] if len(parts) > 1 else ""
+
+        if kind == "installed":
+            # Second-level select for action
             action_choices = [
-                Choice(value="remove", label=f"Remove {name}"),
-                Choice(value="disable", label=f"Disable {name}"),
-                Choice(value="cancel", label="Cancel"),
+                SelectionChoice(value="remove", label=f"Remove {name}"),
+                SelectionChoice(value="disable", label=f"Disable {name}"),
+                SelectionChoice(value="cancel", label="Cancel"),
             ]
-            try:
-                action = await self._view.show_select(
-                    f"Action for {name}:",
-                    action_choices,
-                )
-            except Exception:
-                return
+            action = await coordinator.start_inline_select(
+                prompt=f"Action for {name}:",
+                choices=action_choices,
+            )
             if action == "remove":
                 self._cmd_skill(f"remove {name}")
             elif action == "disable":
                 self._cmd_skill(f"disable {name}")
-        else:
-            # Marketplace — offer install
-            repo = entry.get("repo", "")
+        elif kind == "marketplace":
+            repo = parts[2] if len(parts) > 2 else ""
             if repo:
-                try:
-                    confirmed = await self._view.show_confirm(
-                        f"Install {name} from {repo}?",
-                        default=True,
-                    )
-                except Exception:
-                    return
-                if confirmed:
-                    self._cmd_skill(f"install {repo}")
+                self._view.print_info(f"Installing {name} from {repo}…")
+                self._cmd_skill(f"install {repo}")
             else:
                 self._view.print_info(
-                    f"No repo URL for {name}. "
-                    f"Use: /skill install owner/repo"
+                    f"No repo URL for {name}. Use: /skill install owner/repo"
                 )
 
     def _list_skills_flat(self) -> None:

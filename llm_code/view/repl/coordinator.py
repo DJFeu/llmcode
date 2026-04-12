@@ -37,6 +37,11 @@ from llm_code.view.repl.components.dialog_popover import (
     build_dialog_key_bindings,
 )
 from llm_code.view.repl.components.footer_hint import FooterHint
+from llm_code.view.repl.components.inline_select import (
+    InlineSelectState,
+    SelectionChoice,
+    build_inline_select_keybindings,
+)
 from llm_code.view.repl.components.input_area import InputArea
 from llm_code.view.repl.components.mode_indicator import ModeIndicator
 from llm_code.view.repl.components.status_line import StatusLine
@@ -123,6 +128,9 @@ class ScreenCoordinator:
         # M8: dialog popover hosts confirm/select/text/checklist overlays.
         self._dialog_popover = DialogPopover()
 
+        # M15: inline selection list (replaces input area temporarily)
+        self._inline_select: Optional[InlineSelectState] = None
+
         # M9: voice overlay flips the status line into recording mode.
         self._voice_overlay = VoiceOverlay(self)
         # Backend installs the Ctrl+G handler via set_voice_toggle_callback
@@ -168,6 +176,10 @@ class ScreenCoordinator:
                 on_voice_toggle=self._voice_toggle_callback,
             ),
             build_dialog_key_bindings(self._dialog_popover),
+            build_inline_select_keybindings(
+                state_getter=lambda: self._inline_select,
+                on_done=self._finish_inline_select,
+            ),
         ])
 
     def set_voice_toggle_callback(
@@ -334,21 +346,74 @@ class ScreenCoordinator:
         )
         footer_container = ConditionalContainer(
             content=footer_window,
-            # Hide the footer strip while a dialog popover is active
-            # so the popover's own hint row doesn't fight with ours.
             filter=~Condition(lambda: self._dialog_popover.is_active),
+        )
+        # M15: inline selection list replaces the input area when active
+        inline_select_window = ConditionalContainer(
+            content=Window(
+                FormattedTextControl(self._inline_select_text),
+                wrap_lines=True,
+            ),
+            filter=Condition(lambda: self._inline_select is not None),
+        )
+        input_container = ConditionalContainer(
+            content=input_window,
+            filter=Condition(lambda: self._inline_select is None),
         )
         return Layout(
             FloatContainer(
                 content=HSplit([
                     rate_limit_container,
                     status_window,
-                    input_window,
+                    inline_select_window,
+                    input_container,
                     footer_container,
                 ]),
                 floats=[popover_float, dialog_float],
             )
         )
+
+    def _inline_select_text(self) -> FormattedText:
+        """Render the inline selection list. Called by PT on each redraw."""
+        if self._inline_select is None:
+            return FormattedText([])
+        return self._inline_select.render()
+
+    async def start_inline_select(
+        self,
+        prompt: str,
+        choices: list[SelectionChoice],
+    ):
+        """Show an inline selection list and await the user's choice.
+
+        The input area is hidden while the selection is active.
+        Returns the selected choice's value, or None if cancelled.
+        """
+        import asyncio
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
+        state = InlineSelectState(prompt=prompt, choices=choices, future=future)
+        # Set visible rows based on terminal height
+        try:
+            import shutil
+            rows = shutil.get_terminal_size((80, 24)).lines
+            state._visible_rows = max(5, rows - 5)
+        except Exception:
+            state._visible_rows = 18
+        self._inline_select = state
+        if self._app is not None:
+            self._app.invalidate()
+        try:
+            return await future
+        finally:
+            self._inline_select = None
+            if self._app is not None:
+                self._app.invalidate()
+
+    def _finish_inline_select(self) -> None:
+        """Called by the inline-select keybinding after Enter/Esc."""
+        self._inline_select = None
+        if self._app is not None:
+            self._app.invalidate()
 
     def _footer_text(self) -> FormattedText:
         """Render the footer hint + mode indicator row."""
