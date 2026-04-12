@@ -4,7 +4,6 @@ from __future__ import annotations
 import io
 
 from rich.console import Console
-from rich.markdown import Markdown
 from rich.panel import Panel
 
 from llm_code.view.repl.components.live_response_region import (
@@ -205,11 +204,13 @@ def test_render_in_progress_with_content_returns_panel():
     assert isinstance(renderable, Panel)
 
 
-def test_render_final_is_plain_markdown():
+def test_render_final_has_bullet_and_markdown():
+    """M15: final render is a Group(bullet, markdown), not a bare Markdown."""
+    from rich.console import Group
     r, _ = _make()
     r._buffer = "plain **bold** text"
     renderable = r._render_final()
-    assert isinstance(renderable, Markdown)
+    assert isinstance(renderable, Group)
 
 
 def test_role_in_in_progress_title():

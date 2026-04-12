@@ -38,6 +38,9 @@ from typing import TYPE_CHECKING, Optional
 from rich.console import Console, RenderableType
 from rich.live import Live
 from rich.markdown import Markdown
+
+from llm_code.view.repl import style
+from llm_code.view.repl.components.markdown_render import render_markdown
 from rich.panel import Panel
 from rich.text import Text
 
@@ -170,16 +173,24 @@ class LiveResponseRegion:
         role_label = self._role.value
         return Panel(
             body,
-            border_style="cyan",
-            title=f"[dim]{role_label}[/dim]",
+            border_style=style.palette.brand_accent,
+            title=f"[{style.palette.hint_fg}]{role_label}[/]",
             title_align="left",
         )
 
     def _render_final(self) -> RenderableType:
         """Render used WHEN committing to scrollback.
 
-        No panel border — clean Markdown that looks like the rest of
-        the conversation history. Copyable and searchable as plain
-        text via terminal's native Find.
+        M15: uses the ``● `` bullet prefix (assistant_text) and
+        Rich Markdown with lexer-detected code fences. No panel
+        border — clean output that looks like Claude Code's
+        assistant messages.
         """
-        return Markdown(self._buffer)
+        from rich.console import Group
+        from rich.text import Text
+        # Leading bullet in brand accent
+        bullet = Text()
+        bullet.append("● ", style=f"bold {style.palette.assistant_bullet}")
+        # Body as markdown with syntax highlighting
+        md = render_markdown(self._buffer)
+        return Group(bullet, md)

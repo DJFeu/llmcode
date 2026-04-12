@@ -25,7 +25,14 @@ from typing import Any, Dict, List, Optional
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.syntax import Syntax
+
+from llm_code.view.repl import style
+from llm_code.view.repl.components.progress_line import (
+    render_failure,
+    render_start,
+    render_success,
+)
+from llm_code.view.repl.components.structured_diff import render_structured_diff
 
 
 # Tool names that get their diff auto-expanded on success
@@ -115,13 +122,8 @@ class ToolEventRegion:
         self._error: Optional[str] = None
         self._exit_code: Optional[int] = None
 
-        # Print the start line immediately
-        args_summary = _format_args_summary(args)
-        if args_summary:
-            start_line = f"[dim]▶[/dim] {tool_name} {args_summary}"
-        else:
-            start_line = f"[dim]▶[/dim] {tool_name}"
-        self._console.print(start_line)
+        # Print the start line immediately (M15: colored progress line)
+        self._console.print(render_start(tool_name, args))
 
     @property
     def is_active(self) -> bool:
@@ -177,12 +179,10 @@ class ToolEventRegion:
         ):
             self._render_diff_panel()
 
-        # Print the summary line
+        # Print the summary line (M15: colored progress line)
         summary_text = summary or self._default_summary()
-        elapsed = self.elapsed_seconds
         self._console.print(
-            f"[green]✓[/green] {self._tool_name} · "
-            f"{summary_text} · {elapsed:.1f}s"
+            render_success(self._tool_name, summary_text, elapsed=self.elapsed_seconds)
         )
 
     def commit_failure(
@@ -202,12 +202,13 @@ class ToolEventRegion:
         if self._stderr:
             self._render_failure_panel()
 
-        # Print the summary line
-        elapsed = self.elapsed_seconds
-        exit_str = f" · exit {exit_code}" if exit_code is not None else ""
+        # Print the summary line (M15: colored progress line)
         self._console.print(
-            f"[red]✗[/red] {self._tool_name} · {error} · "
-            f"{elapsed:.1f}s{exit_str}"
+            render_failure(
+                self._tool_name, error,
+                elapsed=self.elapsed_seconds,
+                exit_code=exit_code,
+            )
         )
 
     # === Internal rendering ===
@@ -224,18 +225,16 @@ class ToolEventRegion:
 
     def _render_diff_panel(self) -> None:
         path = self._args.get("path") or self._args.get("file") or ""
-        syntax = Syntax(
-            self._diff_text,
-            "diff",
-            theme="ansi_dark",
-            word_wrap=False,
+        # M15: structured diff with per-line colors + line numbers
+        diff_renderable = render_structured_diff(
+            self._diff_text, filename=path
         )
-        title = f"[bold]{self._tool_name}[/bold]"
+        title_parts = f"[bold {style.palette.tool_name_fg}]{self._tool_name}[/]"
         if path:
-            title += f" · {path}"
+            title_parts += f" · {path}"
         self._console.print(Panel(
-            syntax,
-            title=title,
+            diff_renderable,
+            title=title_parts,
             title_align="left",
             border_style="cyan",
         ))
