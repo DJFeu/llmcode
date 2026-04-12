@@ -360,9 +360,29 @@ class ScreenCoordinator:
             content=input_window,
             filter=Condition(lambda: self._inline_select is None),
         )
+        # Spacer at the top of the HSplit: fills remaining terminal
+        # height so the FloatContainer is as tall as the terminal.
+        # This is critical for Floats (completion popover, dialog):
+        # without a spacer the HSplit is only ~4 rows, and Floats
+        # can't exceed their container. The spacer's content is
+        # empty — it represents the "native scrollback" region that
+        # patch_stdout's Rich output occupies above the PT chrome.
+        def _spacer_height() -> int:
+            import shutil
+            try:
+                rows = shutil.get_terminal_size((80, 24)).lines
+            except Exception:
+                rows = 24
+            # Reserve: status(1) + input(1-12) + footer(1) + rate-limit(0-1)
+            fixed = 4
+            return max(0, rows - fixed)
+
+        spacer = Window(height=_spacer_height)
+
         return Layout(
             FloatContainer(
                 content=HSplit([
+                    spacer,
                     rate_limit_container,
                     status_window,
                     inline_select_window,
