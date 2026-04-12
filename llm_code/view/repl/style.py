@@ -100,45 +100,57 @@ class BrandPalette:
     """
 
     # --- message bodies ---
-    assistant_fg: str = "bright_white"
+    #
+    # Use hex throughout so every slot is valid in BOTH Rich Text
+    # styles AND prompt_toolkit ``fg:`` tokens. Rich accepts named
+    # colors like ``bright_white``, PT does not — hex is the
+    # portable intersection.
+    assistant_fg: str = "#ffffff"
     assistant_bullet: str = LLMCODE_BLUE_MID
-    user_fg: str = "bright_white"
+    user_fg: str = "#ffffff"
     user_prefix: str = LLMCODE_BLUE_LIGHT
     system_fg: str = "#c7c7c7"
     thinking_fg: str = "#9ca3af"
     thinking_header_fg: str = LLMCODE_BLUE_LIGHT
 
     # --- tool events ---
-    tool_name_fg: str = "bold cyan"
-    tool_args_fg: str = "dim"
-    tool_ok_fg: str = "bold green"
-    tool_fail_fg: str = "bold red"
-    tool_start_fg: str = "dim cyan"
-    tool_elapsed_fg: str = "dim"
+    #
+    # NOTE: all slot values must be valid Rich AND prompt_toolkit
+    # color tokens. PT's ``fg:<x>`` accepts a hex literal or an
+    # ANSI named color ("cyan", "red", "ansibrightblack"), but
+    # does NOT accept Rich's ``dim`` intensity modifier. We use
+    # gray hex values to approximate ``dim`` everywhere a slot
+    # may be inlined into a PT FormattedText style string.
+    tool_name_fg: str = "cyan"
+    tool_args_fg: str = "#909090"
+    tool_ok_fg: str = "green"
+    tool_fail_fg: str = "red"
+    tool_start_fg: str = "#5fafd7"
+    tool_elapsed_fg: str = "#808080"
 
     # --- file paths + commands ---
     file_path_fg: str = LLMCODE_BLUE_LIGHT
     command_fg: str = LLMCODE_BLUE_MID
-    command_alias_fg: str = "dim"
+    command_alias_fg: str = "#808080"
 
     # --- bash mode ---
-    bash_cmd_fg: str = "bright_green"
-    bash_out_fg: str = "default"
+    bash_cmd_fg: str = "#6dd76d"
+    bash_out_fg: str = "#c7c7c7"
     bash_err_fg: str = "red"
 
     # --- diff ---
     diff_add_bg: str = "#0e4429"
-    diff_add_fg: str = "bright_green"
+    diff_add_fg: str = "#6dd76d"
     diff_del_bg: str = "#3a0d0d"
-    diff_del_fg: str = "bright_red"
+    diff_del_fg: str = "#ff6b6b"
     diff_hunk_fg: str = "cyan"
-    diff_lineno_fg: str = "dim"
+    diff_lineno_fg: str = "#707070"
 
     # --- markdown ---
-    markdown_heading: str = f"bold {LLMCODE_BLUE_LIGHT}"
+    markdown_heading: str = LLMCODE_BLUE_LIGHT
     markdown_code_inline: str = "#e6db74"
-    markdown_link: str = f"{LLMCODE_BLUE_LIGHT} underline"
-    markdown_quote_fg: str = "dim italic"
+    markdown_link: str = LLMCODE_BLUE_LIGHT
+    markdown_quote_fg: str = "#909090"
 
     # --- status line ---
     token_count_fg: str = LLMCODE_BLUE_LIGHT
@@ -148,17 +160,17 @@ class BrandPalette:
     status_warning: str = "yellow"
     status_error: str = "red"
     status_info: str = LLMCODE_BLUE_MID
-    status_dim: str = "dim"
+    status_dim: str = "#808080"
 
     # --- mode indicators ---
     mode_plan_fg: str = LLMCODE_BLUE_MID
     mode_yolo_fg: str = "yellow"
-    mode_bash_fg: str = "bright_green"
+    mode_bash_fg: str = "#6dd76d"
     mode_vim_fg: str = "magenta"
 
     # --- hints + pasted markers ---
-    hint_fg: str = "dim"
-    pasted_marker_fg: str = "dim italic"
+    hint_fg: str = "#808080"
+    pasted_marker_fg: str = "#909090"
 
     # --- brand accent (borders + panel title) ---
     brand_accent: str = LLMCODE_BLUE_MID

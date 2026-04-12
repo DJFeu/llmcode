@@ -26,7 +26,7 @@ def render_context_meter(used: int, limit: int) -> List[Tuple[str, str]]:
     :func:`style.context_color`.
     """
     if limit <= 0:
-        return [(style.palette.status_dim, f"{used}/? tok")]
+        return [(f"fg:{style.palette.status_dim}", f"{used}/? tok")]
     pct = used / limit
     color = style.context_color(pct)
     # Number of fully-filled bar cells.
