@@ -239,6 +239,11 @@ class ScreenCoordinator:
             mouse_support=False,   # KEY: no mouse capture, native selection works
             style=style,
         )
+        # M15: inject app reference into DialogPopover so it can
+        # invalidate() when a dialog becomes active/inactive — needed
+        # for /skill, /plugin, /mcp interactive browsers where no
+        # other output triggers a natural PT redraw.
+        self._dialog_popover.set_app(self._app)
 
     async def stop(self) -> None:
         """Tear down the PT Application. Idempotent."""

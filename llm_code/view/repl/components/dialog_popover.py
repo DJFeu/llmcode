@@ -91,6 +91,18 @@ class DialogPopover:
 
     def __init__(self) -> None:
         self._active: Optional[DialogRequest] = None
+        # M15: PT Application reference for triggering redraws when
+        # a dialog becomes active. Set by ScreenCoordinator.start().
+        self._app: Any = None
+
+    def set_app(self, app: Any) -> None:
+        """Inject the PT Application for invalidation."""
+        self._app = app
+
+    def _invalidate(self) -> None:
+        """Trigger a PT redraw so the dialog Float appears/disappears."""
+        if self._app is not None and getattr(self._app, "invalidate", None):
+            self._app.invalidate()
 
     # === Public API ===
 
@@ -116,10 +128,12 @@ class DialogPopover:
         self._active = ConfirmRequest(
             prompt=prompt, default=default, risk=risk, future=future,
         )
+        self._invalidate()
         try:
             return await future
         finally:
             self._active = None
+            self._invalidate()
 
     async def show_select(
         self,
@@ -141,10 +155,12 @@ class DialogPopover:
             prompt=prompt, choices=choices_list, default=default,
             future=future, cursor=default_cursor,
         )
+        self._invalidate()
         try:
             return await future
         finally:
             self._active = None
+            self._invalidate()
 
     async def show_text_input(
         self,
@@ -160,10 +176,12 @@ class DialogPopover:
             prompt=prompt, default=default, validator=validator,
             secret=secret, future=future, buffer=default or "",
         )
+        self._invalidate()
         try:
             return await future
         finally:
             self._active = None
+            self._invalidate()
 
     async def show_checklist(
         self,
@@ -180,10 +198,12 @@ class DialogPopover:
             future=future,
             selected=list(defaults) if defaults else [],
         )
+        self._invalidate()
         try:
             return await future
         finally:
             self._active = None
+            self._invalidate()
 
     # === Programmatic control (for tests and keybindings) ===
 
