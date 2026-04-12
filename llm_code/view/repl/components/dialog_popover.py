@@ -345,12 +345,24 @@ class DialogPopover:
         return FormattedText(parts)
 
 
+def _dialog_height(popover: DialogPopover) -> int:
+    """Dynamic height for the dialog Float based on content lines."""
+    active = popover.active
+    if active is None:
+        return 3
+    if isinstance(active, SelectRequest):
+        # prompt + choices + 1 row padding
+        return min(len(active.choices) + 2, 20)
+    if isinstance(active, ChecklistRequest):
+        return min(len(active.choices) + 2, 20)
+    return 4
+
+
 def build_dialog_float(popover: DialogPopover) -> Float:
     """Construct the PT Float wrapping the DialogPopover for the coordinator.
 
-    Uses ``bottom=1`` so the dialog sits just above the input area
-    (which is the bottom-most element). Dynamic height up to 20 rows
-    so long skill/plugin lists remain scrollable within the Float.
+    Uses ``bottom=1`` so the dialog sits just above the input area.
+    Height is computed dynamically from the dialog's content.
     """
     return Float(
         bottom=1,
@@ -360,7 +372,8 @@ def build_dialog_float(popover: DialogPopover) -> Float:
             content=Frame(
                 Window(
                     FormattedTextControl(popover.render_formatted),
-                    dont_extend_height=True,
+                    height=lambda: _dialog_height(popover),
+                    wrap_lines=True,
                 ),
                 title="dialog",
                 style="class:dialog.frame",
