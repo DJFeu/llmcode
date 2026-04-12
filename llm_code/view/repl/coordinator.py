@@ -337,7 +337,6 @@ class ScreenCoordinator:
             style="class:status",
         )
         input_window = self._input_area.build_window()
-        popover_float = self._input_area.build_popover_float()
         dialog_float = build_dialog_float(self._dialog_popover)
         footer_window = Window(
             FormattedTextControl(self._footer_text),
@@ -360,38 +359,97 @@ class ScreenCoordinator:
             content=input_window,
             filter=Condition(lambda: self._inline_select is None),
         )
-        # Spacer at the top of the HSplit: fills remaining terminal
-        # height so the FloatContainer is as tall as the terminal.
-        # This is critical for Floats (completion popover, dialog):
-        # without a spacer the HSplit is only ~4 rows, and Floats
-        # can't exceed their container. The spacer's content is
-        # empty — it represents the "native scrollback" region that
-        # patch_stdout's Rich output occupies above the PT chrome.
-        def _spacer_height() -> int:
-            import shutil
-            try:
-                rows = shutil.get_terminal_size((80, 24)).lines
-            except Exception:
-                rows = 24
-            # Reserve: status(1) + input(1-12) + footer(1) + rate-limit(0-1)
-            fixed = 4
-            return max(0, rows - fixed)
-
-        spacer = Window(height=_spacer_height)
+        # M15: inline slash completion list (above input, in the HSplit).
+        # Floats can't exceed the HSplit height (~4 rows), so we
+        # render the completion list as an inline Window instead.
+        inline_completions = ConditionalContainer(
+            content=Window(
+                FormattedTextControl(self._completions_text),
+                wrap_lines=True,
+                dont_extend_height=True,
+            ),
+            filter=Condition(self._has_inline_completions),
+        )
 
         return Layout(
             FloatContainer(
                 content=HSplit([
-                    spacer,
                     rate_limit_container,
                     status_window,
                     inline_select_window,
+                    inline_completions,
                     input_container,
                     footer_container,
                 ]),
-                floats=[popover_float, dialog_float],
+                floats=[dialog_float],
             )
         )
+
+    def _has_inline_completions(self) -> bool:
+        """True when the input starts with / and the completer has matches."""
+        buf = self._input_area.buffer
+        if not buf.text.startswith("/"):
+            return False
+        state = buf.complete_state
+        return state is not None and bool(state.completions)
+
+    def _completions_text(self) -> FormattedText:
+        """Render matching slash completions as an inline list above the input.
+
+        Shows up to 16 completions in a Claude Code-style vertical list
+        with command name (bold blue) + description (dim gray). The
+        currently-selected completion is highlighted with reverse video.
+        """
+        buf = self._input_area.buffer
+        state = buf.complete_state
+        if state is None or not state.completions:
+            return FormattedText([])
+
+        parts: list[tuple[str, str]] = []
+        completions = state.completions
+        current_idx = state.complete_index or 0
+        # Show at most 16 completions, centered around the current selection
+        max_visible = 16
+        start = max(0, current_idx - max_visible // 2)
+        end = min(len(completions), start + max_visible)
+        if end - start < max_visible:
+            start = max(0, end - max_visible)
+
+        for i in range(start, end):
+            comp = completions[i]
+            is_selected = (i == current_idx)
+            # Extract display text
+            name = comp.text
+            # Get meta (description)
+            meta = ""
+            if comp.display_meta:
+                if isinstance(comp.display_meta, str):
+                    meta = comp.display_meta
+                else:
+                    # FormattedText — extract the text part
+                    try:
+                        meta = "".join(t for _, t in comp.display_meta)
+                    except Exception:
+                        meta = str(comp.display_meta)
+
+            if is_selected:
+                parts.append(("reverse bold", f" ▶ {name:<20}"))
+                if meta:
+                    parts.append(("reverse", f" {meta}"))
+                parts.append(("", "\n"))
+            else:
+                parts.append(("bold fg:#4aa8ff", f"   {name:<20}"))
+                if meta:
+                    parts.append(("fg:#808080", f" {meta}"))
+                parts.append(("", "\n"))
+
+        if start > 0:
+            parts.insert(0, ("fg:#808080", f"   ↑ {start} more above\n"))
+        remaining = len(completions) - end
+        if remaining > 0:
+            parts.append(("fg:#808080", f"   ↓ {remaining} more below\n"))
+
+        return FormattedText(parts)
 
     def _inline_select_text(self) -> FormattedText:
         """Render the inline selection list. Called by PT on each redraw."""

@@ -20,7 +20,6 @@ from prompt_toolkit.layout.containers import (
     Window,
 )
 from prompt_toolkit.layout.controls import BufferControl
-from prompt_toolkit.layout.menus import CompletionsMenu
 
 from llm_code.view.repl.components.history_ghost import HistoryGhostProcessor
 from llm_code.view.repl.components.path_completer import (
@@ -103,21 +102,18 @@ class InputArea:
         )
 
     def build_popover_float(self) -> Float:
-        """Construct the Float that hosts the slash-completion popover.
+        """Return an empty Float placeholder.
 
-        Uses a single-column vertical :class:`CompletionsMenu` with
-        ``display_meta`` showing command descriptions — matching
-        Claude Code's vertical list style. ``max_height=16`` so
-        the user sees enough commands to navigate comfortably with
-        ↑/↓/Tab/Right.
+        M15: slash completions are now rendered as an inline Window
+        in the HSplit (see coordinator._completions_text), not as a
+        Float — because non-fullscreen PT layouts constrain Floats
+        to the HSplit height (~4 rows). The Float is kept as a
+        no-op placeholder so coordinator._build_layout doesn't need
+        conditional logic for the float list.
         """
-        has_slash = Condition(lambda: self.buffer.text.startswith("/"))
-
         return Float(
-            xcursor=True,
-            ycursor=True,
             content=ConditionalContainer(
-                content=CompletionsMenu(max_height=16, scroll_offset=2),
-                filter=has_slash,
+                content=Window(height=0),
+                filter=Condition(lambda: False),  # always hidden
             ),
         )
