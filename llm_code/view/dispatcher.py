@@ -1758,7 +1758,13 @@ class CommandDispatcher:
             self._cmd_skill(args)
             return
         # Bare /skill → interactive browser.
-        await self._interactive_skill_browser()
+        try:
+            await self._interactive_skill_browser()
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("/skill interactive browser failed")
+            self._view.print_error(f"skill browser failed: {exc}")
+            # Fallback to flat list so the user still sees something.
+            self._list_skills_flat()
 
     def _reload_skills(self) -> None:
         """Rebuild ``state.skills`` from the four configured skill layers.

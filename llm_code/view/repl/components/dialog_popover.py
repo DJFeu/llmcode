@@ -346,14 +346,21 @@ class DialogPopover:
 
 
 def build_dialog_float(popover: DialogPopover) -> Float:
-    """Construct the PT Float wrapping the DialogPopover for the coordinator."""
+    """Construct the PT Float wrapping the DialogPopover for the coordinator.
+
+    Uses ``bottom=1`` so the dialog sits just above the input area
+    (which is the bottom-most element). Dynamic height up to 20 rows
+    so long skill/plugin lists remain scrollable within the Float.
+    """
     return Float(
-        top=2,
+        bottom=1,
+        left=1,
+        right=1,
         content=ConditionalContainer(
             content=Frame(
                 Window(
                     FormattedTextControl(popover.render_formatted),
-                    height=10,
+                    dont_extend_height=True,
                 ),
                 title="dialog",
                 style="class:dialog.frame",
