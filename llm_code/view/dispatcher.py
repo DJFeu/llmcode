@@ -1718,8 +1718,14 @@ class CommandDispatcher:
             self._reload_skills()
             self._view.print_info(f"Removed {subargs}")
             return
-        # default: list installed skills (no modal)
-        self._list_skills()
+        # default: interactive skill browser with up/down selection
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._interactive_skill_browser())
+        except RuntimeError:
+            # No event loop — fall back to flat text list.
+            self._list_skills_flat()
 
     def _reload_skills(self) -> None:
         """Rebuild ``state.skills`` from the four configured skill layers.
@@ -1733,8 +1739,121 @@ class CommandDispatcher:
         except Exception as exc:  # noqa: BLE001
             logger.warning("skill reload failed: %r", exc)
 
-    def _list_skills(self) -> None:
-        """Print installed + (best-effort) known-marketplace skills."""
+    async def _interactive_skill_browser(self) -> None:
+        """M15: Interactive skill select with up/down arrow navigation.
+
+        Gathers installed + marketplace skills, then shows a
+        ``show_select`` dialog. Selecting an installed skill offers
+        enable/disable/remove; selecting a marketplace skill offers
+        install.
+        """
+        from llm_code.view.dialog_types import Choice
+
+        choices: list[Choice[str]] = []
+
+        # Installed skills
+        installed_names: set[str] = set()
+        if self._state.skills is not None:
+            all_skills = list(self._state.skills.auto_skills) + list(
+                self._state.skills.command_skills
+            )
+            for s in all_skills:
+                installed_names.add(s.name)
+                mode = "auto" if getattr(s, "auto", False) else f"/{s.trigger}"
+                tokens = len(s.content) // 4
+                choices.append(Choice(
+                    value=f"installed:{s.name}",
+                    label=f"✓ {s.name}",
+                    hint=f"{mode}, ~{tokens} tokens",
+                ))
+
+        # Marketplace (not yet installed)
+        try:
+            from llm_code.marketplace.builtin_registry import (
+                get_all_known_plugins,
+            )
+            known = [
+                p for p in get_all_known_plugins()
+                if p["name"] not in installed_names
+            ]
+            for p in known:
+                desc = p.get("desc", "")
+                choices.append(Choice(
+                    value=f"marketplace:{p['name']}",
+                    label=f"  {p['name']}",
+                    hint=desc,
+                ))
+        except Exception:
+            pass
+
+        if not choices:
+            self._view.print_info("No skills found (installed or marketplace).")
+            return
+
+        try:
+            result = await self._view.show_select(
+                "Select a skill (↑/↓ navigate, Enter select, Esc cancel):",
+                choices,
+            )
+        except Exception:
+            # Cancelled or dialog error
+            return
+
+        if not result:
+            return
+
+        kind, name = result.split(":", 1)
+        if kind == "installed":
+            # Offer actions for installed skill
+            action_choices = [
+                Choice(value="remove", label=f"Remove {name}"),
+                Choice(value="disable", label=f"Disable {name}"),
+                Choice(value="cancel", label="Cancel"),
+            ]
+            try:
+                action = await self._view.show_select(
+                    f"Action for {name}:",
+                    action_choices,
+                )
+            except Exception:
+                return
+            if action == "remove":
+                self._cmd_skill(f"remove {name}")
+            elif action == "disable":
+                self._cmd_skill(f"disable {name}")
+        elif kind == "marketplace":
+            # Find repo URL from registry
+            try:
+                from llm_code.marketplace.builtin_registry import (
+                    get_all_known_plugins,
+                )
+                entry = next(
+                    (p for p in get_all_known_plugins() if p["name"] == name),
+                    None,
+                )
+                if entry:
+                    repo = entry.get("repo", "")
+                    if repo:
+                        confirmed = await self._view.show_confirm(
+                            f"Install {name} from {repo}?",
+                            default=True,
+                        )
+                        if confirmed:
+                            self._cmd_skill(f"install {repo}")
+                    else:
+                        self._view.print_info(
+                            f"No repo URL for {name}. "
+                            f"Use: /skill install owner/repo"
+                        )
+                else:
+                    self._view.print_info(f"Skill {name} not found in registry.")
+            except Exception:
+                self._view.print_info(
+                    f"Use: /skill install owner/repo to install {name}"
+                )
+
+    def _list_skills_flat(self) -> None:
+        """Fallback flat text list (no interactive dialog)."""
         installed_names: set[str] = set()
         lines: list[str] = ["Installed skills:"]
         if self._state.skills is not None:

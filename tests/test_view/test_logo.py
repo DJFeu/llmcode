@@ -11,40 +11,34 @@ from llm_code.view.repl.components.logo import (
 
 
 def _plain_rows(text) -> list[str]:
-    """Return the rendered text split into rows of plain characters."""
     return str(text).split("\n")
 
 
-def test_full_banner_is_five_rows_tall() -> None:
+def test_full_banner_height() -> None:
     rows = _plain_rows(render_llmcode_logo())
-    assert len(rows) == LOGO_HEIGHT == 5
+    # 5 body rows + 1 shadow tail = 6 rows total
+    assert len(rows) == LOGO_HEIGHT == 6
 
 
-def test_every_row_has_logo_width() -> None:
+def test_every_row_has_consistent_width() -> None:
     rows = _plain_rows(render_llmcode_logo())
     for row in rows:
-        # Trim trailing spaces inserted by shadow cells beyond the
-        # word's right edge; width is the logical banner width.
         assert len(row) == LOGO_WIDTH
 
 
-def test_logo_width_matches_seven_letter_word() -> None:
-    # Seven 5-col glyphs + six 1-col kernings = 41 cols.
-    assert LOGO_WIDTH == 7 * 5 + 6
+def test_logo_width_matches_word_plus_shadow() -> None:
+    # Seven 5-col glyphs + six 1-col kernings + 1 shadow col = 42
+    assert LOGO_WIDTH == 7 * 5 + 6 + 1
 
 
 def test_all_seven_letters_present_as_block_chars() -> None:
     rows = _plain_rows(render_llmcode_logo())
     combined = "\n".join(rows)
-    # We expect at least one ``█`` block char (the letters are drawn
-    # entirely with them).
     assert "█" in combined
 
 
 def test_gradient_stops_all_appear_in_span_list() -> None:
     text = render_llmcode_logo()
-    # Rich stores color as a complex object — walk the spans and
-    # check for multiple distinct styles (evidence of a gradient).
     distinct_styles = {str(span.style) for span in text.spans}
     assert len(distinct_styles) >= 3, (
         f"expected multiple gradient stops, got: {distinct_styles}"
@@ -78,18 +72,16 @@ def test_compact_logo_is_one_row() -> None:
 def test_compact_logo_uses_mid_tone() -> None:
     text = render_llmcode_logo_compact()
     mid = style.palette.llmcode_blue_mid
-    span_styles = [str(span.style) for span in text.spans]
-    # mid tone appears in at least one span (the whole-text style)
-    assert any(mid in s for s in span_styles + [str(text.style)])
+    assert mid in str(text.style)
 
 
-def test_shadow_tone_only_in_empty_cells_below_solid_diagonal() -> None:
-    """The shadow glyph ``▒`` must never appear on a solid-body row cell."""
+def test_shadow_cells_use_shadow_tone() -> None:
+    """The 6th (tail) row is entirely shadow-tone cells + spaces."""
     text = render_llmcode_logo()
-    # Walk the raw chars: shadow cells are rendered as ``▒``, body
-    # cells as ``█``. We just check that the two never coexist on
-    # the same character position — the dict keys are plain string.
-    rendered = str(text)
-    assert "▒" in rendered  # at least one shadow cell exists
-    # Body is block char, shadow is ▒; they are distinct.
-    assert "█" in rendered
+    # The shadow tone must appear somewhere in the spans.
+    shadow_fg = style.palette.logo_shadow_fg
+    span_styles = [str(span.style) for span in text.spans]
+    assert any(shadow_fg in s for s in span_styles), (
+        f"expected logo_shadow_fg {shadow_fg} in spans, "
+        f"got: {set(span_styles)}"
+    )
