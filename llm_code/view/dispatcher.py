@@ -133,8 +133,8 @@ class CommandDispatcher:
         name = cmd.name
         args = cmd.args.strip()
 
-        # 1. Built-in handler
-        if self.dispatch(name, args):
+        # 1. Built-in handler (async-first, then sync fallback)
+        if await self.dispatch_async(name, args):
             return
 
         # 2. Custom commands from .llmcode/commands/
@@ -206,6 +206,27 @@ class CommandDispatcher:
             logger.exception("command /%s failed", name)
             self._view.print_error(f"/{name} failed: {exc}")
         return True
+
+    async def dispatch_async(self, name: str, args: str) -> bool:
+        """Like :meth:`dispatch` but awaits coroutine handlers.
+
+        M15 introduced async command handlers (e.g. ``_acmd_skill``)
+        that need to ``await show_select`` from the dialog popover.
+        ``_handle_slash_command`` (which is already async) calls this
+        instead of :meth:`dispatch` so async handlers work cleanly.
+        Sync ``_cmd_*`` handlers still work — they're called normally.
+        """
+        # Prefer async handler (_acmd_*) over sync (_cmd_*)
+        async_handler = getattr(self, f"_acmd_{name}", None)
+        if async_handler is not None:
+            try:
+                await async_handler(args)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("command /%s failed", name)
+                self._view.print_error(f"/{name} failed: {exc}")
+            return True
+        # Fall back to sync handler
+        return self.dispatch(name, args)
 
     # ── Batch A: core commands ───────────────────────────────────
 
@@ -1718,14 +1739,26 @@ class CommandDispatcher:
             self._reload_skills()
             self._view.print_info(f"Removed {subargs}")
             return
-        # default: interactive skill browser with up/down selection
-        import asyncio
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self._interactive_skill_browser())
-        except RuntimeError:
-            # No event loop — fall back to flat text list.
-            self._list_skills_flat()
+        # default: fall through to flat listing (interactive browser is
+        # in _acmd_skill which dispatch_async prefers)
+        self._list_skills_flat()
+
+    async def _acmd_skill(self, args: str) -> None:
+        """Async skill handler — preferred by dispatch_async.
+
+        When args specify a sub-command (install/enable/disable/remove),
+        delegates to the sync ``_cmd_skill``. When bare ``/skill`` is
+        entered (no args), shows an interactive ``show_select`` dialog
+        with ↑/↓ keyboard navigation.
+        """
+        parts = args.strip().split(None, 1)
+        sub = parts[0] if parts else ""
+        # Sub-commands go through the sync handler.
+        if sub in ("install", "enable", "disable", "remove"):
+            self._cmd_skill(args)
+            return
+        # Bare /skill → interactive browser.
+        await self._interactive_skill_browser()
 
     def _reload_skills(self) -> None:
         """Rebuild ``state.skills`` from the four configured skill layers.
