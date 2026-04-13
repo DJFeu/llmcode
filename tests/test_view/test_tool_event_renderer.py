@@ -90,14 +90,14 @@ def test_start_line_printed_on_init():
     out = capture.getvalue()
     assert "read_file" in out
     assert "foo.py" in out
-    assert "▶" in out
+    # New Claude Code style uses bold tool name instead of ▶ prefix
+    assert "read_file" in out
 
 
 def test_start_line_no_args():
     _, capture = _make(tool_name="list_files", args={})
     out = capture.getvalue()
     assert "list_files" in out
-    assert "▶" in out
 
 
 def test_region_starts_active():
@@ -158,8 +158,7 @@ def test_commit_success_prints_check_mark():
     region.commit_success(summary="47 lines")
     out = capture.getvalue()
     assert "✓" in out
-    assert "read_file" in out
-    # Rich numeric highlight splits "47 lines" across ANSI codes.
+    # New style: commit line shows summary only, tool name is on start line
     assert "47" in out
     assert "lines" in out
 
@@ -205,7 +204,7 @@ def test_commit_failure_prints_cross():
     region.commit_failure(error="nonzero", exit_code=1)
     out = capture.getvalue()
     assert "✗" in out
-    assert "bash" in out
+    # New style: commit line shows error only, tool name is on start line
     assert "nonzero" in out
     assert "exit" in out
     assert "1" in out
