@@ -369,7 +369,15 @@ class AudioRecorder:
 
         def callback(indata, frames, time_info, status):
             if self._recording:
-                chunk = indata.tobytes()
+                # ``sd.RawInputStream`` delivers ``indata`` as a cffi
+                # ``CData`` buffer, which exposes the buffer protocol
+                # but does NOT have a ``.tobytes()`` method — that's
+                # only present on numpy arrays from the non-raw
+                # ``sd.InputStream``. Use ``bytes(indata)`` which
+                # materializes the buffer protocol into a plain
+                # bytes object and works for both cffi buffers and
+                # numpy arrays.
+                chunk = bytes(indata)
                 self._buffer.extend(chunk)
                 # Silence tracking must never crash the audio callback
                 # — a bug here would otherwise kill the stream silently
@@ -570,6 +578,127 @@ class AnthropicSTT:
 # ── Local Whisper backend ───────────────────────────────────────────────
 
 
+_STT_NOISE_SILENCED = False
+
+
+def _silence_fd_stderr():
+    """Process-global fd-level stderr redirect to /dev/null.
+
+    Returned as a context manager. Used around ``faster_whisper``
+    model load + inference so C-level writes (ctranslate2's spdlog
+    warnings about compute type, etc.) don't leak into the REPL's
+    scrollback. Python-level ``sys.stderr.write`` is NOT affected
+    because we dup at the OS fd level; Python logging still works,
+    but anything it writes is routed to /dev/null during the
+    window.
+
+    Does not touch fd 1, so prompt_toolkit's layout drawing is
+    unaffected. Falls through silently if the dup fails.
+    """
+    import contextlib
+
+    @contextlib.contextmanager
+    def _cm():
+        try:
+            devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        except OSError:
+            yield
+            return
+        saved_fd = -1
+        try:
+            try:
+                saved_fd = os.dup(2)
+            except OSError:
+                yield
+                return
+            try:
+                os.dup2(devnull_fd, 2)
+            except OSError:
+                yield
+                return
+            try:
+                yield
+            finally:
+                try:
+                    os.dup2(saved_fd, 2)
+                except OSError:
+                    pass
+        finally:
+            try:
+                os.close(devnull_fd)
+            except OSError:
+                pass
+            if saved_fd >= 0:
+                try:
+                    os.close(saved_fd)
+                except OSError:
+                    pass
+
+    return _cm()
+
+
+def _silence_local_stt_noise() -> None:
+    """Point the noisy faster-whisper / HF Hub / ctranslate2 loggers
+    at nothing.
+
+    Called lazily from ``LocalWhisperSTT.transcribe`` on first use
+    so the one-liner warnings these libraries print during model
+    load / first inference do not corrupt the REPL's scrollback.
+    Idempotent — safe to call on every transcribe.
+
+    Specifically silences:
+    - ``HF_HUB_DISABLE_PROGRESS_BARS``: hides the download
+      progress bar stream.
+    - ``HF_HUB_DISABLE_TELEMETRY``: suppresses the "Please set a
+      HF_TOKEN" warning from ``huggingface_hub.file_download``.
+    - ``TRANSFORMERS_VERBOSITY``: quiets the
+      ``transformers.utils.logging`` root logger.
+    - ``huggingface_hub`` logger → ERROR level.
+    - ``ctranslate2.set_log_level(Error)`` if the library exposes
+      it — otherwise we fall back to the logging module for the
+      C-level "compute type inferred" warning which the Python
+      bindings forward.
+    """
+    global _STT_NOISE_SILENCED
+    if _STT_NOISE_SILENCED:
+        return
+    _STT_NOISE_SILENCED = True
+
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+    os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+    os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+    os.environ.setdefault("HF_HUB_VERBOSITY", "error")
+
+    try:
+        import logging as _logging
+        for name in (
+            "huggingface_hub",
+            "huggingface_hub.file_download",
+            "transformers",
+            "faster_whisper",
+            "ctranslate2",
+        ):
+            _logging.getLogger(name).setLevel(_logging.ERROR)
+    except Exception:
+        pass
+
+    # ctranslate2's own log-level setter (the "compute type"
+    # warning is a C++ absl log that the Python bindings expose
+    # via set_log_level). API differs across versions — try both
+    # the enum form and the string form, ignore ImportError.
+    try:
+        import ctranslate2  # type: ignore[import-not-found]
+        try:
+            ctranslate2.set_log_level(ctranslate2.LogLevel.Error)
+        except Exception:
+            try:
+                ctranslate2.set_log_level("ERROR")
+            except Exception:
+                pass
+    except ImportError:
+        pass
+
+
 class LocalWhisperSTT:
     """Embedded Whisper inference via ``faster-whisper`` — no HTTP server.
 
@@ -601,42 +730,62 @@ class LocalWhisperSTT:
         self._model = None
 
     def transcribe(self, audio_bytes: bytes, language: str) -> str:
-        if self._model is None:
+        # Silence the noisy transitive dependencies BEFORE the
+        # faster_whisper import runs. HuggingFace Hub prints a
+        # "Please set a HF_TOKEN" line on first download even when
+        # the user doesn't need a token, and ctranslate2 prints a
+        # "compute type inferred from saved model" warning on every
+        # model load. Both land in the REPL's scrollback otherwise.
+        _silence_local_stt_noise()
+
+        # Wrap the whole transcribe path in an fd-level stderr
+        # redirect so ctranslate2's spdlog warnings (which go
+        # through C++ std::cerr, bypassing Python logging) don't
+        # reach the terminal. Covers both the model load and the
+        # actual inference call — faster-whisper can emit "no
+        # speech detected" warnings from the VAD pipeline too.
+        with _silence_fd_stderr():
+            if self._model is None:
+                try:
+                    from faster_whisper import (  # type: ignore[import-not-found]
+                        WhisperModel,
+                    )
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "faster-whisper is not installed. Run "
+                        "`pip install llmcode-cli[voice-local]` to enable "
+                        "the local Whisper backend."
+                    ) from exc
+                self._model = WhisperModel(
+                    self._model_size,
+                    device=self._device,
+                    compute_type=self._compute_type,
+                )
+
+            # faster-whisper accepts a file path OR a numpy array of
+            # float32 samples. We already hold raw PCM bytes, so the
+            # cheapest path is to wrap them as a WAV in a temp file.
+            import tempfile
+
+            wav_data = _pcm_to_wav(audio_bytes)
+            with tempfile.NamedTemporaryFile(
+                suffix=".wav", delete=False,
+            ) as f:
+                f.write(wav_data)
+                tmp_path = f.name
+
             try:
-                from faster_whisper import WhisperModel  # type: ignore[import-not-found]
-            except ImportError as exc:
-                raise RuntimeError(
-                    "faster-whisper is not installed. Run "
-                    "`pip install llmcode-cli[voice-local]` to enable the "
-                    "local Whisper backend."
-                ) from exc
-            self._model = WhisperModel(
-                self._model_size,
-                device=self._device,
-                compute_type=self._compute_type,
-            )
-
-        # faster-whisper accepts a file path OR a numpy array of float32
-        # samples. We already hold raw PCM bytes, so the cheapest path is
-        # to wrap them as a WAV in a temp file — avoids a numpy dep on
-        # the import path for callers that don't use this backend.
-        import tempfile
-
-        wav_data = _pcm_to_wav(audio_bytes)
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            f.write(wav_data)
-            tmp_path = f.name
-
-        try:
-            segments, _info = self._model.transcribe(
-                tmp_path, language=language or None
-            )
-            return " ".join(seg.text.strip() for seg in segments).strip()
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+                segments, _info = self._model.transcribe(
+                    tmp_path, language=language or None,
+                )
+                return " ".join(
+                    seg.text.strip() for seg in segments
+                ).strip()
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
 
 # ── Factory ─────────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 path and the runtime dispatch path consume."""
 from __future__ import annotations
 
-from llm_code.tui.stream_parser import (
+from llm_code.view.stream_parser import (
     StreamEventKind,
     StreamParser,
 )

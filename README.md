@@ -20,7 +20,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-blue" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/tests-5243%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-5344%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/cold%20start-~400ms-brightgreen" alt="Cold start">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
   <img src="https://img.shields.io/pypi/v/llmcode-cli" alt="PyPI">
@@ -61,7 +61,7 @@ pip install llmcode-cli
 # From terminal
 pip install --upgrade llmcode-cli
 
-# Or from inside llmcode TUI
+# Or from inside the llmcode REPL
 /update
 ```
 
@@ -122,16 +122,21 @@ docker run -it --rm \
 ### Modes
 
 ```bash
-llmcode                       # Default fullscreen TUI
+llmcode                       # Default: line-streaming REPL (v2.0+)
 llmcode --provider ollama     # Auto-detect Ollama + interactive model selector
 llmcode --mode plan           # Read-only mode, plan before execution
 llmcode --yolo                # Auto-accept all permissions (dangerous)
 llmcode -x "find large files" # Shell assistant: translate to command + execute
-llmcode -q "explain this"     # Quick Q&A without TUI
+llmcode -q "explain this"     # Quick Q&A without the REPL
 llmcode --serve --port 8765   # Remote WebSocket server
 llmcode --connect host:8765   # Connect to remote agent
 llmcode --resume              # Resume from checkpoint
 ```
+
+> **v2.0 note:** The default interactive mode is now a line-streaming
+> REPL on prompt_toolkit + Rich instead of a Textual fullscreen TUI.
+> Mouse drag-select, scroll wheel, and terminal Find all work natively.
+> See [`docs/migration-v2.md`](docs/migration-v2.md) for details.
 
 ---
 
@@ -359,7 +364,7 @@ Native httpx-based provider for Anthropic's Messages API:
 | `/help` | Show help |
 | `/clear` | Clear conversation |
 | `/model <name>` | Switch model |
-| `/theme <name>` | Switch TUI color theme |
+| `/theme` | v1 TUI theme switcher (v2.0 honors terminal palette) |
 | `/cost` | Token usage |
 | `/cache [list\|clear\|probe]` | Manage persistent caches |
 | `/budget <tokens>` | Set token budget |
@@ -409,7 +414,7 @@ Native httpx-based provider for Anthropic's Messages API:
 | `/update` | Check PyPI + upgrade in-place |
 | `/exit`, `/quit` | Quit |
 
-Type `/` in the TUI for autocomplete with inline descriptions, or run `/help` for the interactive browser.
+Type `/` in the REPL for slash-command autocomplete with inline descriptions, or run `/help` to print the full command list into scrollback.
 
 </details>
 
@@ -495,8 +500,8 @@ Sources: Official (`anthropics/claude-plugins-official`), Community, npm, GitHub
 ### Lazy / scoped MCP servers
 
 `mcpServers` now supports a split schema so heavy MCP servers start only
-when a persona or skill that needs them is invoked (gated by an in-TUI
-approval prompt). Legacy flat configs still work — every entry is treated
+when a persona or skill that needs them is invoked (gated by an
+in-REPL approval dialog popover). Legacy flat configs still work — every entry is treated
 as `always_on`.
 
 ```json
@@ -554,9 +559,15 @@ pip install llmcode-cli[treesitter]     # Tree-sitter multi-language repo map
 ```
 llm_code/               48,000+ lines Python
 ├── api/                Provider abstraction (OpenAI-compat + Anthropic)
-├── cli/                CLI entry point, TUI launcher, oneshot modes (-x/-q)
+├── cli/                CLI entry point, REPL launcher, oneshot modes (-x/-q)
 │   └── templates/      LLM-driven command templates (init.md, etc)
-├── runtime/            ReAct engine, 5-layer memory, skill router,
+├── view/                v2.0 view layer — ViewBackend Protocol + dispatcher
+│   ├── base.py          ViewBackend ABC (extension point for v2.1+ platform backends)
+│   ├── types.py         MessageEvent, StatusUpdate, handle Protocols
+│   ├── dispatcher.py    53 view-agnostic slash commands
+│   ├── stream_renderer.py  StreamEvent → ViewBackend rendering
+│   └── repl/            First-party prompt_toolkit + Rich REPL backend
+├── runtime/            ReAct engine, AppState, 5-layer memory, skill router,
 │                       compression, hooks, permissions, checkpoint,
 │                       dream, VCR, speculative execution, telemetry,
 │                       file protection, sandbox, secret scanner,
@@ -577,7 +588,7 @@ llm_code/               48,000+ lines Python
 ├── ide/                IDE bridge (WebSocket JSON-RPC)
 ├── swarm/              Multi-agent coordinator (synthesis-first)
 └── utils/              Notebook, diff, hyperlinks, search
-tests/                  5,160+ tests across 418 files
+tests/                  5,344+ tests across 430+ files
 ```
 
 ---

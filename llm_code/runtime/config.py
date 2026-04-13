@@ -189,6 +189,26 @@ class TuiConfig:
 
 
 @dataclass(frozen=True)
+class ThemeConfig:
+    """User-configurable theme overrides for the v2.0.0 REPL palette.
+
+    M15 introduces a semantic color map (``llm_code.view.repl.style``)
+    with a tech-blue default tone. Any slot a user sets here replaces
+    the M15 default in :class:`BrandPalette`. Keys correspond to the
+    attribute names on ``BrandPalette`` (e.g. ``assistant_bullet``,
+    ``diff_add_fg``, ``mode_bash_fg``).
+
+    All values are plain Rich-compatible color strings — either a
+    named color ("green", "bright_white"), a hex value ("#1e7ce8"),
+    or a compound style ("bold cyan", "LLMCODE_BLUE_MID underline").
+    Unknown keys are silently ignored so a user config written for a
+    newer llmcode remains forward-compatible with an older build.
+    """
+
+    overrides: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class SkillRouterConfig:
     """Configuration for the 3-tier skill router."""
 
@@ -270,6 +290,7 @@ class RuntimeConfig:
     skill_router: SkillRouterConfig = field(default_factory=lambda: SkillRouterConfig())
     diminishing_returns: DiminishingReturnsConfig = field(default_factory=lambda: DiminishingReturnsConfig())
     tui: TuiConfig = field(default_factory=TuiConfig)
+    theme: ThemeConfig = field(default_factory=ThemeConfig)
     builtin_hooks: BuiltinHooksConfig = field(default_factory=BuiltinHooksConfig)
     keywords: KeywordsConfig = field(default_factory=KeywordsConfig)
     compaction: CompactionConfig = field(default_factory=CompactionConfig)

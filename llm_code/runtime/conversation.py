@@ -532,7 +532,7 @@ class ConversationRuntime:
         """
         if self._dialogs is not None:
             return self._dialogs
-        from llm_code.tui.dialogs.headless import HeadlessDialogs
+        from llm_code.view.headless import HeadlessDialogs
         self._dialogs = HeadlessDialogs()
         return self._dialogs
 

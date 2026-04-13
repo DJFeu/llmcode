@@ -204,21 +204,18 @@ class TestEnvFilter:
 
 class TestCommandConsistency:
     def test_single_source_of_truth(self):
-        """All command lists should derive from COMMAND_REGISTRY."""
+        """COMMAND_REGISTRY and KNOWN_COMMANDS must stay in sync.
+
+        Pre-M11 this also cross-checked the Textual InputBar's hand-
+        rolled SLASH_COMMANDS / _NO_ARG_COMMANDS lists. M11.3 deleted
+        that widget, and v2.0.0's slash popover derives directly from
+        COMMAND_REGISTRY, so there's only one source of truth to
+        verify now.
+        """
         from llm_code.cli.commands import COMMAND_REGISTRY, KNOWN_COMMANDS
-        from llm_code.tui.input_bar import SLASH_COMMANDS, SLASH_COMMAND_DESCS, _NO_ARG_COMMANDS
 
         registry_names = {c.name for c in COMMAND_REGISTRY}
         assert registry_names == KNOWN_COMMANDS
-
-        slash_names = {cmd.lstrip("/") for cmd in SLASH_COMMANDS}
-        assert slash_names == registry_names
-
-        desc_names = {cmd.lstrip("/") for cmd, _ in SLASH_COMMAND_DESCS}
-        assert desc_names == registry_names
-
-        no_arg_names = {cmd.lstrip("/") for cmd in _NO_ARG_COMMANDS}
-        assert no_arg_names.issubset(registry_names)
 
     def test_no_orphan_commands(self):
         """Every command with no_arg=True should not need arguments."""
@@ -231,75 +228,27 @@ class TestCommandConsistency:
         actual_no_arg = {c.name for c in COMMAND_REGISTRY if c.no_arg}
         assert expected_no_arg == actual_no_arg
 
+    def test_every_command_has_dispatcher_handler(self):
+        """Post-M10: every registered command must have a matching
+        _cmd_* handler on the view-agnostic CommandDispatcher."""
+        from llm_code.cli.commands import COMMAND_REGISTRY
+        from llm_code.view.dispatcher import CommandDispatcher
 
-# ── Dropdown scrolling (b6e4173) ──
-
-class TestDropdownScroll:
-    def test_all_commands_reachable(self):
-        """Dropdown cursor should be able to reach all commands."""
-        from llm_code.tui.input_bar import InputBar, SLASH_COMMAND_DESCS
-
-        bar = InputBar()
-        bar.value = "/"
-        bar._update_dropdown()
-        total = len(bar._dropdown_items)
-        assert total == len(SLASH_COMMAND_DESCS)
-        # Cursor should wrap through all
-        bar._dropdown_cursor = total - 1
-        assert bar._dropdown_cursor == total - 1
+        missing = [
+            c.name for c in COMMAND_REGISTRY
+            if not hasattr(CommandDispatcher, f"_cmd_{c.name}")
+        ]
+        assert not missing, f"commands missing handlers: {missing}"
 
 
-# ── InputBar height shrink (4fa5117) ──
-
-class TestInputBarHeight:
-    def test_dropdown_state_cleared(self):
-        """After dropdown closes, state should be cleared."""
-        from llm_code.tui.input_bar import InputBar
-
-        bar = InputBar()
-        bar.value = "/"
-        bar._update_dropdown()
-        assert bar._show_dropdown is True
-
-        # Simulate closing
-        bar._show_dropdown = False
-        bar._dropdown_items = []
-        bar._dropdown_cursor = 0
-        assert bar._show_dropdown is False
-        assert bar._dropdown_items == []
-
-
-# ── Cursor position corruption (041218b) ──
-
-class TestCursorCorruption:
-    def test_cursor_clamped_before_insert(self):
-        """Cursor should be clamped to value length before insertion."""
-        from llm_code.tui.input_bar import InputBar
-
-        bar = InputBar()
-        bar.value = "/s"
-        bar._cursor = 99  # intentionally invalid
-        bar._cursor = min(bar._cursor, len(bar.value))
-        bar.value = bar.value[:bar._cursor] + "e" + bar.value[bar._cursor:]
-        bar._cursor += 1
-        assert bar.value == "/se"
-
-
-# ── Cmd+V paste text (8582481) ──
-
-class TestPasteText:
-    def test_paste_inserts_text(self):
-        """Cmd+V should insert text at cursor, not just check for images."""
-        from llm_code.tui.input_bar import InputBar
-
-        bar = InputBar()
-        bar.value = ""
-        bar._cursor = 0
-        paste = "hello world"
-        bar.value = bar.value[:bar._cursor] + paste + bar.value[bar._cursor:]
-        bar._cursor += len(paste)
-        assert bar.value == "hello world"
-        assert bar._cursor == 11
+# ── v1.x Textual InputBar widget tests (TestDropdownScroll,
+# TestInputBarHeight, TestCursorCorruption, TestPasteText) were
+# deleted in M11.4. They exercised the Textual ``InputBar`` widget
+# directly — its ``_dropdown_items``, ``_dropdown_cursor``,
+# ``_show_dropdown``, ``_cursor``, and ``value`` fields. v2.0.0's
+# REPL uses prompt_toolkit with the M4 InputArea + SlashPopover
+# components instead, which have their own test coverage in
+# tests/test_view/test_input_area.py and test_slash_popover.py.
 
 
 # ── Proactive compaction (ff0d6f0) ──

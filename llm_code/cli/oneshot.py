@@ -16,8 +16,8 @@ from llm_code.api.types import (
 )
 from llm_code.runtime.config import RuntimeConfig
 from llm_code.runtime.model_aliases import resolve_model
-from llm_code.tui.dialogs import Choice, DialogCancelled
-from llm_code.tui.dialogs.headless import HeadlessDialogs
+from llm_code.view.dialog_types import Choice, DialogCancelled
+from llm_code.view.headless import HeadlessDialogs
 
 
 def _extract_text(response: MessageResponse) -> str:
@@ -149,16 +149,17 @@ def run_quick_mode(
     from llm_code.api.types import StreamTextDelta
     from llm_code.runtime.context import ProjectContext
     from llm_code.runtime.conversation import ConversationRuntime
+    from llm_code.runtime.core_tools import register_core_tools
     from llm_code.runtime.permissions import PermissionMode, PermissionPolicy
     from llm_code.runtime.prompt import SystemPromptBuilder
     from llm_code.runtime.session import Session
     from llm_code.tools.registry import ToolRegistry
-    from llm_code.tui.app import LLMCodeTUI
 
     provider = _create_provider(config)
     registry = ToolRegistry()
-    # Register the same collaborator-free tool set as the TUI for parity.
-    LLMCodeTUI._register_core_tools_into(registry, config)
+    # Register the same collaborator-free core tool set as the REPL boot
+    # path for parity between one-shot and interactive modes.
+    register_core_tools(registry, config)
 
     cwd = Path.cwd()
     mode_map = {

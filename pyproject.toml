@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "llmcode-cli"
-version = "1.23.1"
+version = "2.0.0"
 description = "Open-source AI agent runtime for any LLM — production-grade coding agent with multi-layer memory, multi-agent orchestration, and defense-in-depth security"
 license = {text = "MIT"}
 authors = [{name = "Adam Hung"}]
@@ -28,7 +28,6 @@ dependencies = [
     "prompt-toolkit>=3.0.47",
     "pydantic>=2.0",
     "click>=8.0",
-    "textual>=1.0",
     "filelock>=3.12",
     "pyyaml>=6.0",
     # tomllib entered the stdlib in 3.11; pull tomli (same API) on 3.10
@@ -66,10 +65,11 @@ dev = [
     "pytest-cov>=5.0",
     "respx>=0.22",
     "ruff>=0.5",
+    "pexpect>=4.9.0",  # M12 pexpect smoke tests
 ]
 
 [project.scripts]
-llmcode = "llm_code.cli.tui_main:main"
+llmcode = "llm_code.cli.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["llm_code"]
@@ -95,6 +95,9 @@ exclude = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "unit: unit test — exercises a single function/class with no I/O or external deps",
+]
 
 [tool.ruff]
 target-version = "py310"

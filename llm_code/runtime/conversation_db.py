@@ -81,8 +81,19 @@ class ConversationDB:
     def __init__(self, db_path: Path | None = None) -> None:
         self._path = db_path or (Path.home() / ".llmcode" / "conversations.db")
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self._path))
+        self._conn = sqlite3.connect(
+            str(self._path),
+            timeout=10,          # wait up to 10s for locks (multi-instance)
+            check_same_thread=False,
+        )
         self._conn.row_factory = sqlite3.Row
+        # Enable WAL mode for concurrent readers + writer. This allows
+        # multiple llmcode instances to share the same DB without
+        # "unable to open database file" / "database is locked" errors.
+        try:
+            self._conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.Error:
+            pass
         self._init_schema()
 
     def _init_schema(self) -> None:

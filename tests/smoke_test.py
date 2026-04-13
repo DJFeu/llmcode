@@ -28,7 +28,7 @@ def _skip(msg: str) -> None:
 def test_import():
     """Core modules should import without error."""
     modules = [
-        "llm_code.cli.tui_main",
+        "llm_code.cli.main",
         "llm_code.cli.commands",
         "llm_code.cli.oneshot",
         "llm_code.runtime.config",
@@ -39,9 +39,11 @@ def test_import():
         "llm_code.runtime.conversation_db",
         "llm_code.runtime.secret_scanner",
         "llm_code.runtime.prompt_guard",
+        "llm_code.runtime.app_state",
         "llm_code.tools.bash",
-        "llm_code.tui.app",
-        "llm_code.tui.input_bar",
+        "llm_code.view.repl.backend",
+        "llm_code.view.dispatcher",
+        "llm_code.view.stream_renderer",
     ]
     for mod in modules:
         try:
@@ -52,31 +54,29 @@ def test_import():
 
 
 def test_command_registry():
-    """Command registry should be consistent."""
-    from llm_code.cli.commands import KNOWN_COMMANDS
-    from llm_code.tui.input_bar import SLASH_COMMANDS, SLASH_COMMAND_DESCS, _NO_ARG_COMMANDS
+    """Command registry should be consistent and every command should
+    have a matching _cmd_* handler on the REPL dispatcher."""
+    from llm_code.cli.commands import COMMAND_REGISTRY, KNOWN_COMMANDS
+    from llm_code.view.dispatcher import CommandDispatcher
 
-    # Every SLASH_COMMAND should be in KNOWN_COMMANDS
-    for cmd in SLASH_COMMANDS:
-        name = cmd.lstrip("/")
-        if name in KNOWN_COMMANDS:
-            pass  # ok
-        else:
-            _fail(f"/{name} in SLASH_COMMANDS but not KNOWN_COMMANDS")
-            return
+    registry_names = {c.name for c in COMMAND_REGISTRY}
+    if registry_names != KNOWN_COMMANDS:
+        _fail(
+            f"COMMAND_REGISTRY {registry_names} != KNOWN_COMMANDS "
+            f"{KNOWN_COMMANDS}"
+        )
+        return
 
-    # Every SLASH_COMMAND should have a description
-    desc_cmds = {cmd for cmd, _ in SLASH_COMMAND_DESCS}
-    for cmd in SLASH_COMMANDS:
-        if cmd not in desc_cmds:
-            _fail(f"{cmd} missing description")
-            return
-
-    # NO_ARG_COMMANDS should be subset of SLASH_COMMANDS
-    for cmd in _NO_ARG_COMMANDS:
-        if cmd not in SLASH_COMMANDS:
-            _fail(f"{cmd} in _NO_ARG_COMMANDS but not SLASH_COMMANDS")
-            return
+    missing_handlers = [
+        name for name in registry_names
+        if not hasattr(CommandDispatcher, f"_cmd_{name}")
+    ]
+    if missing_handlers:
+        _fail(
+            f"registry commands missing _cmd_* handlers: "
+            f"{sorted(missing_handlers)}"
+        )
+        return
 
     _ok(f"command registry consistent ({len(KNOWN_COMMANDS)} commands)")
 

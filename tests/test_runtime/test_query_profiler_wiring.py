@@ -27,7 +27,7 @@ def test_profile_command_registered():
 
 
 def test_app_has_cmd_profile_handler():
-    from llm_code.tui.command_dispatcher import CommandDispatcher
+    from llm_code.view.dispatcher import CommandDispatcher
     assert hasattr(CommandDispatcher, "_cmd_profile")
 
 

@@ -1,0 +1,5 @@
+ Enable tools 
+  [x] Bash
+▶ [ ] Edit File
+  [x] Read File
+  [ ] Web Fetch

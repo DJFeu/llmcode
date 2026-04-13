@@ -40,7 +40,7 @@ class SubprocessBackend:
         llm_code_bin = shutil.which("llm-code") or sys.executable
         cmd_args: list[str] = []
         if llm_code_bin == sys.executable:
-            cmd_args = [sys.executable, "-m", "llm_code.cli.tui_main", "--lite"]
+            cmd_args = [sys.executable, "-m", "llm_code.cli.main", "--lite"]
         else:
             cmd_args = [llm_code_bin, "--lite"]
 
