@@ -20,7 +20,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-blue" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/tests-5344%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-5527%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/cold%20start-~400ms-brightgreen" alt="Cold start">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
   <img src="https://img.shields.io/pypi/v/llmcode-cli" alt="PyPI">
@@ -330,17 +330,20 @@ Native httpx-based provider for Anthropic's Messages API:
 - **Docker sandbox** — optional container isolation for bash commands (Docker/Podman auto-detected, configurable image/network/memory limits)
 - **Plugin permissions gate** — blocks plugins requesting subprocess/fs_write/env unless `--force`
 
-### Terminal UI
+### Terminal REPL (v2.0)
 
-- **Mouse wheel scrolling** — `mouse=True` enables native scroll inside ChatScrollView; hold Option (macOS) or Shift (Linux) for text selection
+Built on prompt\_toolkit + Rich — native terminal behavior, no fullscreen TUI:
+
+- **Native scroll & select** — mouse wheel scrolls terminal scrollback natively; drag-select, Cmd+C/V, terminal Find all work without workarounds
 - **Cmd+V auto-detect** — text via bracketed paste, image via clipboard fallback
 - **Shift+Tab cycles agents** — BUILD → PLAN → SUGGEST → BUILD
-- **PageUp/Down + Shift+↑/↓** — scrollback navigation
+- **↑/↓ history** — command history with ghost preview
+- **Inline slash completions** — type `/` for autocomplete with descriptions (Claude Code style)
+- **Dialog popovers** — permission prompts, file diffs, checklists render inline
+- **Claude Code-style rendering** — bold tool headers, indented `⎿` result lines, semantic diff colors
 - **`/update`** — check PyPI + upgrade in-place (auto-check on startup, cached 6h)
-- **`/theme <name>`** — switch color theme (default, dracula, monokai, tokyo-night, github-dark, solarized-dark, nord, gruvbox)
 - **`/yolo`** — toggle auto-accept
 - **`/init`** — generate `AGENTS.md` from repo analysis
-- **`/copy`** — copy last response to clipboard
 - **`/search`** — cross-session FTS5 search
 - **`/personas`** — list specialist agents (Sisyphus refactor / Oracle deep-analysis / Atlas orchestrator / Librarian / Explore / Metis / Momus / Multimodal-Looker / WebResearcher)
 - **`/orchestrate <task>`** — category-routed persona dispatch with retry-on-failure
@@ -350,10 +353,6 @@ Native httpx-based provider for Anthropic's Messages API:
 - **`/model`** — switch model with profile info display (capabilities, pricing, provider)
 - **`/export <path>`** — chunked markdown export of the conversation
 - **`/compact`** — manually compact conversation history
-- **Ctrl+P** — Quick Open fuzzy file finder
-- **Click-to-open URLs** — markdown links and bare URLs in chat are clickable (cell-aware, CJK-safe)
-- **180 spinner verbs** — Pondering, Caramelizing, Brewing… randomized per turn
-- **Background task indicator** — status bar shows running/pending tasks
 - **Vim mode** — full motions, operators, text objects
 
 <details>
@@ -588,7 +587,7 @@ llm_code/               48,000+ lines Python
 ├── ide/                IDE bridge (WebSocket JSON-RPC)
 ├── swarm/              Multi-agent coordinator (synthesis-first)
 └── utils/              Notebook, diff, hyperlinks, search
-tests/                  5,344+ tests across 430+ files
+tests/                  5,527+ tests across 430+ files
 ```
 
 ---
@@ -600,7 +599,7 @@ git clone https://github.com/DJFeu/llmcode
 cd llmcode
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest                  # 5,160+ tests
+pytest                  # 5,527+ tests
 ruff check llm_code/    # lint
 ```
 
