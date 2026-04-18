@@ -36,7 +36,9 @@ def _fake_uname(release: str, sysname: str = "Linux"):
 
 @pytest.fixture
 def landlock_host(monkeypatch):
-    """Pretend host is Linux 5.15 with bwrap available."""
+    """Pretend host is Linux 5.15 with bwrap available and ctypes
+    landlock disabled — forces the skeleton's bwrap delegation so
+    delegation-style tests actually hit the delegate."""
     monkeypatch.setattr(
         "llm_code.sandbox.landlock.os.uname",
         lambda: _fake_uname("5.15.0-76-generic"),
@@ -45,7 +47,17 @@ def landlock_host(monkeypatch):
         "llm_code.sandbox.landlock.shutil.which",
         lambda name: "/usr/bin/bwrap" if name == "bwrap" else None,
     )
-    # bwrap adapter also checks via shutil.which on its own module
+    monkeypatch.setattr(
+        "llm_code.sandbox.bwrap.shutil.which",
+        lambda name: "/usr/bin/bwrap" if name == "bwrap" else None,
+    )
+    monkeypatch.setattr(
+        "llm_code.sandbox.landlock_ctypes.is_landlock_available",
+        lambda: False,
+    )
+    yield
+    return
+    # (unreachable — kept so the ``_`` placeholder below stays valid)
     monkeypatch.setattr(
         "llm_code.sandbox.bwrap.shutil.which",
         lambda name: "/usr/bin/bwrap" if name == "bwrap" else None,
@@ -88,7 +100,13 @@ class TestAvailability:
             "llm_code.sandbox.bwrap.shutil.which",
             lambda name: None,
         )
-        with pytest.raises(RuntimeError, match="bwrap"):
+        # F1: disable ctypes path so we exercise the "no backend
+        # available" error.
+        monkeypatch.setattr(
+            "llm_code.sandbox.landlock_ctypes.is_landlock_available",
+            lambda: False,
+        )
+        with pytest.raises(RuntimeError, match="bwrap|bubblewrap|ctypes"):
             LandlockSandboxBackend()
 
     def test_accepts_modern_linux_with_bwrap(self, landlock_host) -> None:
