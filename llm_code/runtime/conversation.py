@@ -1527,9 +1527,11 @@ class ConversationRuntime:
                 ):
                     try:
                         from llm_code.runtime.auto_compact import (
+                            AutoCompactState,
                             CompactionThresholds,
-                            should_compact,
                             compact_messages,
+                            should_compact,
+                            target_token_count,
                         )
                         _thr_cfg = _compaction_cfg.thresholds
                         _thresholds = CompactionThresholds(
@@ -1537,19 +1539,27 @@ class ConversationRuntime:
                             min_messages=_thr_cfg.min_messages,
                             min_text_blocks=_thr_cfg.min_text_blocks,
                             target_pct=_thr_cfg.target_pct,
+                            max_consecutive_failures=_thr_cfg.max_consecutive_failures,
+                            output_token_reserve=_thr_cfg.output_token_reserve,
                         )
+                        # Lazily bind a per-runtime failure counter so the
+                        # circuit breaker can veto further attempts once
+                        # compaction has failed repeatedly.
+                        if getattr(self, "_auto_compact_state", None) is None:
+                            self._auto_compact_state = AutoCompactState()
+                        _state = self._auto_compact_state
                         _used = stop_event.usage.input_tokens
                         _max_t = getattr(self._config, "compact_after_tokens", 0) or 128_000
                         if should_compact(
-                            self.session.messages, _used, _max_t, _thresholds
+                            self.session.messages, _used, _max_t, _thresholds, state=_state,
                         ):
                             self._compaction_in_flight = True
                             yield StreamCompactionStart(
                                 used_tokens=_used, max_tokens=_max_t,
                             )
+                            _before = len(self.session.messages)
                             try:
-                                _before = len(self.session.messages)
-                                _target = int(_max_t * _thresholds.target_pct)
+                                _target = target_token_count(_max_t, _thresholds)
                                 self.session = compact_messages(
                                     self.session, target_tokens=_target,
                                 )
@@ -1557,10 +1567,19 @@ class ConversationRuntime:
                                     before_messages=_before,
                                     after_messages=len(self.session.messages),
                                 )
+                                _state.record_success()
+                            except Exception as _compact_exc:
+                                _state.record_failure()
+                                logger.warning(
+                                    "auto-compaction attempt failed (%d/%d): %s",
+                                    _state.failure_count,
+                                    _thresholds.max_consecutive_failures,
+                                    _compact_exc,
+                                )
                             finally:
                                 self._compaction_in_flight = False
                     except Exception as _exc:  # pragma: no cover - defensive
-                        logger.warning("auto-compaction failed: %s", _exc)
+                        logger.warning("auto-compaction pipeline failed: %s", _exc)
                         self._compaction_in_flight = False
 
                 # Use ACTUAL API token count for compaction (not estimated)
