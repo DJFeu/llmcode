@@ -29,12 +29,38 @@ class TestChooseBackendDefaults:
 
 
 class TestChooseBackendEnabled:
+    """A1 note: after the platform-aware chain landed, these tests
+    need to skip past the native OS backends (seatbelt on Darwin,
+    landlock/bwrap on Linux) so the docker-vs-pty fallback on the
+    tail of the chain is actually exercised. Patching the OS-specific
+    factories to raise is the cleanest way to drop into the shared
+    docker → pty suffix."""
+
+    @staticmethod
+    def _patch_native_out(extra_patches: list | None = None):
+        """Force Darwin/Linux chains past seatbelt / landlock / bwrap."""
+        targets = [
+            patch("llm_code.sandbox.seatbelt.SeatbeltSandboxBackend",
+                  side_effect=RuntimeError),
+            patch("llm_code.sandbox.landlock.LandlockSandboxBackend",
+                  side_effect=RuntimeError),
+            patch("llm_code.sandbox.bwrap.BwrapSandboxBackend",
+                  side_effect=RuntimeError),
+        ]
+        for p in extra_patches or []:
+            targets.append(p)
+        return targets
+
     def test_docker_available_returns_docker_backend(self) -> None:
         cfg = SandboxConfig(enabled=True)
         mock_sandbox = MagicMock()
         mock_sandbox.is_available.return_value = True
 
-        with patch("llm_code.sandbox.adapters.DockerSandbox", return_value=mock_sandbox):
+        patches = self._patch_native_out([
+            patch("llm_code.sandbox.adapters.DockerSandbox",
+                  return_value=mock_sandbox),
+        ])
+        with patches[0], patches[1], patches[2], patches[3]:
             backend = choose_backend(cfg)
         assert isinstance(backend, DockerSandboxBackend)
         assert backend.name == "docker"
@@ -44,18 +70,22 @@ class TestChooseBackendEnabled:
         mock_sandbox = MagicMock()
         mock_sandbox.is_available.return_value = False
 
-        with patch("llm_code.sandbox.adapters.DockerSandbox", return_value=mock_sandbox):
+        patches = self._patch_native_out([
+            patch("llm_code.sandbox.adapters.DockerSandbox",
+                  return_value=mock_sandbox),
+        ])
+        with patches[0], patches[1], patches[2], patches[3]:
             backend = choose_backend(cfg)
         assert isinstance(backend, PtySandboxBackend)
         assert backend.name == "pty"
 
     def test_docker_construction_fails_falls_back_to_pty(self) -> None:
         cfg = SandboxConfig(enabled=True)
-
-        with patch(
-            "llm_code.sandbox.adapters.DockerSandbox",
-            side_effect=RuntimeError("no docker daemon"),
-        ):
+        patches = self._patch_native_out([
+            patch("llm_code.sandbox.adapters.DockerSandbox",
+                  side_effect=RuntimeError("no docker daemon")),
+        ])
+        with patches[0], patches[1], patches[2], patches[3]:
             backend = choose_backend(cfg)
         assert isinstance(backend, PtySandboxBackend)
 

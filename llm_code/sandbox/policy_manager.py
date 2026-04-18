@@ -147,42 +147,85 @@ class _NullBackend:
 
 
 def choose_backend(config=None) -> SandboxBackend:
-    """Pick the most appropriate adapter for the given sandbox config.
+    """Pick the most appropriate sandbox adapter for this host.
 
-    Selection order:
+    Selection order (A1 — platform-aware):
 
         1. ``config is None`` or ``config.enabled is False``
-           → :class:`_NullBackend` (legacy path keeps running).
-        2. ``config.enabled is True`` and Docker/Podman available
-           → :class:`DockerSandboxBackend`.
-        3. ``config.enabled is True`` but Docker unavailable
-           → :class:`PtySandboxBackend` (graceful fallback).
+           → :class:`_NullBackend`. Legacy code path stays untouched.
+        2. ``platform.system() == "Linux"``
+           → Landlock → Bwrap → Docker → PTY.
+        3. ``platform.system() == "Darwin"``
+           → Seatbelt → Docker → PTY.
+        4. ``platform.system() == "Windows"``
+           → Docker → _NullBackend (PTY not available).
+        5. Any other platform → _NullBackend.
 
     Each call returns a fresh backend instance — no global singletons
-    so parallel sessions never leak Docker container handles.
+    so parallel sessions never share Docker container handles. Each
+    constructor failure degrades quietly to the next candidate; callers
+    only see the best available one (or the null backend).
     """
     if config is None or not getattr(config, "enabled", False):
         return _NullBackend()
 
-    # Lazy import — adapters depend on external libs (ptyprocess,
-    # Docker subprocess path) that we don't want to force for
-    # every import of policy_manager.
-    from llm_code.sandbox.adapters import (
-        DockerSandboxBackend,
-        PtySandboxBackend,
-    )
+    system = platform.system()
+    if system == "Linux":
+        return _linux_priority(config)
+    if system == "Darwin":
+        return _darwin_priority(config)
+    if system == "Windows":
+        return _windows_priority(config)
+    return _NullBackend()
 
+
+def _try(factory, *args, **kwargs):
+    """Construct ``factory`` and swallow any init error.
+
+    Returns the constructed backend or ``None`` so the priority chain
+    can fall through on unavailable platforms / missing binaries.
+    """
     try:
-        docker_backend = DockerSandboxBackend(config)
-        if docker_backend._sandbox.is_available():
-            return docker_backend
+        return factory(*args, **kwargs)
     except Exception:
-        pass  # fall through to PTY
+        return None
 
+
+def _linux_priority(config) -> SandboxBackend:
+    from llm_code.sandbox.adapters import DockerSandboxBackend, PtySandboxBackend
+    from llm_code.sandbox.bwrap import BwrapSandboxBackend
+    from llm_code.sandbox.landlock import LandlockSandboxBackend
+
+    for factory in (LandlockSandboxBackend, BwrapSandboxBackend):
+        backend = _try(factory)
+        if backend is not None:
+            return backend
+    docker = _try(DockerSandboxBackend, config)
+    if docker is not None and docker._sandbox.is_available():
+        return docker
     return PtySandboxBackend()
 
 
-_ = platform  # retained for future per-OS dispatch
+def _darwin_priority(config) -> SandboxBackend:
+    from llm_code.sandbox.adapters import DockerSandboxBackend, PtySandboxBackend
+    from llm_code.sandbox.seatbelt import SeatbeltSandboxBackend
+
+    seatbelt = _try(SeatbeltSandboxBackend)
+    if seatbelt is not None:
+        return seatbelt
+    docker = _try(DockerSandboxBackend, config)
+    if docker is not None and docker._sandbox.is_available():
+        return docker
+    return PtySandboxBackend()
+
+
+def _windows_priority(config) -> SandboxBackend:
+    from llm_code.sandbox.adapters import DockerSandboxBackend
+
+    docker = _try(DockerSandboxBackend, config)
+    if docker is not None and docker._sandbox.is_available():
+        return docker
+    return _NullBackend()
 
 
 # ── H3 deep wire: translate SandboxConfig → SandboxPolicy ────────────
