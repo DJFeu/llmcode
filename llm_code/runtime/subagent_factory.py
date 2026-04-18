@@ -112,4 +112,14 @@ def make_subagent_runtime(
     # Tag the runtime with its role so downstream observers can react.
     child._subagent_role = effective_role  # type: ignore[attr-defined]
     child._subagent_system_suffix = _ANTI_RECURSION  # type: ignore[attr-defined]
+
+    # G1: subagents share the parent's SandboxLifecycleManager so any
+    # backend a sub-agent opens gets closed when the parent session
+    # ends. getattr() guards against parents that never touched a
+    # backend (no lifecycle yet) — the property stays None and the
+    # child can lazily create its own later if needed.
+    parent_lifecycle = getattr(parent, "_sandbox_lifecycle", None)
+    if parent_lifecycle is not None:
+        child._sandbox_lifecycle = parent_lifecycle  # type: ignore[attr-defined]
+
     return child
