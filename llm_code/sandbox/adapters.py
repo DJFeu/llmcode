@@ -11,6 +11,7 @@ Docker adapter can wire ``--network=none`` once it grows that.
 from __future__ import annotations
 
 import shlex
+import subprocess
 import time
 from typing import Callable
 
@@ -147,11 +148,17 @@ class DockerSandboxBackend:
 
     name = "docker"
 
-    def __init__(self, config: SandboxConfig) -> None:
+    def __init__(
+        self,
+        config: SandboxConfig,
+        *,
+        timeout_seconds: int = 30,
+    ) -> None:
         # Let constructor errors propagate — the caller decides whether
         # to fall back to PTY. ``choose_backend`` handles that dispatch.
         self._config = config
         self._sandbox = DockerSandbox(config)
+        self._timeout = timeout_seconds
 
     def execute(
         self,
@@ -212,26 +219,111 @@ class DockerSandboxBackend:
         *,
         on_chunk: Callable[[str], None],
     ) -> SandboxResult:
-        """E4 — *degraded* streaming for Docker.
+        """D1 — real per-line streaming via ``docker exec`` Popen.
 
-        The existing :class:`DockerSandbox.run` is blocking, so true
-        per-line streaming would require a ``docker exec -i`` Popen
-        rewrite beyond the scope of this sprint. The degraded path
-        runs :meth:`execute` normally, then emits the full stdout as
-        a single chunk. Caller code that polls on_chunk for progress
-        still sees output once, just not incrementally.
+        Path:
 
-        The M2 policy-enforcement gate applies before any chunk is
-        emitted; a rejected call produces zero chunks and exit 126,
-        matching the non-streaming behaviour.
+            1. Apply the M2 policy gate — reject (exit 126) when the
+               requested policy is stricter than the container's
+               launch config, *before* any subprocess spawns.
+            2. Ensure the container is running (delegates to
+               :meth:`DockerSandbox.ensure_running`).
+            3. ``subprocess.Popen([runtime, "exec", container_id, "sh",
+               "-c", command_str])`` with stdout=PIPE, stderr=STDOUT,
+               text line-buffered.
+            4. Iterate ``proc.stdout`` line by line — each line is
+               concatenated into ``stdout`` and emitted through
+               ``on_chunk``. Callback exceptions are swallowed so a
+               broken UI cannot wedge execution.
+            5. ``proc.wait(timeout=self._timeout)``; on timeout, kill
+               the subprocess and return exit_code=124.
         """
-        result = self.execute(command, policy)
-        if result.stdout:
+        # M2 policy gate — identical rules to :meth:`execute`.
+        cfg = self._config
+        if cfg is not None:
+            container_network = bool(getattr(cfg, "network", True))
+            container_writable = not bool(getattr(cfg, "mount_readonly", False))
+            if container_network and not policy.allow_network:
+                return SandboxResult(
+                    exit_code=126,
+                    stdout="",
+                    stderr=(
+                        "policy rejected: call requires network=False but "
+                        "docker container was launched with network=True"
+                    ),
+                )
+            if container_writable and not policy.allow_write:
+                return SandboxResult(
+                    exit_code=126,
+                    stdout="",
+                    stderr=(
+                        "policy rejected: call requires allow_write=False "
+                        "(read-only) but docker container was launched "
+                        "with a writable mount"
+                    ),
+                )
+
+        if not self._sandbox.ensure_running():
+            return SandboxResult(
+                exit_code=1,
+                stdout="",
+                stderr="docker sandbox container failed to start",
+            )
+
+        runtime = getattr(self._sandbox, "_runtime_cmd", "docker")
+        container_id = getattr(self._sandbox, "_container_id", None)
+        if not container_id:
+            return SandboxResult(
+                exit_code=1,
+                stdout="",
+                stderr="docker sandbox container id not available",
+            )
+
+        cmd_str = " ".join(shlex.quote(part) for part in command)
+        argv = [runtime, "exec", container_id, "sh", "-c", cmd_str]
+
+        try:
+            proc = subprocess.Popen(
+                argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        except Exception as exc:
+            return SandboxResult(
+                exit_code=1,
+                stdout="",
+                stderr=f"docker exec spawn failed: {exc}",
+            )
+
+        chunks: list[str] = []
+        stream = proc.stdout or iter(())
+        for line in stream:
+            chunks.append(line)
             try:
-                on_chunk(result.stdout)
+                on_chunk(line)
             except Exception:
                 pass
-        return result
+
+        try:
+            exit_code = proc.wait(timeout=self._timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            return SandboxResult(
+                exit_code=124,
+                stdout="".join(chunks),
+                stderr=f"docker exec streaming timed out after {self._timeout}s",
+            )
+
+        return SandboxResult(
+            exit_code=exit_code,
+            stdout="".join(chunks),
+            stderr="",
+        )
 
     def close(self) -> None:
         close_fn = getattr(self._sandbox, "stop", None) or getattr(

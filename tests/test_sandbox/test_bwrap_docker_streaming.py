@@ -131,32 +131,10 @@ class TestDockerStreaming:
             backend = DockerSandboxBackend(cfg)
         assert has_streaming(backend) is True
 
-    def test_streaming_degrades_to_single_chunk(self) -> None:
-        from llm_code.sandbox.adapters import DockerSandboxBackend
-
-        cfg = SandboxConfig(enabled=True, network=True, mount_readonly=False)
-        mock_sb = MagicMock()
-        mock_sb.run.return_value = MagicMock(
-            stdout="full docker output\n",
-            stderr="",
-            returncode=0,
-            timed_out=False,
-        )
-
-        chunks: list[str] = []
-        with patch(
-            "llm_code.sandbox.adapters.DockerSandbox",
-            return_value=mock_sb,
-        ):
-            backend = DockerSandboxBackend(cfg)
-            result = backend.execute_streaming(
-                ["ls"],
-                SandboxPolicy(allow_network=True, allow_write=True),
-                on_chunk=chunks.append,
-            )
-        # Single chunk — entire output — emitted after run returns.
-        assert chunks == ["full docker output\n"]
-        assert result.exit_code == 0
+    # D1: ``test_streaming_degrades_to_single_chunk`` was removed. The
+    # DockerSandboxBackend now streams real per-line output via
+    # ``docker exec`` Popen. Happy-path behaviour is covered by
+    # tests/test_sandbox/test_docker_real_streaming.py.
 
     def test_streaming_respects_policy_reject(self) -> None:
         """Policy enforcement gate from M2 still applies; when the gate
@@ -187,14 +165,22 @@ class TestDockerStreaming:
 
         cfg = SandboxConfig(enabled=True, network=True)
         mock_sb = MagicMock()
-        mock_sb.run.return_value = MagicMock(
-            stdout="", stderr="", returncode=0, timed_out=False,
-        )
+        mock_sb._container_id = "abc"
+        mock_sb._runtime_cmd = "docker"
+        mock_sb.ensure_running.return_value = True
+
+        fake_popen = MagicMock()
+        fake_popen.stdout = iter(())
+        fake_popen.wait.return_value = 0
+        fake_popen.returncode = 0
 
         chunks: list[str] = []
         with patch(
             "llm_code.sandbox.adapters.DockerSandbox",
             return_value=mock_sb,
+        ), patch(
+            "llm_code.sandbox.adapters.subprocess.Popen",
+            return_value=fake_popen,
         ):
             backend = DockerSandboxBackend(cfg)
             backend.execute_streaming(
