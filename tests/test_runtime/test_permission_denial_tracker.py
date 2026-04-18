@@ -164,3 +164,75 @@ class TestPermissionDenialTracker:
             )
         last2 = t.recent(2)
         assert [e.tool_name for e in last2] == ["t3", "t4"]
+
+
+# ---------- H6 deep wire: DeniedToolCall -> LLMCodeError ----------
+
+
+class TestDeniedToolCallAsError:
+    """Each DeniedToolCall can produce a structured LLMCodeError so
+    downstream audit / SDK callers get a uniform type to marshal."""
+
+    def _build(self, source: DenialSource) -> "DeniedToolCall":
+        return DeniedToolCall(
+            tool_name="bash",
+            tool_use_id="call_7",
+            input={"command": "rm -rf /"},
+            reason="dangerous command",
+            source=source,
+        )
+
+    def test_policy_maps_to_permission_denied_code(self) -> None:
+        from llm_code.error_model import ErrorSeverity, LLMCodeError
+
+        err = self._build(DenialSource.POLICY).as_error()
+        assert isinstance(err, LLMCodeError)
+        assert err.code == "E_PERMISSION_DENIED"
+        assert err.severity is ErrorSeverity.WARNING
+
+    def test_hook_maps_to_hook_denied_code(self) -> None:
+        err = self._build(DenialSource.HOOK).as_error()
+        assert err.code == "E_HOOK_DENIED"
+
+    def test_user_maps_to_user_denied_code(self) -> None:
+        err = self._build(DenialSource.USER).as_error()
+        assert err.code == "E_USER_DENIED"
+
+    def test_sandbox_maps_to_sandbox_denied_code(self) -> None:
+        err = self._build(DenialSource.SANDBOX).as_error()
+        assert err.code == "E_SANDBOX_DENIED"
+
+    def test_other_maps_to_tool_denied_code(self) -> None:
+        err = self._build(DenialSource.OTHER).as_error()
+        assert err.code == "E_TOOL_DENIED"
+
+    def test_message_is_the_reason(self) -> None:
+        err = self._build(DenialSource.POLICY).as_error()
+        assert err.message == "dangerous command"
+
+    def test_context_carries_tool_details(self) -> None:
+        err = self._build(DenialSource.POLICY).as_error()
+        assert err.context["tool_name"] == "bash"
+        assert err.context["tool_use_id"] == "call_7"
+        assert err.context["source"] == "policy"
+        # Input is passed through so audit can replay what was blocked.
+        assert err.context["input"]["command"] == "rm -rf /"
+
+
+class TestAsReportEmbedsErrors:
+    """as_report() must include the per-entry LLMCodeError dict so
+    enterprise logs can consume a single JSON payload."""
+
+    def test_each_entry_has_error_field(self) -> None:
+        t = PermissionDenialTracker()
+        t.record(
+            tool_name="bash", tool_use_id="c1",
+            input={"command": "x"}, reason="unsafe",
+            source=DenialSource.POLICY,
+        )
+        report = t.as_report()
+        assert "error" in report["entries"][0]
+        err = report["entries"][0]["error"]
+        assert err["code"] == "E_PERMISSION_DENIED"
+        assert err["severity"] == "warning"
+        assert err["context"]["tool_name"] == "bash"

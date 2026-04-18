@@ -21,6 +21,10 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from llm_code.error_model import LLMCodeError
 
 
 class DenialSource(Enum):
@@ -30,6 +34,18 @@ class DenialSource(Enum):
     USER = "user"       # interactive user rejection
     SANDBOX = "sandbox" # sandbox refused (e.g. bwrap denial)
     OTHER = "other"     # catch-all
+
+
+# H6 deep wire: map each denial source to a stable error code so
+# downstream callers (audit, SDK, /diagnose) can branch on it without
+# parsing the human-readable reason string.
+_DENIAL_ERROR_CODES: dict[DenialSource, str] = {
+    DenialSource.POLICY: "E_PERMISSION_DENIED",
+    DenialSource.HOOK: "E_HOOK_DENIED",
+    DenialSource.USER: "E_USER_DENIED",
+    DenialSource.SANDBOX: "E_SANDBOX_DENIED",
+    DenialSource.OTHER: "E_TOOL_DENIED",
+}
 
 
 @dataclass(frozen=True)
@@ -47,6 +63,24 @@ class DeniedToolCall:
     source: DenialSource
     # Defaults to "now" so call sites don't need to thread a clock in.
     denied_at: float = field(default_factory=time.time)
+
+    # H6 deep wire: produce a structured LLMCodeError for this denial
+    # so audit / SDK responses can emit one unified error type.
+    def as_error(self) -> "LLMCodeError":
+        from llm_code.error_model import ErrorSeverity, LLMCodeError
+
+        return LLMCodeError(
+            code=_DENIAL_ERROR_CODES.get(self.source, "E_TOOL_DENIED"),
+            message=self.reason,
+            severity=ErrorSeverity.WARNING,
+            context={
+                "tool_name": self.tool_name,
+                "tool_use_id": self.tool_use_id,
+                "source": self.source.value,
+                "input": dict(self.input),
+                "denied_at": self.denied_at,
+            },
+        )
 
 
 class PermissionDenialTracker:
@@ -104,7 +138,12 @@ class PermissionDenialTracker:
         return tuple(self._entries[-n:])
 
     def as_report(self) -> dict:
-        """JSON-safe aggregate for ``/diagnose`` and audit logs."""
+        """JSON-safe aggregate for ``/diagnose`` and audit logs.
+
+        Each entry carries an ``error`` dict (LLMCodeError.to_dict()) so
+        downstream consumers can marshal denials and runtime errors
+        through the same envelope.
+        """
         by_tool: dict[str, int] = {}
         by_source: dict[str, int] = {}
         for e in self._entries:
@@ -121,6 +160,7 @@ class PermissionDenialTracker:
                     "reason": e.reason,
                     "source": e.source.value,
                     "denied_at": e.denied_at,
+                    "error": e.as_error().to_dict(),
                 }
                 for e in self._entries
             ],
