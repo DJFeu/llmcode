@@ -51,6 +51,35 @@ def _merge_hook_extra_output(result: ToolResult, outcome: Any) -> ToolResult:
     )
 
 
+def _tool_capability_labels(tool: Any) -> tuple[str, ...]:
+    """Return a sorted tuple of capability labels the tool satisfies.
+
+    Feeds :class:`StreamToolExecStart.tool_capabilities` (H10 deep wire)
+    so TUIs / telemetry / audit logs can branch on "this call is
+    destructive" or "this call needs network" without re-inspecting
+    the tool object. ``isinstance`` is cheap — the runtime-checkable
+    Protocols only verify attribute presence.
+    """
+    from llm_code.tools.capabilities import (
+        DestructiveCapability,
+        NetworkCapability,
+        ReadOnlyCapability,
+        RollbackableCapability,
+    )
+
+    labels: list[str] = []
+    if isinstance(tool, ReadOnlyCapability):
+        labels.append("read_only")
+    if isinstance(tool, DestructiveCapability):
+        labels.append("destructive")
+    if isinstance(tool, RollbackableCapability):
+        labels.append("rollbackable")
+    if isinstance(tool, NetworkCapability):
+        labels.append("network")
+    labels.sort()
+    return tuple(labels)
+
+
 def _record_denial(
     runtime: Any,
     *,
@@ -392,7 +421,10 @@ class ToolExecutionPipeline:
         if rt._vcr_recorder is not None:
             rt._vcr_recorder.record("tool_call", {"name": call.name, "args": args_preview})
         yield StreamToolExecStart(
-            tool_name=call.name, args_summary=args_preview, tool_id=call.id,
+            tool_name=call.name,
+            args_summary=args_preview,
+            tool_id=call.id,
+            tool_capabilities=_tool_capability_labels(tool),
         )
         _tool_start = time.monotonic()
 
