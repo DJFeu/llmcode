@@ -295,6 +295,18 @@ def shutdown_sandbox_lifecycle(runtime) -> None:
 class ConversationRuntime:
     """Agentic loop that drives LLM turns, tool execution, and session updates."""
 
+    def shutdown(self) -> None:
+        """Release session-scoped sandbox resources (F5-wire-2).
+
+        Call this at the end of a session / before discarding the
+        runtime so the :class:`SandboxLifecycleManager` attached via
+        :func:`_sandbox_lifecycle_on` closes every registered
+        backend. Safe on a fresh runtime (lazy lifecycle absent → no-op)
+        and safe to call twice (close_all is idempotent per backend id).
+        """
+        shutdown_sandbox_lifecycle(self)
+
+
     # Class-level defaults so builtin hooks can read these via getattr even
     # before the runtime has processed its first stream.
     _last_input_tokens: int = 0

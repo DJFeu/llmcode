@@ -23,7 +23,10 @@ __all__ = ["register_core_tools", "make_sandbox"]
 
 
 def register_core_tools(
-    registry: "ToolRegistry", config: "RuntimeConfig",
+    registry: "ToolRegistry",
+    config: "RuntimeConfig",
+    *,
+    lifecycle=None,
 ) -> None:
     """Register the collaborator-free core tool set into ``registry``.
 
@@ -34,8 +37,9 @@ def register_core_tools(
     IDEBridge, LspManager, etc.) are intentionally NOT registered here
     — the boot path registers those separately after this helper runs.
 
-    Uses the centralized ``builtin.get_builtin_tools()`` registry so
-    adding a new core tool requires only a single entry there.
+    F5-wire-2: when ``lifecycle`` is supplied, the sandbox instance
+    handed to BashTool is registered on the manager so session teardown
+    can close it. ``None`` (default) keeps the pre-wire behaviour.
     """
     from llm_code.tools.bash import BashTool
     from llm_code.tools.builtin import get_builtin_tools
@@ -53,10 +57,17 @@ def register_core_tools(
     # a 30-second cap so a stuck shell doesn't wedge the REPL.
     bash_timeout = 0 if is_local else 30
 
+    bash_sandbox = make_sandbox(config)
+    if lifecycle is not None and bash_sandbox is not None:
+        try:
+            lifecycle.register(bash_sandbox)
+        except Exception:
+            pass  # registration is best-effort; never mask tool setup
+
     bash_kwargs = dict(
         default_timeout=bash_timeout,
         compress_output=config.output_compression,
-        sandbox=make_sandbox(config),
+        sandbox=bash_sandbox,
     )
 
     for name, cls in get_builtin_tools().items():
