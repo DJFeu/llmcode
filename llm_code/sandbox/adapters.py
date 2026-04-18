@@ -62,13 +62,44 @@ class DockerSandboxBackend:
     def __init__(self, config: SandboxConfig) -> None:
         # Let constructor errors propagate — the caller decides whether
         # to fall back to PTY. ``choose_backend`` handles that dispatch.
+        self._config = config
         self._sandbox = DockerSandbox(config)
 
     def execute(
         self,
         command: list[str],
-        policy: SandboxPolicy,  # noqa: ARG002 — policy not yet translated to docker args
+        policy: SandboxPolicy,
     ) -> SandboxResult:
+        # M2: per-call policy enforcement. Docker's --network=none /
+        # --read-only are launch-time flags, so a hot-path retighten
+        # would require restarting the container. Instead, reject the
+        # call when the policy is stricter than the container's launch
+        # config — caller can either re-launch with the right config
+        # or route to a different backend.
+        cfg = self._config
+        if cfg is not None:
+            container_network = bool(getattr(cfg, "network", True))
+            container_writable = not bool(getattr(cfg, "mount_readonly", False))
+            if container_network and not policy.allow_network:
+                return SandboxResult(
+                    exit_code=126,
+                    stdout="",
+                    stderr=(
+                        "policy rejected: call requires network=False but "
+                        "docker container was launched with network=True"
+                    ),
+                )
+            if container_writable and not policy.allow_write:
+                return SandboxResult(
+                    exit_code=126,
+                    stdout="",
+                    stderr=(
+                        "policy rejected: call requires allow_write=False "
+                        "(read-only) but docker container was launched "
+                        "with a writable mount"
+                    ),
+                )
+
         try:
             raw = self._sandbox.run(command)
         except Exception as exc:

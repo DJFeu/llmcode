@@ -105,17 +105,23 @@ class TestDockerSandboxBackend:
 
         with patch("llm_code.sandbox.adapters.DockerSandbox", return_value=mock_sb):
             backend = DockerSandboxBackend(cfg)
-            result = backend.execute(["ls", "/"], SandboxPolicy())
+            # Matching policy to avoid the M2 enforcement gate —
+            # delegation is what we're testing here.
+            result = backend.execute(
+                ["ls", "/"],
+                SandboxPolicy(allow_network=True, allow_write=True),
+            )
 
         assert result.exit_code == 0
         assert result.stdout == "out"
         assert result.stderr == "err"
         mock_sb.run.assert_called_once()
 
-    def test_execute_with_policy_denying_network_sets_env(self) -> None:
-        """The adapter should translate SandboxPolicy.allow_network to
-        the Docker backend's network flag. Skeleton: we just verify
-        the adapter reads the policy."""
+    def test_execute_with_matching_policy_passes_through(self) -> None:
+        """When policy matches the launched container (network=True on
+        both sides) the call passes through without the enforcement
+        gate rejecting it. Pre-M2 this was the only case the
+        skeleton covered; M2 adds proper reject paths below."""
         cfg = SandboxConfig(enabled=True, network=True)
         mock_sb = MagicMock()
         mock_sb.run.return_value = MagicMock(
@@ -124,13 +130,90 @@ class TestDockerSandboxBackend:
 
         with patch("llm_code.sandbox.adapters.DockerSandbox", return_value=mock_sb):
             backend = DockerSandboxBackend(cfg)
-            policy_no_net = SandboxPolicy(allow_network=False)
-            backend.execute(["curl", "github.com"], policy_no_net)
+            policy = SandboxPolicy(allow_network=True, allow_write=True)
+            backend.execute(["curl", "github.com"], policy)
 
-        # The adapter must have consulted the policy in some way — we
-        # can't assert a network_mode without a concrete Docker run
-        # contract, but the call did happen:
         assert mock_sb.run.call_count == 1
+
+
+# ---------- M2: policy enforcement on execute ----------
+
+
+class TestDockerPolicyEnforcement:
+    """M2 — when the requested SandboxPolicy is stricter than the
+    launched container's config, execute() refuses the call rather
+    than pretending to sandbox it. Docker's --network=none / --read-only
+    are launch-time flags; per-call tightening would require restarting
+    the container, which is too heavy for a runtime hot-path."""
+
+    def test_network_stricter_than_container_rejects(self) -> None:
+        cfg = SandboxConfig(enabled=True, network=True, mount_readonly=False)
+        mock_sb = MagicMock()
+        mock_sb.run.return_value = MagicMock(
+            stdout="", stderr="", returncode=0, timed_out=False,
+        )
+
+        with patch("llm_code.sandbox.adapters.DockerSandbox", return_value=mock_sb):
+            backend = DockerSandboxBackend(cfg)
+            policy = SandboxPolicy(allow_network=False, allow_write=True)
+            result = backend.execute(["curl", "x"], policy)
+
+        assert result.exit_code == 126
+        assert "policy" in result.stderr.lower()
+        assert "network" in result.stderr.lower()
+        assert mock_sb.run.call_count == 0
+
+    def test_write_stricter_than_container_rejects(self) -> None:
+        cfg = SandboxConfig(enabled=True, network=False, mount_readonly=False)
+        mock_sb = MagicMock()
+
+        with patch("llm_code.sandbox.adapters.DockerSandbox", return_value=mock_sb):
+            backend = DockerSandboxBackend(cfg)
+            policy = SandboxPolicy(allow_network=False, allow_write=False)
+            result = backend.execute(["touch", "x"], policy)
+
+        assert result.exit_code == 126
+        assert "policy" in result.stderr.lower()
+        assert ("write" in result.stderr.lower()
+                or "read-only" in result.stderr.lower()
+                or "read_only" in result.stderr.lower())
+        assert mock_sb.run.call_count == 0
+
+    def test_policy_matches_container_proceeds(self) -> None:
+        cfg = SandboxConfig(enabled=True, network=False, mount_readonly=True)
+        mock_sb = MagicMock()
+        mock_sb.run.return_value = MagicMock(
+            stdout="ok", stderr="", returncode=0, timed_out=False,
+        )
+
+        with patch("llm_code.sandbox.adapters.DockerSandbox", return_value=mock_sb):
+            backend = DockerSandboxBackend(cfg)
+            policy = SandboxPolicy(allow_network=False, allow_write=False)
+            result = backend.execute(["ls"], policy)
+
+        assert result.exit_code == 0
+        assert result.stdout == "ok"
+        assert mock_sb.run.call_count == 1
+
+    def test_policy_laxer_than_container_still_runs(self) -> None:
+        """Caller asks for network=True but container launched with
+        network=False. The container is *stricter* than the call —
+        the request will fail naturally when it tries to reach the
+        net. We let it through; the runtime sees the failure from
+        inside the sandbox, which is the intended behaviour."""
+        cfg = SandboxConfig(enabled=True, network=False, mount_readonly=True)
+        mock_sb = MagicMock()
+        mock_sb.run.return_value = MagicMock(
+            stdout="", stderr="network unreachable", returncode=1, timed_out=False,
+        )
+
+        with patch("llm_code.sandbox.adapters.DockerSandbox", return_value=mock_sb):
+            backend = DockerSandboxBackend(cfg)
+            policy = SandboxPolicy(allow_network=True, allow_write=True)
+            result = backend.execute(["curl", "x"], policy)
+
+        assert mock_sb.run.call_count == 1
+        assert result.exit_code == 1
 
 
 # ---------- Shared result conversion ----------
