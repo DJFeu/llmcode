@@ -105,6 +105,18 @@ class Tool(ABC):
         """Return True if this operation is safe to run concurrently."""
         return False
 
+    def default_sandbox_policy(self):
+        """Return a per-tool default :class:`SandboxPolicy`, or ``None``.
+
+        F4 — Per-tool policy override. Tools that know their blast
+        radius (``read_file`` is read-only; ``bash`` typically needs
+        everything; ``web_fetch`` needs network but not writes) can
+        return a tightened policy here. The runtime reads this value
+        when dispatching through a :class:`SandboxBackend`; ``None``
+        means "caller picks".
+        """
+        return None
+
     def validate_input(self, args: dict) -> dict:
         """Validate args against input_model; return coerced dict or raise ValidationError."""
         model_cls = self.input_model
