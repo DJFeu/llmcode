@@ -643,6 +643,19 @@ class BashTool(Tool):
         If a Docker sandbox is configured and available, the command
         runs inside the container. Otherwise falls back to host exec.
         """
+        # M3: new SandboxBackend Protocol (pty / docker / bwrap / ...).
+        # Python 3.12's runtime Protocol refuses isinstance against
+        # Protocols with data-attribute members (``name: str`` here),
+        # so we duck-type: a backend exposes ``execute`` + ``name`` but
+        # none of the legacy DockerSandbox methods (``ensure_running``).
+        if (
+            self._sandbox is not None
+            and callable(getattr(self._sandbox, "execute", None))
+            and hasattr(self._sandbox, "name")
+            and not hasattr(self._sandbox, "ensure_running")
+        ):
+            return self._run_via_backend(command, timeout)
+
         # Try sandbox execution first
         if self._sandbox is not None and self._sandbox.is_available():
             if self._sandbox.ensure_running():
@@ -709,3 +722,59 @@ class BashTool(Tool):
             )
         except Exception as exc:
             return ToolResult(output=friendly_error(exc, command), is_error=True)
+
+    def _run_via_backend(self, command: str, timeout: int) -> ToolResult:
+        """M3 — route through a :class:`SandboxBackend` Protocol adapter.
+
+        Called when ``self._sandbox`` looks like a backend (``name`` +
+        ``execute``) rather than the legacy DockerSandbox shape. Uses
+        a workspace-scoped :class:`SandboxPolicy` (read + write +
+        network) because bash tools typically need all three; callers
+        who want a tighter policy can wrap the backend.
+        """
+        from llm_code.sandbox.policy_manager import SandboxPolicy
+
+        policy = SandboxPolicy(
+            allow_read=True,
+            allow_write=True,
+            allow_network=True,
+        )
+        try:
+            sb_result = self._sandbox.execute(["sh", "-c", command], policy)
+        except Exception as exc:
+            return ToolResult(
+                output=f"sandbox backend error: {exc}",
+                is_error=True,
+                metadata={"sandbox": getattr(self._sandbox, "name", "unknown")},
+            )
+
+        output = sb_result.stdout or ""
+        if sb_result.stderr:
+            if output:
+                output = (output + "\n" + sb_result.stderr).strip()
+            else:
+                output = sb_result.stderr
+        else:
+            output = output.rstrip("\n")
+
+        if len(output) > self._max_output:
+            output = (
+                output[: self._max_output]
+                + f"\n... [output truncated at {self._max_output} chars]"
+            )
+        output, findings = scan_output(output)
+        if findings:
+            _log.warning("Secrets redacted from bash output: %s", findings)
+
+        is_error = sb_result.exit_code != 0
+        if self._compress_output:
+            compressed = compress_output(command, output, is_error=is_error)
+            output = compressed.output
+        return ToolResult(
+            output=output or "(no output)",
+            is_error=is_error,
+            metadata={
+                "sandbox": getattr(self._sandbox, "name", "unknown"),
+                "exit_code": sb_result.exit_code,
+            },
+        )
