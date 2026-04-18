@@ -111,19 +111,43 @@ class _NullBackend:
         )
 
 
-def choose_backend() -> SandboxBackend:
-    """Pick the most appropriate adapter for the current platform.
+def choose_backend(config=None) -> SandboxBackend:
+    """Pick the most appropriate adapter for the given sandbox config.
 
-    Skeleton implementation: always returns the existing PTY wrapper
-    when available, else a :class:`_NullBackend`. Concrete bwrap /
-    seatbelt / docker adapters plug into this selector in follow-ups
-    without breaking callers.
+    Selection order:
+
+        1. ``config is None`` or ``config.enabled is False``
+           → :class:`_NullBackend` (legacy path keeps running).
+        2. ``config.enabled is True`` and Docker/Podman available
+           → :class:`DockerSandboxBackend`.
+        3. ``config.enabled is True`` but Docker unavailable
+           → :class:`PtySandboxBackend` (graceful fallback).
+
+    Each call returns a fresh backend instance — no global singletons
+    so parallel sessions never leak Docker container handles.
     """
-    # For now we route everything to a null backend — the PTY adapter
-    # doesn't yet implement the Protocol. Once it does, flip this.
-    system = platform.system().lower()
-    _ = system  # reserved for per-OS dispatch later
-    return _NullBackend()
+    if config is None or not getattr(config, "enabled", False):
+        return _NullBackend()
+
+    # Lazy import — adapters depend on external libs (ptyprocess,
+    # Docker subprocess path) that we don't want to force for
+    # every import of policy_manager.
+    from llm_code.sandbox.adapters import (
+        DockerSandboxBackend,
+        PtySandboxBackend,
+    )
+
+    try:
+        docker_backend = DockerSandboxBackend(config)
+        if docker_backend._sandbox.is_available():
+            return docker_backend
+    except Exception:
+        pass  # fall through to PTY
+
+    return PtySandboxBackend()
+
+
+_ = platform  # retained for future per-OS dispatch
 
 
 # ── H3 deep wire: translate SandboxConfig → SandboxPolicy ────────────
