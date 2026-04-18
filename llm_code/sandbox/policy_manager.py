@@ -146,30 +146,47 @@ class _NullBackend:
         )
 
 
+def _detect_platform() -> str:
+    """Return the effective platform string with WSL detection (F3).
+
+    WSL2 reports ``Linux`` via ``platform.system()`` on most builds so
+    the normal Linux chain picks up. We still check
+    ``/proc/sys/kernel/osrelease`` for ``microsoft`` / ``WSL`` so rare
+    hosts where CPython misreports Windows get upgraded to Linux and
+    route through Landlock / Bwrap instead of the Docker-or-null
+    Windows chain.
+    """
+    system = platform.system()
+    try:
+        with open("/proc/sys/kernel/osrelease") as fh:
+            release = fh.read().strip().lower()
+        if "microsoft" in release or "wsl" in release:
+            return "Linux"
+    except (OSError, FileNotFoundError):
+        pass
+    return system
+
+
 def choose_backend(config=None) -> SandboxBackend:
     """Pick the most appropriate sandbox adapter for this host.
 
-    Selection order (A1 — platform-aware):
+    Selection order (A1 / F3 — platform-aware + WSL detection):
 
         1. ``config is None`` or ``config.enabled is False``
            → :class:`_NullBackend`. Legacy code path stays untouched.
-        2. ``platform.system() == "Linux"``
-           → Landlock → Bwrap → Docker → PTY.
-        3. ``platform.system() == "Darwin"``
-           → Seatbelt → Docker → PTY.
-        4. ``platform.system() == "Windows"``
-           → Docker → _NullBackend (PTY not available).
+        2. Linux (including WSL2) → Landlock → Bwrap → Docker → PTY.
+        3. Darwin → Seatbelt → Docker → PTY.
+        4. Windows (bare) → Docker → _NullBackend (PTY not available).
         5. Any other platform → _NullBackend.
 
     Each call returns a fresh backend instance — no global singletons
     so parallel sessions never share Docker container handles. Each
-    constructor failure degrades quietly to the next candidate; callers
-    only see the best available one (or the null backend).
+    constructor failure degrades quietly to the next candidate.
     """
     if config is None or not getattr(config, "enabled", False):
         return _NullBackend()
 
-    system = platform.system()
+    system = _detect_platform()
     if system == "Linux":
         return _linux_priority(config)
     if system == "Darwin":
