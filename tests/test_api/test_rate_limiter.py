@@ -262,6 +262,82 @@ class TestRateLimitHandler:
         assert beats[0]["classification"] == RateLimitClassification.OVERLOAD.value
         assert beats[0]["overload_attempt"] == 1
 
+    @pytest.mark.asyncio
+    async def test_run_with_rate_limit_success_path(self) -> None:
+        from llm_code.api.rate_limiter import ExceptionTaxonomy, run_with_rate_limit
+
+        async def call():
+            return 42
+
+        handler = RateLimitHandler(request_kind=RequestKind.FOREGROUND)
+        result = await run_with_rate_limit(
+            call, handler, taxonomy=ExceptionTaxonomy(),
+        )
+        assert result == 42
+
+    @pytest.mark.asyncio
+    async def test_run_with_rate_limit_retries_then_succeeds(self) -> None:
+        from llm_code.api.rate_limiter import ExceptionTaxonomy, run_with_rate_limit
+
+        attempts = {"n": 0}
+
+        async def call():
+            attempts["n"] += 1
+            if attempts["n"] < 3:
+                raise FakeRateLimitError(retry_after=0.0)
+            return "ok"
+
+        async def no_sleep(_seconds: float) -> None:
+            pass
+
+        handler = RateLimitHandler(request_kind=RequestKind.FOREGROUND)
+        tax = ExceptionTaxonomy(
+            rate_limit_types=(FakeRateLimitError,),
+            permanent_types=(FakeAuthError,),
+        )
+        result = await run_with_rate_limit(call, handler, tax, sleep=no_sleep)
+        assert result == "ok"
+        assert attempts["n"] == 3
+        # Handler state reset on success
+        assert handler.attempt == 0
+
+    @pytest.mark.asyncio
+    async def test_run_with_rate_limit_permanent_reraises(self) -> None:
+        from llm_code.api.rate_limiter import ExceptionTaxonomy, run_with_rate_limit
+
+        async def call():
+            raise FakeAuthError("bad key")
+
+        handler = RateLimitHandler(request_kind=RequestKind.FOREGROUND)
+        tax = ExceptionTaxonomy(
+            rate_limit_types=(FakeRateLimitError,),
+            permanent_types=(FakeAuthError,),
+        )
+
+        async def no_sleep(_seconds: float) -> None:
+            pass
+
+        with pytest.raises(FakeAuthError):
+            await run_with_rate_limit(call, handler, tax, sleep=no_sleep)
+
+    @pytest.mark.asyncio
+    async def test_run_with_rate_limit_bg_bails_on_rate_limit(self) -> None:
+        from llm_code.api.rate_limiter import ExceptionTaxonomy, run_with_rate_limit
+
+        async def call():
+            raise FakeRateLimitError()
+
+        handler = RateLimitHandler(request_kind=RequestKind.BACKGROUND)
+        tax = ExceptionTaxonomy(rate_limit_types=(FakeRateLimitError,))
+
+        async def no_sleep(_seconds: float) -> None:
+            pass
+
+        # Background requests bail immediately on rate-limit — first
+        # decision is "don't retry" and the exception is re-raised.
+        with pytest.raises(FakeRateLimitError):
+            await run_with_rate_limit(call, handler, tax, sleep=no_sleep)
+
     def test_heartbeat_suppressed_under_interval(self) -> None:
         beats: list[dict] = []
 
@@ -287,3 +363,38 @@ class TestRateLimitHandler:
                        timeout_types=(FakeTimeoutError,),
                        permanent_types=(FakeAuthError,))
         assert len(beats) == 1
+
+
+# ---------- Provider taxonomies ----------
+
+
+class TestProviderTaxonomy:
+    def test_openai_compat_taxonomy_includes_provider_errors(self) -> None:
+        from llm_code.api.errors import (
+            ProviderAuthError,
+            ProviderOverloadError,
+            ProviderRateLimitError,
+        )
+        from llm_code.api.rate_limiter import provider_taxonomy_openai_compat
+
+        tax = provider_taxonomy_openai_compat()
+        assert ProviderRateLimitError in tax.rate_limit_types
+        assert ProviderOverloadError in tax.overload_types
+        assert ProviderAuthError in tax.permanent_types
+
+    def test_openai_compat_taxonomy_includes_httpx_transport(self) -> None:
+        import httpx
+
+        from llm_code.api.rate_limiter import provider_taxonomy_openai_compat
+
+        tax = provider_taxonomy_openai_compat()
+        assert httpx.ReadTimeout in tax.timeout_types
+        assert httpx.ConnectError in tax.connection_types
+
+    def test_anthropic_taxonomy_matches_shape(self) -> None:
+        from llm_code.api.errors import ProviderOverloadError
+        from llm_code.api.rate_limiter import provider_taxonomy_anthropic
+
+        tax = provider_taxonomy_anthropic()
+        assert ProviderOverloadError in tax.overload_types
+        assert len(tax.rate_limit_types) >= 1

@@ -31,10 +31,11 @@ screen instead of going silent for minutes.
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Sequence
+from typing import Any, Awaitable, Callable, Sequence, TypeVar
 
 
 # ── Enumerations ──────────────────────────────────────────────────────
@@ -370,3 +371,117 @@ class RateLimitHandler:
         except Exception:
             # Heartbeat callbacks must never crash the retry loop.
             pass
+
+
+# ── Provider-specific taxonomies ──────────────────────────────────────
+
+
+def provider_taxonomy_openai_compat() -> ExceptionTaxonomy:
+    """Exception classes raised by :mod:`llm_code.api.openai_compat`."""
+    from llm_code.api.errors import (
+        ProviderAuthError,
+        ProviderConnectionError,
+        ProviderModelNotFoundError,
+        ProviderOverloadError,
+        ProviderRateLimitError,
+        ProviderTimeoutError,
+    )
+    import httpx
+
+    return ExceptionTaxonomy(
+        rate_limit_types=(ProviderRateLimitError,),
+        overload_types=(ProviderOverloadError,),
+        connection_types=(ProviderConnectionError, httpx.ConnectError),
+        timeout_types=(
+            ProviderTimeoutError,
+            httpx.ReadTimeout,
+            httpx.ConnectTimeout,
+            httpx.WriteTimeout,
+            httpx.PoolTimeout,
+        ),
+        permanent_types=(ProviderAuthError, ProviderModelNotFoundError),
+    )
+
+
+def provider_taxonomy_anthropic() -> ExceptionTaxonomy:
+    """Exception classes raised by :mod:`llm_code.api.anthropic_provider`."""
+    from llm_code.api.errors import (
+        ProviderAuthError,
+        ProviderConnectionError,
+        ProviderModelNotFoundError,
+        ProviderOverloadError,
+        ProviderRateLimitError,
+        ProviderTimeoutError,
+    )
+    import httpx
+
+    return ExceptionTaxonomy(
+        rate_limit_types=(ProviderRateLimitError,),
+        overload_types=(ProviderOverloadError,),
+        connection_types=(ProviderConnectionError, httpx.ConnectError),
+        timeout_types=(
+            ProviderTimeoutError,
+            httpx.ReadTimeout,
+            httpx.ConnectTimeout,
+            httpx.WriteTimeout,
+            httpx.PoolTimeout,
+        ),
+        permanent_types=(ProviderAuthError, ProviderModelNotFoundError),
+    )
+
+
+# ── Async wrapper ─────────────────────────────────────────────────────
+
+T = TypeVar("T")
+
+
+async def run_with_rate_limit(
+    call: Callable[[], Awaitable[T]],
+    handler: RateLimitHandler,
+    taxonomy: ExceptionTaxonomy | None = None,
+    *,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> T:
+    """Loop ``call`` under ``handler``'s retry policy.
+
+    Each invocation runs ``call()``. On success the handler is reset
+    and the value returned. On exception the handler classifies it and
+    decides whether to retry; if so we await ``sleep(decision.sleep_seconds)``
+    and loop, otherwise the exception is re-raised.
+
+    ``sleep`` is parametrised so tests can inject a synchronous stub
+    without importing ``asyncio.sleep``.
+
+    Typical use (inside a provider)::
+
+        handler = RateLimitHandler(request_kind=RequestKind.FOREGROUND)
+        resp = await run_with_rate_limit(
+            lambda: self._client.post(url, json=payload),
+            handler,
+            taxonomy=provider_taxonomy_openai_compat(),
+        )
+    """
+    tax = taxonomy if taxonomy is not None else handler.taxonomy
+    if tax is None:
+        raise ValueError(
+            "run_with_rate_limit requires a taxonomy — pass one explicitly "
+            "or set handler.taxonomy."
+        )
+    while True:
+        try:
+            value = await call()
+        except BaseException as exc:
+            decision = handler.on_exception(
+                exc,
+                rate_limit_types=tax.rate_limit_types,
+                overload_types=tax.overload_types,
+                connection_types=tax.connection_types,
+                timeout_types=tax.timeout_types,
+                permanent_types=tax.permanent_types,
+            )
+            if not decision.retry:
+                raise
+            await sleep(decision.sleep_seconds)
+            continue
+        handler.record_success()
+        return value
