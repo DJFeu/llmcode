@@ -256,6 +256,39 @@ class TurnSummary:
 
 
 # ---------------------------------------------------------------------------
+# Sandbox lifecycle wire (F5-wire)
+# ---------------------------------------------------------------------------
+
+
+def _sandbox_lifecycle_on(runtime):
+    """Return the :class:`SandboxLifecycleManager` attached to
+    ``runtime``, lazily initialising it on first access.
+
+    Mirrors the ``_auto_compact_state`` / ``_permission_denial_tracker``
+    pattern so ``ConversationRuntime.__init__`` stays frozen — every
+    existing caller works without threading a new kwarg through.
+    """
+    mgr = getattr(runtime, "_sandbox_lifecycle", None)
+    if mgr is None:
+        from llm_code.sandbox.lifecycle import SandboxLifecycleManager
+        mgr = SandboxLifecycleManager()
+        runtime._sandbox_lifecycle = mgr
+    return mgr
+
+
+def shutdown_sandbox_lifecycle(runtime) -> None:
+    """Close every backend registered on ``runtime``'s lifecycle.
+
+    Safe to call on a runtime that never touched a backend — absent
+    attribute is a no-op. Safe to call twice (idempotent close_all).
+    """
+    mgr = getattr(runtime, "_sandbox_lifecycle", None)
+    if mgr is None:
+        return
+    mgr.close_all()
+
+
+# ---------------------------------------------------------------------------
 # ConversationRuntime
 # ---------------------------------------------------------------------------
 

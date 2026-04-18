@@ -167,7 +167,7 @@ def _detect_platform() -> str:
     return system
 
 
-def choose_backend(config=None) -> SandboxBackend:
+def choose_backend(config=None, *, lifecycle=None) -> SandboxBackend:
     """Pick the most appropriate sandbox adapter for this host.
 
     Selection order (A1 / F3 — platform-aware + WSL detection):
@@ -182,18 +182,28 @@ def choose_backend(config=None) -> SandboxBackend:
     Each call returns a fresh backend instance — no global singletons
     so parallel sessions never share Docker container handles. Each
     constructor failure degrades quietly to the next candidate.
+
+    F5-wire: when ``lifecycle`` is supplied, the selected backend is
+    auto-registered on the manager so session teardown can close it.
     """
     if config is None or not getattr(config, "enabled", False):
-        return _NullBackend()
-
-    system = _detect_platform()
-    if system == "Linux":
-        return _linux_priority(config)
-    if system == "Darwin":
-        return _darwin_priority(config)
-    if system == "Windows":
-        return _windows_priority(config)
-    return _NullBackend()
+        backend = _NullBackend()
+    else:
+        system = _detect_platform()
+        if system == "Linux":
+            backend = _linux_priority(config)
+        elif system == "Darwin":
+            backend = _darwin_priority(config)
+        elif system == "Windows":
+            backend = _windows_priority(config)
+        else:
+            backend = _NullBackend()
+    if lifecycle is not None:
+        try:
+            lifecycle.register(backend)
+        except Exception:
+            pass  # registration failure shouldn't mask backend creation
+    return backend
 
 
 def _try(factory, *args, **kwargs):
