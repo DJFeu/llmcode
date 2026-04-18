@@ -124,3 +124,65 @@ def choose_backend() -> SandboxBackend:
     system = platform.system().lower()
     _ = system  # reserved for per-OS dispatch later
     return _NullBackend()
+
+
+# ── H3 deep wire: translate SandboxConfig → SandboxPolicy ────────────
+
+# Tool names we know are purely read-only. Resolver clamps destructive
+# bits off for these even when the config otherwise allows writes, so
+# a misconfigured sandbox never escalates a ``grep`` call into a
+# write-capable one.
+READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset({
+    "read_file",
+    "glob_search",
+    "grep_search",
+    "git_status",
+    "git_diff",
+    "git_log",
+    "lsp_goto_definition",
+    "lsp_find_references",
+    "lsp_diagnostics",
+    "lsp_hover",
+    "lsp_document_symbol",
+    "lsp_workspace_symbol",
+    "memory_recall",
+    "memory_list",
+})
+
+
+class SandboxPolicyResolver:
+    """Maps the existing :class:`SandboxConfig` to a :class:`SandboxPolicy`.
+
+    ``SandboxConfig`` describes the Docker-specific tunables
+    (image, mounts, cpu/memory limits); ``SandboxPolicy`` is the
+    platform-agnostic view the runtime reads before dispatching a tool.
+    When the sandbox is disabled the resolver returns ``None`` so the
+    legacy PTY path keeps running untouched.
+    """
+
+    def __init__(self, config) -> None:
+        self._config = config
+
+    def resolve_for_tool(
+        self,
+        tool_name: str,
+        args: dict,  # noqa: ARG002 — reserved for per-call policy later
+    ) -> SandboxPolicy | None:
+        cfg = self._config
+        if not getattr(cfg, "enabled", False):
+            return None
+
+        # Base policy from the SandboxConfig: mount_readonly controls
+        # write, network controls network; read stays on.
+        allow_write = not bool(getattr(cfg, "mount_readonly", False))
+        allow_network = bool(getattr(cfg, "network", False))
+
+        # Clamp to least privilege for known read-only tools.
+        if tool_name in READ_ONLY_TOOL_NAMES:
+            allow_write = False
+
+        return SandboxPolicy(
+            allow_read=True,
+            allow_write=allow_write,
+            allow_network=allow_network,
+        )
