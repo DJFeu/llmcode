@@ -124,6 +124,135 @@ _BUILTIN_PROFILES: dict[str, ModelProfile] = {
         context_window=32768,
     ),
 
+    # ── Qwen cloud flagships (ModelStudio / Dashscope OpenAI-compat) ──
+    # Source: qwen-code README + packages/core/src/core/openaiContentGenerator/
+    # qwen3.6-plus went live 2026-04-02; qwen3.5-plus went live 2026-02-16.
+    "qwen3.6-plus": ModelProfile(
+        name="Qwen3.6-Plus",
+        provider_type="openai-compat",
+        native_tools=True,
+        supports_reasoning=True,
+        supports_images=False,
+        force_xml_tools=False,
+        implicit_thinking=False,
+        reasoning_field="reasoning_content",
+        thinking_extra_body_format="chat_template_kwargs",
+        default_thinking_budget=16384,
+        default_temperature=0.55,
+        reasoning_effort="high",
+        is_local=False,
+        context_window=262144,
+        max_output_tokens=16384,
+    ),
+    "qwen3.5-plus": ModelProfile(
+        name="Qwen3.5-Plus",
+        provider_type="openai-compat",
+        native_tools=True,
+        supports_reasoning=True,
+        supports_images=False,
+        force_xml_tools=False,
+        implicit_thinking=False,
+        reasoning_field="reasoning_content",
+        thinking_extra_body_format="chat_template_kwargs",
+        default_thinking_budget=16384,
+        default_temperature=0.55,
+        reasoning_effort="medium",
+        is_local=False,
+        context_window=262144,
+        max_output_tokens=16384,
+    ),
+    "qwen3-max": ModelProfile(
+        name="Qwen3-Max",
+        provider_type="openai-compat",
+        native_tools=True,
+        supports_reasoning=False,
+        supports_images=False,
+        default_temperature=0.55,
+        is_local=False,
+        # dashscope.test.ts documents the 32K output clamp for qwen3-max
+        max_output_tokens=32768,
+        context_window=262144,
+    ),
+    "qwen3-vl-plus": ModelProfile(
+        name="Qwen3-VL-Plus",
+        provider_type="openai-compat",
+        native_tools=True,
+        supports_reasoning=False,
+        supports_images=True,
+        default_temperature=0.55,
+        is_local=False,
+        context_window=131072,
+        max_output_tokens=8192,
+    ),
+
+    # ── Qwen3-Coder family ───────────────────────────────────────────
+    # qwen-code packages/core/src/core/tokenLimits.ts records:
+    #   qwen3-coder-plus / -flash / -plus-20250601  → 1,000,000
+    #   qwen3-coder-7b  / qwen3-coder-next          →   262,144
+    # Cloud "-plus" / "-flash" variants run through the Dashscope
+    # OpenAI-compat endpoint (native tools). Bare "qwen3-coder" +
+    # sized variants (30ba3b, 480a35, 7b) are the open-source weights
+    # users self-host on vLLM/Ollama/LM Studio — force XML + implicit
+    # thinking, matching the existing qwen3.5-122b pattern.
+    "qwen3-coder-plus": ModelProfile(
+        name="Qwen3-Coder-Plus",
+        provider_type="openai-compat",
+        native_tools=True,
+        supports_reasoning=False,
+        force_xml_tools=False,
+        default_temperature=0.55,
+        is_local=False,
+        context_window=1_000_000,
+        max_output_tokens=16384,
+    ),
+    "qwen3-coder-flash": ModelProfile(
+        name="Qwen3-Coder-Flash",
+        provider_type="openai-compat",
+        native_tools=True,
+        supports_reasoning=False,
+        force_xml_tools=False,
+        default_temperature=0.55,
+        is_local=False,
+        is_small_model=True,
+        context_window=1_000_000,
+        max_output_tokens=8192,
+    ),
+    "qwen3-coder-7b": ModelProfile(
+        name="Qwen3-Coder-7B",
+        provider_type="openai-compat",
+        native_tools=False,
+        supports_reasoning=True,
+        force_xml_tools=True,
+        implicit_thinking=True,
+        reasoning_field="reasoning_content",
+        thinking_extra_body_format="chat_template_kwargs",
+        default_thinking_budget=8192,
+        default_temperature=0.55,
+        reasoning_effort="medium",
+        is_local=True,
+        is_small_model=True,
+        context_window=262144,
+        max_output_tokens=8192,
+    ),
+    "qwen3-coder": ModelProfile(
+        # Generic fallback for self-hosted OSS variants: qwen3-coder-30ba3b,
+        # qwen3-coder-480a35, qwen3-coder-next, and any future sized drops.
+        name="Qwen3-Coder (OSS)",
+        provider_type="openai-compat",
+        native_tools=False,
+        supports_reasoning=True,
+        force_xml_tools=True,
+        implicit_thinking=True,
+        reasoning_field="reasoning_content",
+        thinking_extra_body_format="chat_template_kwargs",
+        default_thinking_budget=12288,
+        default_temperature=0.55,
+        reasoning_effort="medium",
+        is_local=True,
+        context_window=262144,
+        max_output_tokens=8192,
+    ),
+
     # ── Anthropic family ──────────────────────────────────────────────
     "claude-opus-4-6": ModelProfile(
         name="Claude Opus 4.6",
