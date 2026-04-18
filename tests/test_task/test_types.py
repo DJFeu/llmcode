@@ -21,7 +21,10 @@ class TestTaskStatus:
         assert TaskStatus.BLOCKED.value == "blocked"
 
     def test_all_statuses_count(self):
-        assert len(TaskStatus) == 6
+        # Updated for H5a (Sprint 3) — PENDING_APPROVAL added alongside
+        # the six legacy states. Old session files keep round-tripping
+        # because the original six enum values are preserved.
+        assert len(TaskStatus) == 7
 
 
 class TestCheckResult:

@@ -13,6 +13,54 @@ class TaskStatus(Enum):
     CLOSE = "close"
     DONE = "done"
     BLOCKED = "blocked"
+    # H5a — Sprint 3: explicit state for "waiting on external approval"
+    # (interactive prompt, enterprise gate, async hook). Previously this
+    # was conflated with DO, which made diagnostics harder.
+    PENDING_APPROVAL = "pending_approval"
+
+
+class TaskTransition:
+    """Guard table for :class:`TaskStatus` transitions.
+
+    The table is intentionally lenient on recovery from BLOCKED —
+    operators should be able to resume from any non-terminal state
+    after unblocking a dependency. Same-state transitions are
+    implicitly legal (no-op) so callers don't have to special-case
+    ``status == new_status``.
+    """
+
+    VALID_TRANSITIONS: dict["TaskStatus", frozenset["TaskStatus"]] = {
+        # Forward declarations resolved after class body — populated below.
+    }
+
+    @classmethod
+    def is_valid(cls, from_state: "TaskStatus", to_state: "TaskStatus") -> bool:
+        if from_state is to_state:
+            return True
+        return to_state in cls.VALID_TRANSITIONS.get(from_state, frozenset())
+
+    @classmethod
+    def allowed_targets(cls, from_state: "TaskStatus") -> frozenset["TaskStatus"]:
+        return cls.VALID_TRANSITIONS.get(from_state, frozenset())
+
+
+# Table populated after the class body so ``TaskStatus`` members are
+# available. Kept outside ``__init__`` so it stays truly constant.
+TaskTransition.VALID_TRANSITIONS = {
+    TaskStatus.PLAN: frozenset({TaskStatus.DO, TaskStatus.BLOCKED}),
+    TaskStatus.DO: frozenset({
+        TaskStatus.VERIFY, TaskStatus.PENDING_APPROVAL, TaskStatus.BLOCKED,
+    }),
+    TaskStatus.PENDING_APPROVAL: frozenset({TaskStatus.DO, TaskStatus.BLOCKED}),
+    TaskStatus.VERIFY: frozenset({
+        TaskStatus.CLOSE, TaskStatus.DO, TaskStatus.BLOCKED,
+    }),
+    TaskStatus.CLOSE: frozenset({TaskStatus.DONE, TaskStatus.BLOCKED}),
+    TaskStatus.DONE: frozenset(),  # terminal
+    TaskStatus.BLOCKED: frozenset({
+        TaskStatus.PLAN, TaskStatus.DO, TaskStatus.VERIFY,
+    }),
+}
 
 
 @dataclasses.dataclass(frozen=True)
