@@ -19,6 +19,10 @@ from llm_code.api.types import (
     StreamToolProgress,
     ToolResultBlock,
 )
+from llm_code.runtime.permission_denial_tracker import (
+    DenialSource,
+    PermissionDenialTracker,
+)
 from llm_code.runtime.permissions import PermissionOutcome
 from llm_code.tools.base import PermissionLevel, ToolResult
 
@@ -45,6 +49,39 @@ def _merge_hook_extra_output(result: ToolResult, outcome: Any) -> ToolResult:
         is_error=result.is_error,
         metadata=result.metadata,
     )
+
+
+def _record_denial(
+    runtime: Any,
+    *,
+    tool_name: str,
+    tool_use_id: str,
+    input: dict,
+    reason: str,
+    source: DenialSource,
+) -> None:
+    """Record a denied tool call on the runtime's denial tracker.
+
+    Lazily initialises ``runtime._permission_denial_tracker`` — mirrors the
+    C4 pattern for ``_auto_compact_state`` so ``ConversationRuntime.__init__``
+    doesn't need to change. Swallows any tracker-side error because deny
+    branches are already on the failure path and we must not mask the
+    original permission outcome.
+    """
+    try:
+        tracker = getattr(runtime, "_permission_denial_tracker", None)
+        if tracker is None:
+            tracker = PermissionDenialTracker()
+            runtime._permission_denial_tracker = tracker
+        tracker.record(
+            tool_name=tool_name,
+            tool_use_id=tool_use_id,
+            input=input,
+            reason=reason,
+            source=source,
+        )
+    except Exception:  # pragma: no cover - defensive
+        logger.debug("_record_denial swallowed tracker error", exc_info=True)
 
 
 class ToolExecutionPipeline:
@@ -94,6 +131,14 @@ class ToolExecutionPipeline:
                     _subagent_role.name,
                 )
                 rt._fire_hook("tool_denied", {"tool_name": call.name})
+                _record_denial(
+                    rt,
+                    tool_name=call.name,
+                    tool_use_id=call.id,
+                    input=call.args,
+                    reason=f"role {_subagent_role.name} cannot use tool {call.name}",
+                    source=DenialSource.POLICY,
+                )
                 yield ToolResultBlock(
                     tool_use_id=call.id,
                     content=(
@@ -125,6 +170,14 @@ class ToolExecutionPipeline:
             safety = tool.classify(validated_args)
             if safety.is_blocked:
                 rt._fire_hook("tool_denied", {"tool_name": call.name})
+                _record_denial(
+                    rt,
+                    tool_name=call.name,
+                    tool_use_id=call.id,
+                    input=validated_args,
+                    reason=f"safety classifier blocked: {'; '.join(safety.reasons)}",
+                    source=DenialSource.POLICY,
+                )
                 yield ToolResultBlock(
                     tool_use_id=call.id,
                     content=f"Dangerous command blocked: {'; '.join(safety.reasons)}",
@@ -143,6 +196,14 @@ class ToolExecutionPipeline:
         denial_msg = rt._harness.check_pre_tool(call.name)
         if denial_msg:
             rt._fire_hook("tool_denied", {"tool_name": call.name})
+            _record_denial(
+                rt,
+                tool_name=call.name,
+                tool_use_id=call.id,
+                input=validated_args,
+                reason=f"plan mode: {denial_msg}",
+                source=DenialSource.POLICY,
+            )
             yield ToolResultBlock(
                 tool_use_id=call.id,
                 content=denial_msg,
@@ -159,6 +220,17 @@ class ToolExecutionPipeline:
 
         if outcome == PermissionOutcome.DENY:
             rt._fire_hook("tool_denied", {"tool_name": call.name})
+            _record_denial(
+                rt,
+                tool_name=call.name,
+                tool_use_id=call.id,
+                input=validated_args,
+                reason=(
+                    f"permission policy denied (required={tool.required_permission.name}, "
+                    f"effective={effective.name})"
+                ),
+                source=DenialSource.POLICY,
+            )
             yield ToolResultBlock(
                 tool_use_id=call.id,
                 content=f"Permission denied for tool '{call.name}'",
@@ -264,6 +336,14 @@ class ToolExecutionPipeline:
                         except Exception:
                             pass
                     rt._fire_hook("tool_denied", {"tool_name": call.name})
+                    _record_denial(
+                        rt,
+                        tool_name=call.name,
+                        tool_use_id=call.id,
+                        input=validated_args,
+                        reason=f"user rejected interactive prompt (response={response!r})",
+                        source=DenialSource.USER,
+                    )
                     yield ToolResultBlock(
                         tool_use_id=call.id,
                         content=f"Tool '{call.name}' denied by user",
@@ -286,6 +366,18 @@ class ToolExecutionPipeline:
             if hasattr(hook_result, "__await__"):
                 hook_result = await hook_result
             if hasattr(hook_result, "denied") and hook_result.denied:
+                _hook_reason = (
+                    "; ".join(getattr(hook_result, "messages", ()) or ())
+                    or "pre_tool_use hook denied"
+                )
+                _record_denial(
+                    rt,
+                    tool_name=call.name,
+                    tool_use_id=call.id,
+                    input=args,
+                    reason=_hook_reason,
+                    source=DenialSource.HOOK,
+                )
                 yield ToolResultBlock(
                     tool_use_id=call.id,
                     content=f"Tool '{call.name}' blocked by hook",
