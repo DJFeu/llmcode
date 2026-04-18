@@ -1,0 +1,5 @@
+{
+  "cold_import_model_profile_median_s": 0.05964635400005136,
+  "profile_resolve_1000_calls_median_s": 0.0018961040004796814,
+  "registry_get_10k_calls_median_s": 0.0003831250005532638
+}
