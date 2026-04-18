@@ -17,6 +17,30 @@ if TYPE_CHECKING:
 _MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB
 
 
+def _err_result(output: str, *, code: str, file_path: str = "", **context) -> ToolResult:
+    """Return a ToolResult carrying a structured LLMCodeError in metadata.
+
+    Keeps the human-readable ``output`` intact for any caller that
+    only reads the string, but new callers (SDK, /diagnose, enterprise
+    audit) can pull ``metadata["llmcode_error"]`` for the typed error.
+    """
+    from llm_code.error_model import ErrorSeverity, LLMCodeError, SourceLocation
+
+    location = SourceLocation(file_path=file_path) if file_path else None
+    err = LLMCodeError(
+        code=code,
+        message=output,
+        severity=ErrorSeverity.ERROR,
+        location=location,
+        context=dict(context),
+    )
+    return ToolResult(
+        output=output,
+        is_error=True,
+        metadata=err.to_tool_metadata(),
+    )
+
+
 @dataclass(frozen=True)
 class EditApplyResult:
     """Result of applying a search-and-replace edit to content."""
@@ -116,7 +140,11 @@ class EditFileTool(Tool):
         # File size guard (real FS only — overlay has no on-disk size)
         if overlay is None:
             if not path.exists():
-                return ToolResult(output=f"File not found: {path}", is_error=True)
+                return _err_result(
+                    f"File not found: {path}",
+                    code="E_FILE_NOT_FOUND",
+                    file_path=str(path),
+                )
             # Single stat call — capture both size and mtime together.
             st = path.stat()
             if st.st_size > _MAX_FILE_BYTES:
@@ -139,9 +167,12 @@ class EditFileTool(Tool):
 
         result = _apply_edit(content, old, new, replace_all)
         if not result.success:
-            return ToolResult(
-                output=f"Text not found in {path}: {old!r}",
-                is_error=True,
+            return _err_result(
+                f"Text not found in {path}: {old!r}",
+                code="E_PATCH_NO_MATCH",
+                file_path=str(path),
+                old_preview=old[:120],
+                replace_all=replace_all,
             )
         new_content = result.new_content
         replaced = result.replaced
