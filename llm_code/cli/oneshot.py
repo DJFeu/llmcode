@@ -157,9 +157,16 @@ def run_quick_mode(
 
     provider = _create_provider(config)
     registry = ToolRegistry()
+
+    # F5-wire-3: session-scoped lifecycle manager collects every
+    # sandbox backend handed to a tool so we can close them all in
+    # the finally block below.
+    from llm_code.sandbox.lifecycle import SandboxLifecycleManager
+    lifecycle = SandboxLifecycleManager()
+
     # Register the same collaborator-free core tool set as the REPL boot
     # path for parity between one-shot and interactive modes.
-    register_core_tools(registry, config)
+    register_core_tools(registry, config, lifecycle=lifecycle)
 
     cwd = Path.cwd()
     mode_map = {
@@ -185,6 +192,9 @@ def run_quick_mode(
             cwd=cwd, is_git_repo=False, git_status="", instructions=""
         ),
     )
+    # F5-wire-3: hand the manager populated above to the runtime so
+    # ``runtime.shutdown()`` closes every registered backend.
+    runtime._sandbox_lifecycle = lifecycle
 
     async def _drive() -> str:
         events = await runtime.run_one_turn(full_prompt)
@@ -194,5 +204,10 @@ def run_quick_mode(
                 parts.append(ev.text)
         return "".join(parts)
 
-    visible = asyncio.run(_drive())
-    print(visible)
+    try:
+        visible = asyncio.run(_drive())
+        print(visible)
+    finally:
+        # F5-wire-3: close any sandbox backend this one-shot opened.
+        # No-op when nothing was registered (close_all is defensive).
+        runtime.shutdown()
