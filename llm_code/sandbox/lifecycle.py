@@ -52,6 +52,44 @@ class SandboxLifecycleManager:
             except Exception:
                 pass  # teardown must not raise — caller has nothing to do
 
+    # --- Diagnostic report --------------------------------------------
+
+    def report(self) -> dict:
+        """JSON-safe snapshot suitable for ``/diagnose`` output.
+
+        Shape::
+
+            {
+              "registered": int,   # total backends ever handed to register()
+              "closed":     int,   # how many of those close_all() visited
+              "open":       int,   # registered - closed
+              "backends":   [
+                {"name": str, "class": str, "closed": bool},
+                ...
+              ],
+            }
+
+        Unnamed objects (anything without a ``name`` attribute) fall
+        back to the Python class as label so the report stays
+        populated for bare mocks / stubs.
+        """
+        entries: list[dict] = []
+        for backend in self._backends:
+            name = getattr(backend, "name", None)
+            if not isinstance(name, str) or not name:
+                name = type(backend).__name__
+            entries.append({
+                "name": name,
+                "class": type(backend).__name__,
+                "closed": id(backend) in self._closed,
+            })
+        return {
+            "registered": len(self._backends),
+            "closed": len(self._closed),
+            "open": len(self._backends) - len(self._closed),
+            "backends": entries,
+        }
+
     # --- Context-manager sugar ----------------------------------------
 
     def __enter__(self) -> "SandboxLifecycleManager":
