@@ -133,6 +133,39 @@ class HookRunner:
         self._hooks = hooks
         # Python-callable subscriptions: event -> list of callables(event, context) -> None | HookOutcome
         self._subscribers: dict[str, list] = {}
+        # H1 wire — optional HookLifecycleRegistry for async-hook tracking.
+        # None (default) keeps the synchronous fire path behaviour
+        # identical to the pre-wire runner. Callers opt in via
+        # :meth:`wire_lifecycle` when they need pending-hook visibility.
+        self._lifecycle = None  # type: ignore[var-annotated]
+
+    # -- H1 wire: lifecycle attachment ----------------------------------
+
+    @property
+    def lifecycle(self):
+        """Attached :class:`HookLifecycleRegistry` or ``None``."""
+        return self._lifecycle
+
+    def wire_lifecycle(self, registry) -> None:
+        """Attach (or replace) a :class:`HookLifecycleRegistry`.
+
+        Calling twice replaces the previous registry — callers
+        orchestrating multi-session lifecycles can swap at will.
+        """
+        self._lifecycle = registry
+
+    def debug_report(self) -> dict:
+        """Aggregate hook / lifecycle state for ``/diagnose`` output."""
+        total_subscribers = sum(len(cbs) for cbs in self._subscribers.values())
+        report: dict = {
+            "subscriber_event_count": len(self._subscribers),
+            "subscriber_total_count": total_subscribers,
+            "shell_hook_count": len(self._hooks),
+            "lifecycle": None,
+        }
+        if self._lifecycle is not None:
+            report["lifecycle"] = self._lifecycle.report()
+        return report
 
     def subscribe(self, event: str, callback) -> None:
         """Subscribe a Python callable to *event*.
