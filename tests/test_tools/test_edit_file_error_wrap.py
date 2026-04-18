@@ -71,6 +71,100 @@ class TestSuccessPathHasNoError:
         assert _llmcode_err(result) is None
 
 
+class TestRemainingFailureSitesWrapped:
+    """M1 — wire the remaining edit_file failure paths so every
+    is_error=True result carries a structured ``llmcode_error``."""
+
+    def test_protection_denied_has_structured_error(
+        self, tmp_path: Path, tool: EditFileTool, monkeypatch,
+    ) -> None:
+        path = tmp_path / "secret.env"
+        path.write_text("x=y\n")
+
+        class _Denied:
+            allowed = False
+            reason = "writes to .env blocked by policy"
+            severity = "block"
+
+        monkeypatch.setattr(
+            "llm_code.tools.edit_file.check_write",
+            lambda _p: _Denied(),
+        )
+        result = tool.execute({"path": str(path), "old": "x=y", "new": "x=z"})
+        assert result.is_error is True
+        err = _llmcode_err(result)
+        assert err is not None
+        assert err["code"] == "E_FILE_WRITE_FORBIDDEN"
+        assert err["location"]["file_path"] == str(path)
+        assert "policy" in err["message"]
+
+    def test_file_too_large_has_structured_error(
+        self, tmp_path: Path, tool: EditFileTool, monkeypatch,
+    ) -> None:
+        path = tmp_path / "big.txt"
+        path.write_text("tiny")
+        real_stat = type(path).stat
+
+        class _FakeStat:
+            def __init__(self, size, mtime):
+                self.st_size = size
+                self.st_mtime = mtime
+
+        def _stat(self, *args, **kwargs):  # noqa: ARG001
+            r = real_stat(self)
+            return _FakeStat(10_000_000_000, r.st_mtime)
+
+        monkeypatch.setattr(type(path), "stat", _stat)
+        result = tool.execute({"path": str(path), "old": "tiny", "new": "small"})
+        assert result.is_error is True
+        err = _llmcode_err(result)
+        assert err is not None
+        assert err["code"] == "E_FILE_TOO_LARGE"
+        assert err["context"]["size_bytes"] == 10_000_000_000
+
+    def test_read_permission_error_has_structured_error(
+        self, tmp_path: Path, tool: EditFileTool, monkeypatch,
+    ) -> None:
+        path = tmp_path / "locked.py"
+        path.write_text("x\n")
+
+        def _boom(self, *args, **kwargs):  # noqa: ARG001
+            raise PermissionError("Permission denied")
+
+        monkeypatch.setattr(type(path), "read_text", _boom)
+        result = tool.execute({"path": str(path), "old": "x", "new": "y"})
+        assert result.is_error is True
+        err = _llmcode_err(result)
+        assert err is not None
+        assert err["code"] == "E_FILE_READ_FAILED"
+
+    def test_mtime_conflict_has_structured_error(
+        self, tmp_path: Path, tool: EditFileTool, monkeypatch,
+    ) -> None:
+        import os
+
+        path = tmp_path / "race.py"
+        path.write_text("v1")
+        first_mtime = path.stat().st_mtime
+        # Force read_text to bump the on-disk mtime so the pre-write
+        # conflict check sees "changed after we read it".
+        original_read = type(path).read_text
+
+        def racing_read(self, *args, **kwargs):
+            content = original_read(self, *args, **kwargs)
+            os.utime(str(self), (first_mtime + 10, first_mtime + 10))
+            return content
+
+        monkeypatch.setattr(type(path), "read_text", racing_read)
+
+        result = tool.execute({"path": str(path), "old": "v1", "new": "v2"})
+        assert result.is_error is True
+        err = _llmcode_err(result)
+        assert err is not None
+        assert err["code"] == "E_FILE_MODIFIED_EXTERNALLY"
+        assert err["location"]["file_path"] == str(path)
+
+
 class TestLLMCodeErrorToolMetadataHelper:
     """The helper on LLMCodeError that builds a dict suitable for
     ToolResult.metadata. Separate test so the contract is discoverable

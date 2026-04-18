@@ -134,7 +134,12 @@ class EditFileTool(Tool):
 
         protection = check_write(str(path))
         if not protection.allowed:
-            return ToolResult(output=protection.reason, is_error=True)
+            return _err_result(
+                protection.reason,
+                code="E_FILE_WRITE_FORBIDDEN",
+                file_path=str(path),
+                severity=getattr(protection, "severity", "block"),
+            )
         warning_prefix = f"[WARNING] {protection.reason}\n" if protection.severity == "warn" else ""
 
         # File size guard (real FS only — overlay has no on-disk size)
@@ -148,21 +153,34 @@ class EditFileTool(Tool):
             # Single stat call — capture both size and mtime together.
             st = path.stat()
             if st.st_size > _MAX_FILE_BYTES:
-                return ToolResult(
-                    output=f"File too large ({st.st_size} bytes, limit {_MAX_FILE_BYTES}): {path}",
-                    is_error=True,
+                return _err_result(
+                    f"File too large ({st.st_size} bytes, limit {_MAX_FILE_BYTES}): {path}",
+                    code="E_FILE_TOO_LARGE",
+                    file_path=str(path),
+                    size_bytes=st.st_size,
+                    limit_bytes=_MAX_FILE_BYTES,
                 )
             # Record mtime before read for conflict detection
             mtime_before = st.st_mtime
             try:
                 content = path.read_text()
             except (PermissionError, OSError) as exc:
-                return ToolResult(output=friendly_error(exc, str(path)), is_error=True)
+                return _err_result(
+                    friendly_error(exc, str(path)),
+                    code="E_FILE_READ_FAILED",
+                    file_path=str(path),
+                    errno=getattr(exc, "errno", None),
+                )
         else:
             try:
                 content = overlay.read(path)
             except FileNotFoundError:
-                return ToolResult(output=f"File not found: {path}", is_error=True)
+                return _err_result(
+                    f"File not found: {path}",
+                    code="E_FILE_NOT_FOUND",
+                    file_path=str(path),
+                    source="overlay",
+                )
             mtime_before = None
 
         result = _apply_edit(content, old, new, replace_all)
@@ -182,9 +200,12 @@ class EditFileTool(Tool):
         if overlay is None and mtime_before is not None:
             current_mtime = path.stat().st_mtime
             if current_mtime != mtime_before:
-                return ToolResult(
-                    output=f"File was modified externally since last read: {path}",
-                    is_error=True,
+                return _err_result(
+                    f"File was modified externally since last read: {path}",
+                    code="E_FILE_MODIFIED_EXTERNALLY",
+                    file_path=str(path),
+                    mtime_before=mtime_before,
+                    mtime_after=current_mtime,
                 )
             path.write_text(new_content)
         elif overlay is not None:
