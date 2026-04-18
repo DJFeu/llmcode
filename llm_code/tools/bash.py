@@ -489,6 +489,16 @@ class BashTool(Tool):
     def is_concurrency_safe(self, args: dict) -> bool:
         return self.is_read_only(args)
 
+    def default_sandbox_policy(self):
+        """F4 — Bash needs read + write + network by default.
+
+        Subclasses can tighten this for read-only / no-network wrappers.
+        """
+        from llm_code.sandbox.policy_manager import SandboxPolicy
+        return SandboxPolicy(
+            allow_read=True, allow_write=True, allow_network=True,
+        )
+
     def execute(self, args: dict) -> ToolResult:
         command: str = args["command"]
         _raw_timeout = int(args.get("timeout", self._default_timeout))
@@ -531,6 +541,19 @@ class BashTool(Tool):
         command: str = args["command"]
         _raw_timeout = int(args.get("timeout", self._default_timeout))
         timeout: int | None = None if _raw_timeout <= 0 else _raw_timeout
+
+        # F2: route to streaming backend when available. Same duck-type
+        # contract as ``_run`` — backend exposes execute + name but
+        # not the legacy DockerSandbox ``ensure_running``.
+        if (
+            self._sandbox is not None
+            and callable(getattr(self._sandbox, "execute_streaming", None))
+            and hasattr(self._sandbox, "name")
+            and not hasattr(self._sandbox, "ensure_running")
+        ):
+            return self._run_with_progress_via_backend(
+                command, on_progress, timeout,
+            )
 
         try:
             proc = subprocess.Popen(
@@ -722,6 +745,79 @@ class BashTool(Tool):
             )
         except Exception as exc:
             return ToolResult(output=friendly_error(exc, command), is_error=True)
+
+    def _run_with_progress_via_backend(
+        self,
+        command: str,
+        on_progress: Callable[[ToolProgress], None],
+        timeout: int | None,
+    ) -> ToolResult:
+        """F2 — stream output through a :class:`StreamingSandboxBackend`.
+
+        Translates each ``on_chunk(text)`` emitted by the backend into a
+        :class:`ToolProgress` event for the caller's UI. Result goes
+        through the same secret-scan + compression pipeline as the
+        legacy path so downstream consumers see one shape.
+        """
+        from llm_code.sandbox.policy_manager import SandboxPolicy
+
+        # F4: consult tool's per-tool policy; fall back to workspace+net.
+        policy = self.default_sandbox_policy() or SandboxPolicy(
+            allow_read=True, allow_write=True, allow_network=True,
+        )
+
+        def _on_chunk(chunk: str) -> None:
+            # Trim the progress message so a megabyte build log
+            # doesn't explode the TUI — full text lives in the final
+            # ToolResult.output.
+            try:
+                on_progress(ToolProgress(
+                    tool_name="bash",
+                    message=(chunk.strip() or "…")[:200],
+                ))
+            except Exception:
+                pass  # caller bug must not wedge exec
+
+        try:
+            sb_result = self._sandbox.execute_streaming(
+                ["sh", "-c", command], policy, on_chunk=_on_chunk,
+            )
+        except Exception as exc:
+            return ToolResult(
+                output=f"sandbox backend error: {exc}",
+                is_error=True,
+                metadata={"sandbox": getattr(self._sandbox, "name", "unknown")},
+            )
+
+        output = sb_result.stdout or ""
+        if sb_result.stderr:
+            output = (
+                (output + "\n" + sb_result.stderr).strip()
+                if output else sb_result.stderr
+            )
+        else:
+            output = output.rstrip("\n")
+
+        if len(output) > self._max_output:
+            output = (
+                output[: self._max_output]
+                + f"\n... [output truncated at {self._max_output} chars]"
+            )
+        output, findings = scan_output(output)
+        if findings:
+            _log.warning("Secrets redacted from bash output: %s", findings)
+
+        is_error = sb_result.exit_code != 0
+        if self._compress_output:
+            output = compress_output(command, output, is_error=is_error).output
+        return ToolResult(
+            output=output or "(no output)",
+            is_error=is_error,
+            metadata={
+                "sandbox": getattr(self._sandbox, "name", "unknown"),
+                "exit_code": sb_result.exit_code,
+            },
+        )
 
     def _run_via_backend(self, command: str, timeout: int) -> ToolResult:
         """M3 — route through a :class:`SandboxBackend` Protocol adapter.
