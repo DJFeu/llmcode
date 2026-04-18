@@ -1,0 +1,91 @@
+name: evals-nightly
+
+# Nightly (and on-demand) runner for the llm-code eval suite.
+#
+# The default run exercises the framework itself via fake runners
+# under tests/test_evals/. To wire a real Qwen / Claude endpoint:
+#   1. drop a live runner under tests/evals_live/ that builds a
+#      Runner (llm_code.evals.Runner) from env vars;
+#   2. flip LLMCODE_EVAL_LIVE=true in the workflow inputs;
+#   3. this workflow picks up tests/evals_live/ when LIVE=true.
+#
+# A failed nightly run does NOT block PRs — the workflow only runs on
+# schedule + workflow_dispatch. Results upload as a JUnit XML artifact
+# so trends (pass rate per model per day) can be graphed downstream.
+
+on:
+  schedule:
+    # 00:00 UTC daily — tune per team once trends are visible.
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      models:
+        description: 'Comma-separated model ids (default: qwen3.5-plus)'
+        required: false
+        default: 'qwen3.5-plus'
+      live:
+        description: 'Run live (true) or framework-only fake runners (false)'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.13']
+    env:
+      # Route untrusted workflow inputs through env so steps never
+      # interpolate them directly into run: commands (safe pattern).
+      EVAL_MODELS: ${{ github.event.inputs.models }}
+      EVAL_LIVE: ${{ github.event.inputs.live }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[dev]' || pip install -e .
+          pip install pytest pytest-asyncio pytest-cov
+
+      - name: Run framework evals (fake runner)
+        if: env.EVAL_LIVE != 'true'
+        run: |
+          python -m pytest tests/test_evals/ \
+            -v --tb=line --no-header \
+            --junit-xml=eval_results.xml
+
+      - name: Run live evals
+        if: env.EVAL_LIVE == 'true'
+        env:
+          LLMCODE_EVAL_MODELS: ${{ env.EVAL_MODELS }}
+        run: |
+          if [ -d tests/evals_live ]; then
+            python -m pytest tests/evals_live/ \
+              -v --tb=line --no-header \
+              --junit-xml=eval_results.xml
+          else
+            echo "::warning::tests/evals_live/ not present; skipping live run."
+          fi
+
+      - name: Upload eval artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results-${{ github.run_id }}
+          path: |
+            eval_results.xml
+          retention-days: 30
