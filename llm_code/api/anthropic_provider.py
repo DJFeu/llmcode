@@ -16,7 +16,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 import httpx
 
@@ -81,7 +81,7 @@ class AnthropicProvider(LLMProvider):
         timeout: float = 120.0,
         max_retries: int = 2,
         base_url: str = _DEFAULT_BASE_URL,
-        rate_handler: "Any | None" = None,
+        rate_handler: Any | None = None,
     ) -> None:
         self._api_key = api_key
         self._model_name = model_name

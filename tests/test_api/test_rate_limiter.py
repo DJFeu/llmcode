@@ -20,7 +20,6 @@ import pytest
 
 from llm_code.api.rate_limiter import (
     RateLimitClassification,
-    RateLimitDecision,
     RateLimitHandler,
     RequestKind,
     classify_exception,

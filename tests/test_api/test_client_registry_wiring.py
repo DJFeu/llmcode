@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 
-import pytest
 
 from llm_code.api.client import ProviderClient
 
