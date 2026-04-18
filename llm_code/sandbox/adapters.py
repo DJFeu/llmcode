@@ -11,9 +11,24 @@ Docker adapter can wire ``--network=none`` once it grows that.
 from __future__ import annotations
 
 import shlex
+import time
+from typing import Callable
 
 from llm_code.sandbox.policy_manager import SandboxPolicy, SandboxResult
 from llm_code.tools.sandbox import DockerSandbox, SandboxConfig, run_pty
+
+
+def _import_pty_process():
+    """Late-import ``ptyprocess.PtyProcessUnicode`` so tests can
+    monkeypatch this hook without disturbing module load order."""
+    from ptyprocess import PtyProcessUnicode
+    return PtyProcessUnicode
+
+
+# Ambient reference so tests can patch ``adapters.PtyProcessUnicode``
+# directly as well as via ``_import_pty_process``. Lives as None until
+# first streaming call; callers shouldn't rely on its presence.
+PtyProcessUnicode = None  # type: ignore[assignment]
 
 
 class PtySandboxBackend:
@@ -46,6 +61,79 @@ class PtySandboxBackend:
             exit_code=pty_result.returncode,
             stdout=pty_result.output,
             stderr=stderr,
+        )
+
+    def execute_streaming(
+        self,
+        command: list[str],
+        policy: SandboxPolicy,  # noqa: ARG002 — PTY can't enforce policy itself
+        *,
+        on_chunk: Callable[[str], None],
+    ) -> SandboxResult:
+        """E3 — stream output chunks via ``on_chunk``.
+
+        Spawns a PTY, reads in 4KB chunks until the child exits,
+        invokes ``on_chunk(text)`` for every non-empty chunk, then
+        returns a :class:`SandboxResult` with the concatenated output
+        + exit code. Callback exceptions are swallowed so a buggy UI
+        cannot wedge execution.
+        """
+        cmd_str = " ".join(shlex.quote(part) for part in command)
+
+        # Prefer the module-level attribute so tests can patch it
+        # directly; fall back to the import helper in production.
+        pty_cls = globals().get("PtyProcessUnicode")
+        if pty_cls is None:
+            try:
+                pty_cls = _import_pty_process()
+            except ImportError as exc:
+                return SandboxResult(
+                    exit_code=1, stdout="",
+                    stderr=f"ptyprocess not installed: {exc}",
+                )
+
+        try:
+            proc = pty_cls.spawn(["sh", "-c", cmd_str])
+        except Exception as exc:
+            return SandboxResult(
+                exit_code=1, stdout="",
+                stderr=f"pty spawn failed: {exc}",
+            )
+
+        deadline = time.monotonic() + self._timeout
+        chunks: list[str] = []
+        timed_out = False
+        while True:
+            if not proc.isalive():
+                break
+            if time.monotonic() > deadline:
+                try:
+                    proc.terminate(force=True)
+                except Exception:
+                    pass
+                timed_out = True
+                break
+            try:
+                chunk = proc.read(4096)
+            except EOFError:
+                break
+            except Exception:
+                break
+            if not chunk:
+                continue
+            chunks.append(chunk)
+            try:
+                on_chunk(chunk)
+            except Exception:
+                pass  # caller bug must not wedge exec
+
+        exit_code = getattr(proc, "exitstatus", None)
+        if exit_code is None:
+            exit_code = 124 if timed_out else 0
+        return SandboxResult(
+            exit_code=124 if timed_out else exit_code,
+            stdout="".join(chunks),
+            stderr=f"timed out after {self._timeout}s" if timed_out else "",
         )
 
 
@@ -116,6 +204,34 @@ class DockerSandboxBackend:
             stdout=getattr(raw, "stdout", ""),
             stderr=stderr,
         )
+
+    def execute_streaming(
+        self,
+        command: list[str],
+        policy: SandboxPolicy,
+        *,
+        on_chunk: Callable[[str], None],
+    ) -> SandboxResult:
+        """E4 — *degraded* streaming for Docker.
+
+        The existing :class:`DockerSandbox.run` is blocking, so true
+        per-line streaming would require a ``docker exec -i`` Popen
+        rewrite beyond the scope of this sprint. The degraded path
+        runs :meth:`execute` normally, then emits the full stdout as
+        a single chunk. Caller code that polls on_chunk for progress
+        still sees output once, just not incrementally.
+
+        The M2 policy-enforcement gate applies before any chunk is
+        emitted; a rejected call produces zero chunks and exit 126,
+        matching the non-streaming behaviour.
+        """
+        result = self.execute(command, policy)
+        if result.stdout:
+            try:
+                on_chunk(result.stdout)
+            except Exception:
+                pass
+        return result
 
     def close(self) -> None:
         close_fn = getattr(self._sandbox, "stop", None) or getattr(

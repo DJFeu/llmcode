@@ -70,6 +70,41 @@ class SandboxBackend(Protocol):
     ) -> SandboxResult: ...
 
 
+@runtime_checkable
+class StreamingSandboxBackend(SandboxBackend, Protocol):
+    """Optional extension for backends that can emit output chunk-by-chunk.
+
+    Long-running bash invocations (builds, tests, deploys) need to
+    surface output as it arrives; the synchronous ``execute`` path
+    blocks the whole command before returning anything.
+
+    Adapters that implement this Protocol provide
+    ``execute_streaming(command, policy, *, on_chunk)`` which invokes
+    ``on_chunk(text)`` for every output chunk and returns the final
+    :class:`SandboxResult` once the command exits. Callers detect
+    support via :func:`has_streaming`.
+    """
+
+    def execute_streaming(
+        self,
+        command: list[str],
+        policy: SandboxPolicy,
+        *,
+        on_chunk,  # Callable[[str], None]
+    ) -> SandboxResult: ...
+
+
+def has_streaming(backend) -> bool:
+    """Return True when ``backend.execute_streaming`` is callable.
+
+    Protocol isinstance on :class:`StreamingSandboxBackend` inherits
+    the data-attribute quirk (``name: str``) so Python 3.12 refuses
+    the check. Callers should use this helper instead.
+    """
+    fn = getattr(backend, "execute_streaming", None)
+    return callable(fn)
+
+
 # ── Entry points ──────────────────────────────────────────────────────
 
 
