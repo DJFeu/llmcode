@@ -165,6 +165,16 @@ class PermissionPolicy:
         for warning in detect_shadowed_rules(allow_tools, deny_tools, mode):
             _log.warning("PermissionPolicy: %s", warning)
 
+    @property
+    def mode(self) -> "PermissionMode":
+        """Return the active :class:`PermissionMode`.
+
+        Exposed so callers (e.g. :class:`SystemPromptBuilder`) can
+        branch on plan-mode without reaching into the private
+        ``_mode`` attribute.
+        """
+        return self._mode
+
     def authorize(
         self,
         tool_name: str,

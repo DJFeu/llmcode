@@ -178,6 +178,8 @@ class SystemPromptBuilder:
         is_local_model: bool = False,
         model_name: str = "",
         personas: dict | None = None,
+        permission_policy: object | None = None,  # PermissionPolicy — loose typed to avoid import cycle
+        plan_file: str | None = None,
     ) -> str:
         sections: list[PromptSection] = []
 
@@ -348,6 +350,30 @@ class SystemPromptBuilder:
             task_section = build_incomplete_tasks_prompt(task_manager)
             if task_section:
                 sections.append(PromptSection(content=task_section, scope="session", priority=30))
+
+        # Plan-mode reminder — injected when the active policy is PLAN
+        # so the model can't forget the read-only constraint. Priority
+        # 1 in the session scope so it lands near the top of the
+        # dynamic section but after the MCP / active-skill headers.
+        if permission_policy is not None:
+            mode = getattr(permission_policy, "mode", None)
+            if mode is not None and str(getattr(mode, "value", mode)) == "plan":
+                from llm_code.runtime.prompt_mode_reminders import (
+                    plan_mode_reminder,
+                    plan_mode_reminder_anthropic,
+                )
+                lower = (model_name or "").lower()
+                is_anthropic_family = (
+                    "claude" in lower or "anthropic" in lower
+                    or "sonnet" in lower or "opus" in lower or "haiku" in lower
+                )
+                if is_anthropic_family:
+                    reminder = plan_mode_reminder_anthropic(plan_file=plan_file)
+                else:
+                    reminder = plan_mode_reminder(plan_file=plan_file)
+                sections.append(PromptSection(
+                    content=reminder, scope="session", priority=1,
+                ))
 
         return self._serialize(sections)
 
