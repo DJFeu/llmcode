@@ -114,6 +114,11 @@ class CompactionThresholdsConfig:
     min_messages: int = 30
     min_text_blocks: int = 10
     target_pct: float = 0.50
+    # C4: circuit breaker + output reserve. Mirrors
+    # ``CompactionThresholds`` in ``runtime/auto_compact.py`` so users can
+    # tune the breaker via their TOML config.
+    max_consecutive_failures: int = 3
+    output_token_reserve: int = 20_000
 
 
 @dataclass(frozen=True)

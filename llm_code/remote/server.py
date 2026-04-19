@@ -24,10 +24,24 @@ class RemoteServer:
         self._memory = None
 
     async def start(self) -> None:
-        """Start WebSocket server."""
+        """Start WebSocket server.
+
+        G2: wraps the ``await asyncio.Future()`` forever-loop in
+        try/finally so SIGTERM / KeyboardInterrupt / await cancellation
+        still drives ``self._runtime.shutdown()`` — Docker containers
+        opened on behalf of this server exit cleanly instead of
+        leaking until the host reclaims them.
+        """
         print(f"llm-code server listening on ws://{self._host}:{self._port}")
         async with websockets.serve(self._handle_client, self._host, self._port):
-            await asyncio.Future()  # run forever
+            try:
+                await asyncio.Future()  # run forever
+            finally:
+                if self._runtime is not None:
+                    try:
+                        self._runtime.shutdown()
+                    except Exception:
+                        pass  # teardown must never raise
 
     async def _handle_client(self, ws: ServerConnection) -> None:
         """Handle a connected client."""

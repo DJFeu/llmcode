@@ -16,7 +16,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 import httpx
 
@@ -81,6 +81,7 @@ class AnthropicProvider(LLMProvider):
         timeout: float = 120.0,
         max_retries: int = 2,
         base_url: str = _DEFAULT_BASE_URL,
+        rate_handler: Any | None = None,
     ) -> None:
         self._api_key = api_key
         self._model_name = model_name
@@ -88,6 +89,10 @@ class AnthropicProvider(LLMProvider):
         self._timeout = timeout
         self._base_url = base_url.rstrip("/")
         self._prev_cache_read_tokens: int = 0
+        # C3b opt-in: when set, _post_with_retry routes through the
+        # shared rate_limiter.run_with_rate_limit loop instead of the
+        # legacy path below.
+        self._rate_handler = rate_handler
 
         self._client = httpx.AsyncClient(
             headers={
@@ -296,6 +301,9 @@ class AnthropicProvider(LLMProvider):
     # ------------------------------------------------------------------
 
     async def _post_with_retry(self, payload: dict) -> httpx.Response:
+        if self._rate_handler is not None:
+            return await self._post_via_rate_handler(payload)
+
         url = f"{self._base_url}/v1/messages"
         last_exc: Exception | None = None
 
@@ -350,6 +358,26 @@ class AnthropicProvider(LLMProvider):
             attempt += 1
 
         raise last_exc  # type: ignore[misc]
+
+    async def _post_via_rate_handler(self, payload: dict) -> httpx.Response:
+        """C3b opt-in path: loop under the shared RateLimitHandler."""
+        from llm_code.api.rate_limiter import (
+            provider_taxonomy_anthropic,
+            run_with_rate_limit,
+        )
+
+        url = f"{self._base_url}/v1/messages"
+
+        async def attempt() -> httpx.Response:
+            response = await self._client.post(url, json=payload)
+            self._raise_for_status(response)
+            return response
+
+        return await run_with_rate_limit(
+            attempt,
+            self._rate_handler,
+            taxonomy=provider_taxonomy_anthropic(),
+        )
 
     def _raise_for_status(self, response: httpx.Response) -> None:
         if response.status_code == 200:

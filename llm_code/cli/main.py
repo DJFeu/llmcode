@@ -376,6 +376,17 @@ async def _run_repl(backend, state) -> None:
     try:
         await backend.run()
     finally:
+        # F5-wire-4: close any sandbox backend the REPL opened. Runs
+        # before backend.stop() so Docker containers finish their
+        # own teardown (can take seconds) while prompt_toolkit is
+        # still alive. Guarded so a slow / broken shutdown can't
+        # abort the rest of the REPL teardown chain.
+        try:
+            if state.runtime is not None:
+                state.runtime.shutdown()
+        except Exception:
+            pass  # teardown must never raise
+
         if not welcome_task.done():
             welcome_task.cancel()
             try:

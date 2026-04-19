@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 import httpx
 
@@ -148,6 +148,7 @@ class OpenAICompatProvider(LLMProvider):
         max_retries: int = 2,
         timeout: float = 120.0,
         native_tools: bool = True,
+        rate_handler: Any = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
@@ -155,6 +156,9 @@ class OpenAICompatProvider(LLMProvider):
         self._max_retries = max_retries
         self._timeout = timeout
         self._native_tools = native_tools
+        # C3b: opt-in shared retry policy. None keeps the legacy
+        # ``_post_with_retry`` loop untouched for backward compat.
+        self._rate_handler = rate_handler
 
         # Resolve model profile for capability overrides
         from llm_code.runtime.model_profile import get_profile
@@ -300,6 +304,13 @@ class OpenAICompatProvider(LLMProvider):
         }
 
     async def _post_with_retry(self, payload: dict) -> httpx.Response:
+        # C3b opt-in: when a RateLimitHandler is injected, delegate to
+        # the shared retry policy. Otherwise keep the legacy loop below
+        # so existing behaviour (and the 5000+ tests that depend on it)
+        # stays identical.
+        if self._rate_handler is not None:
+            return await self._post_via_rate_handler(payload)
+
         url = f"{self._base_url}/chat/completions"
         last_exc: Exception | None = None
 
@@ -364,6 +375,33 @@ class OpenAICompatProvider(LLMProvider):
             attempt += 1
 
         raise last_exc  # type: ignore[misc]
+
+    async def _post_via_rate_handler(self, payload: dict) -> httpx.Response:
+        """Shared retry policy path (C3b opt-in).
+
+        ``run_with_rate_limit`` classifies every exception against the
+        OpenAI-compat taxonomy, backs off per the handler's policy,
+        and re-raises whatever the handler refuses to retry. The inner
+        call raises ``_raise_for_status`` itself so classification
+        sees the strongly-typed provider errors.
+        """
+        from llm_code.api.rate_limiter import (
+            provider_taxonomy_openai_compat,
+            run_with_rate_limit,
+        )
+
+        url = f"{self._base_url}/chat/completions"
+
+        async def attempt() -> httpx.Response:
+            response = await self._client.post(url, json=payload)
+            self._raise_for_status(response)
+            return response
+
+        return await run_with_rate_limit(
+            attempt,
+            self._rate_handler,
+            taxonomy=provider_taxonomy_openai_compat(),
+        )
 
     def _raise_for_status(self, response: httpx.Response) -> None:
         if response.status_code == 200:

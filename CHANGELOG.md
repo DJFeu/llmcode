@@ -1,5 +1,112 @@
 # Changelog
 
+## v2.1.0 — Reference-alignment sprint: sandbox enforcement, granular network policy, mode reminders
+
+Fifty commits of reference-aligned improvements against opencode,
+Claude Code, Codex CLI, and the other AI coding agents in
+`~/Work/qwen/reference/`. Nothing breaks — all v2.0.0 configs,
+sessions, and slash commands continue to work. The focus is making
+llmcode match or beat the sandbox enforcement, permission model,
+and model-family ergonomics of the reference implementations.
+
+`pip install -U llmcode-cli` picks it up.
+
+### Sandbox enforcement (Sprints 4–7)
+
+What used to be a single "docker or bust" path is now a full platform-
+aware chain with real OS-level enforcement:
+
+- **PTY adapter** — baseline stream-capable runner for hosts with no
+  sandbox primitive available.
+- **Bwrap adapter** — Linux bubblewrap with per-line streaming.
+- **Seatbelt adapter** — macOS `sandbox-exec` with per-call profile
+  generation (deny-default, file-read*, file-write* scoped to the
+  workspace subtree).
+- **Landlock adapter** — Linux 5.13+ LSM via direct libc ctypes
+  syscalls (create_ruleset / add_rule / restrict_self). Full
+  `preexec_fn` integration so the child task is restricted before
+  `exec`.
+- **Docker adapter** — real per-line streaming via the `docker
+  exec --interactive` path plus tighter-than-container rejection so
+  misconfigured per-call policies cannot silently execute.
+- **`choose_backend()`** — platform-aware priority chain with WSL2
+  detection, `/proc/sys/kernel/osrelease` parsing so WSL routes to the
+  Linux chain even when CPython reports Windows.
+- **`SandboxLifecycleManager`** — session-scoped teardown so
+  per-turn docker / bwrap handles close deterministically at REPL
+  exit, remote-server shutdown, or sub-agent disposal.
+
+### Granular network policy (H3 completion)
+
+- New `SandboxPolicy.allowed_ports` and `allowed_cidrs` fields.
+- JSON-schema loader under `llm_code/sandbox/policy_schema.py`
+  (`policy_from_dict` / `policy_from_json` / `policy_to_dict`) with
+  typed validation — actionable `PolicySchemaError` on unknown
+  fields, bad port ranges, malformed CIDRs.
+- Seatbelt backend translates a non-empty allowlist into granular
+  `(allow network-outbound (remote tcp "*:<port>"))` directives
+  instead of the coarse `(allow network*)`.
+- Empty tuples preserve the existing all-or-nothing semantics so
+  every existing call site keeps working unchanged.
+
+### Model-specific prompts
+
+Three new variants, reference-aligned with opencode's
+`session/prompt/`:
+
+- **`beast.md`** — OpenAI reasoning models (o1 / o3 / gpt-4 / gpt-5).
+  The baseline `gpt.md` under-delivers for reasoning models; beast
+  ships the "keep going, plan, iterate" instruction set.
+- **`copilot_gpt5.md`** — GitHub Copilot's GPT-5 backend with its
+  distinct tool surface / memory convention.
+- **`trinity.md`** — model ids containing `trinity`.
+
+Routing precedence rewritten: `copilot` > `codex` > reasoning-class
+(o1 / o3 / gpt-4 / gpt-5 → beast) > plain gpt > claude / gemini /
+trinity / qwen / llama / deepseek / kimi > default.
+
+### Mode-specific reminders with auto-injection
+
+Four templates under `prompts/mode/` with matching builder functions:
+`plan_mode_reminder`, `plan_mode_reminder_anthropic`,
+`build_switch_reminder`, `max_steps_reminder`. Auto-injection wires:
+
+- **Plan / read-only reminder** — `SystemPromptBuilder.build()`
+  auto-injects when `PermissionMode.PLAN` or `READ_ONLY` is active.
+  Claude-family models get the 5-phase Anthropic variant with an
+  explicit `ExitPlanMode` contract; everything else gets the default.
+- **Build-switch reminder** — `PermissionPolicy.switch_to(target)`
+  records a `ModeTransition` event; `SystemPromptBuilder` reads it
+  once via `consume_last_transition()` and auto-injects when the
+  flip relaxes the read-only constraint.
+- **Max-steps reminder** — `IterationBudget` lives alongside
+  `AutoCompactState` in `auto_compact.py`, ticks per turn iteration,
+  and `ConversationRuntime.run_turn()` yields the reminder text when
+  the budget exhausts.
+- **Shift+Tab binding** — fulfils the long-standing promise in
+  `PLAN_MODE_DENY_MESSAGE` that Shift+Tab flips plan↔build. Routes
+  through `PermissionPolicy.switch_to` so the build-switch reminder
+  auto-injects on the next turn.
+
+### Fourteen M-series follow-ups
+
+Reference-aligned reusable modules delivered in priority order:
+
+| | | |
+|---|---|---|
+| **C5** `EditSnapshot` store | **H7** plugin dependency resolver | **M1** `ToolResultBuffer` |
+| **M2** compact boundary message | **M3** `SessionMode` + headless auto-approve | **M4** nested-memory tracker |
+| **M5** structured git diff parser | **M6** config schema versioning | **M7** in-memory inter-agent mailbox |
+| **M8** XML-mode tool-schema filter | **M9** OpenTelemetry tracing skeleton | **M10** SEA binary-integrity manifest |
+| **M11** i18n catalog (zh-TW + en) | **M12** skill lazy-loader decorator | |
+
+### Tests
+
+6182 passing (+655 from v2.0.0's 5527), 15 skipped, zero regressions.
+Ruff clean. Full suite runs in ~3:35 on an M-series Mac.
+
+---
+
 ## v2.0.0 — REPL Mode: native terminal UX, ViewBackend Protocol, Textual TUI removed
 
 Major rewrite of llmcode's view layer, delivering on the "permanently

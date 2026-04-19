@@ -267,3 +267,96 @@ class TestBuiltinProfiles:
         assert p.supports_reasoning is False
         assert p.supports_images is True
         assert p.price_input == 2.50
+
+
+# ---------- Qwen 3.6 / Coder / 3.5-Plus / Max / VL ----------
+
+
+class TestQwen36Profile:
+    """Qwen3.6-Plus went live 2026-04-02 on Alibaba ModelStudio (OpenAI-compat)."""
+
+    def test_qwen36_plus_profile(self) -> None:
+        p = get_profile("qwen3.6-plus")
+        assert p.name == "Qwen3.6-Plus"
+        assert p.provider_type == "openai-compat"
+        assert p.supports_reasoning is True
+        assert p.reasoning_field == "reasoning_content"
+        # Cloud endpoint supports native tool calls
+        assert p.native_tools is True
+        assert p.force_xml_tools is False
+        assert p.context_window >= 131072
+
+    def test_qwen36_plus_prefix_match(self) -> None:
+        p = get_profile("qwen3.6-plus-20260402")
+        assert p.name == "Qwen3.6-Plus"
+
+
+class TestQwen35PlusProfile:
+    def test_qwen35_plus_profile(self) -> None:
+        p = get_profile("qwen3.5-plus")
+        assert p.name == "Qwen3.5-Plus"
+        assert p.supports_reasoning is True
+        assert p.native_tools is True  # cloud
+        assert p.reasoning_field == "reasoning_content"
+
+
+class TestQwenCoderProfile:
+    """qwen3-coder family — OSS local deployments plus Dashscope cloud variants."""
+
+    def test_qwen3_coder_generic_local_oss(self) -> None:
+        """Bare 'qwen3-coder' (e.g. qwen3-coder-30ba3b) is local OSS → XML + implicit thinking."""
+        p = get_profile("qwen3-coder")
+        assert p.name.startswith("Qwen3-Coder")
+        assert p.native_tools is False
+        assert p.force_xml_tools is True
+        assert p.implicit_thinking is True
+        assert p.is_local is True
+        assert p.context_window == 262144  # qwen-code tokenLimits.ts
+
+    def test_qwen3_coder_plus_cloud_1m(self) -> None:
+        p = get_profile("qwen3-coder-plus")
+        assert p.name == "Qwen3-Coder-Plus"
+        assert p.native_tools is True
+        assert p.force_xml_tools is False
+        assert p.context_window == 1_000_000
+
+    def test_qwen3_coder_plus_dated_prefix(self) -> None:
+        p = get_profile("qwen3-coder-plus-20250601")
+        assert p.name == "Qwen3-Coder-Plus"
+        assert p.context_window == 1_000_000
+
+    def test_qwen3_coder_flash_cloud_1m_small(self) -> None:
+        p = get_profile("qwen3-coder-flash")
+        assert p.name == "Qwen3-Coder-Flash"
+        assert p.context_window == 1_000_000
+        assert p.is_small_model is True
+
+    def test_qwen3_coder_7b_local_small(self) -> None:
+        p = get_profile("qwen3-coder-7b")
+        assert p.name.startswith("Qwen3-Coder-7B")
+        assert p.is_local is True
+        assert p.is_small_model is True
+        assert p.force_xml_tools is True
+        assert p.context_window == 262144
+
+    def test_qwen3_coder_30ba3b_matches_generic(self) -> None:
+        """qwen3-coder-30ba3b / 480a35 fall to generic qwen3-coder profile."""
+        p = get_profile("qwen3-coder-30ba3b")
+        # Longest prefix wins — qwen3-coder generic (262K) rather than qwen3
+        assert p.is_local is True
+        assert p.force_xml_tools is True
+        assert p.context_window == 262144
+
+
+class TestQwen3MaxVLProfiles:
+    def test_qwen3_max_profile(self) -> None:
+        p = get_profile("qwen3-max")
+        assert p.name == "Qwen3-Max"
+        assert p.native_tools is True
+        assert p.max_output_tokens == 32768  # dashscope.test.ts: 32K output limit
+
+    def test_qwen3_vl_plus_images(self) -> None:
+        p = get_profile("qwen3-vl-plus")
+        assert p.name == "Qwen3-VL-Plus"
+        assert p.supports_images is True
+        assert p.native_tools is True

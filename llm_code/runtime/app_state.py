@@ -197,7 +197,15 @@ class AppState:
                 register_core_tools as _rct,
             )
             register_core_tools = _rct
-        register_core_tools(state.tool_reg, config)
+        # F5-wire-3: build the lifecycle up-front so tool registration
+        # can hand every sandbox it creates to the manager. The manager
+        # is attached to ``state.runtime`` once the runtime exists
+        # (block further down) so ``runtime.shutdown()`` sees it.
+        from llm_code.sandbox.lifecycle import SandboxLifecycleManager
+        state._sandbox_lifecycle = SandboxLifecycleManager()
+        register_core_tools(
+            state.tool_reg, config, lifecycle=state._sandbox_lifecycle,
+        )
 
         # AgentTool with lazy factory — the closure captures ``state``
         # so future mutation of ``state.runtime`` is visible by the
@@ -575,6 +583,12 @@ class AppState:
             lsp_manager=state.lsp_manager,
             dialogs=state.dialogs,
         )
+        # F5-wire-3: hand the sandbox lifecycle manager populated by
+        # register_core_tools to the runtime so ``runtime.shutdown()``
+        # closes every Docker container / backend started on behalf of
+        # this REPL session. The REPL's own exit handler (CLI main)
+        # calls runtime.shutdown() to drive teardown.
+        state.runtime._sandbox_lifecycle = state._sandbox_lifecycle
 
         # Register plan mode tools (need runtime reference)
         try:

@@ -165,7 +165,10 @@ def test_from_config_accepts_injected_register_core_tools(
     that want a minimal registry). Verifies the DI seam works."""
     calls = []
 
-    def fake_register(registry, config):
+    def fake_register(registry, config, **_kwargs):
+        # F5-wire-3: boot path threads a ``lifecycle`` kwarg — accept
+        # and ignore it here so this DI seam test keeps pointing at
+        # the stub.
         calls.append((registry, config))
 
     state = AppState.from_config(

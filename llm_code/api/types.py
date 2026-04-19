@@ -178,6 +178,11 @@ class StreamToolExecStart(StreamEvent):
     tool_name: str
     args_summary: str
     tool_id: str = ""  # correlation key for matching with StreamToolExecResult
+    # H10 deep wire: capability labels computed by the pipeline — lets
+    # TUIs / telemetry / audit logs branch on "this call is destructive"
+    # without re-inspecting the tool object. Sorted tuple of labels
+    # drawn from {read_only, destructive, rollbackable, network}.
+    tool_capabilities: tuple[str, ...] = ()
 
 
 @dataclasses.dataclass(frozen=True)

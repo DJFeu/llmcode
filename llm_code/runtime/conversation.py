@@ -43,6 +43,7 @@ from llm_code.tools.base import ToolResult
 from llm_code.tools.parsing import ParsedToolCall, parse_tool_calls
 
 if TYPE_CHECKING:
+    from llm_code.runtime.auto_compact import IterationBudget
     from llm_code.runtime.context import ProjectContext
     from llm_code.runtime.permissions import PermissionPolicy
     from llm_code.runtime.prompt import SystemPromptBuilder
@@ -256,11 +257,56 @@ class TurnSummary:
 
 
 # ---------------------------------------------------------------------------
+# Sandbox lifecycle wire (F5-wire)
+# ---------------------------------------------------------------------------
+
+
+def _sandbox_lifecycle_on(runtime):
+    """Return the :class:`SandboxLifecycleManager` attached to
+    ``runtime``, lazily initialising it on first access.
+
+    Mirrors the ``_auto_compact_state`` / ``_permission_denial_tracker``
+    pattern so ``ConversationRuntime.__init__`` stays frozen — every
+    existing caller works without threading a new kwarg through.
+    """
+    mgr = getattr(runtime, "_sandbox_lifecycle", None)
+    if mgr is None:
+        from llm_code.sandbox.lifecycle import SandboxLifecycleManager
+        mgr = SandboxLifecycleManager()
+        runtime._sandbox_lifecycle = mgr
+    return mgr
+
+
+def shutdown_sandbox_lifecycle(runtime) -> None:
+    """Close every backend registered on ``runtime``'s lifecycle.
+
+    Safe to call on a runtime that never touched a backend — absent
+    attribute is a no-op. Safe to call twice (idempotent close_all).
+    """
+    mgr = getattr(runtime, "_sandbox_lifecycle", None)
+    if mgr is None:
+        return
+    mgr.close_all()
+
+
+# ---------------------------------------------------------------------------
 # ConversationRuntime
 # ---------------------------------------------------------------------------
 
 class ConversationRuntime:
     """Agentic loop that drives LLM turns, tool execution, and session updates."""
+
+    def shutdown(self) -> None:
+        """Release session-scoped sandbox resources (F5-wire-2).
+
+        Call this at the end of a session / before discarding the
+        runtime so the :class:`SandboxLifecycleManager` attached via
+        :func:`_sandbox_lifecycle_on` closes every registered
+        backend. Safe on a fresh runtime (lazy lifecycle absent → no-op)
+        and safe to call twice (close_all is idempotent per backend id).
+        """
+        shutdown_sandbox_lifecycle(self)
+
 
     # Class-level defaults so builtin hooks can read these via getattr even
     # before the runtime has processed its first stream.
@@ -429,6 +475,11 @@ class ConversationRuntime:
         # answering), and raise RuntimeError after 3 to prevent a
         # tight loop from burning a whole retry budget on nothing.
         self._consecutive_empty_responses: int = 0
+        # Per-turn tool-use budget counter. Populated at the start of
+        # run_turn; after the turn loop exhausts naturally the runtime
+        # yields the max-steps reminder so the user sees why the
+        # conversation stopped silently instead of finishing cleanly.
+        self._iteration_budget: "IterationBudget | None" = None
         # Wave2-1c: track the last-seen context pressure bucket (low/
         # mid/high) so we only fire the context_pressure hook once
         # per crossing instead of every turn past the threshold.
@@ -927,7 +978,16 @@ class ConversationRuntime:
         _retry_tracker = RecentToolCallTracker()
         _force_text_next_iteration = False
 
+        # Fresh iteration budget for this turn — exposes an observable
+        # ``used`` / ``exceeded`` counter and produces the max-steps
+        # reminder text when the turn has burned its budget.
+        from llm_code.runtime.auto_compact import IterationBudget
+        self._iteration_budget = IterationBudget(
+            max_iterations=max(1, int(self._config.max_turn_iterations)),
+        )
+
         for _iteration in range(self._config.max_turn_iterations):
+            self._iteration_budget.tick()
             # Proactive context compaction: compress before hitting model limit
             est_tokens = self.session.estimated_tokens()
 
@@ -1527,9 +1587,11 @@ class ConversationRuntime:
                 ):
                     try:
                         from llm_code.runtime.auto_compact import (
+                            AutoCompactState,
                             CompactionThresholds,
-                            should_compact,
                             compact_messages,
+                            should_compact,
+                            target_token_count,
                         )
                         _thr_cfg = _compaction_cfg.thresholds
                         _thresholds = CompactionThresholds(
@@ -1537,19 +1599,27 @@ class ConversationRuntime:
                             min_messages=_thr_cfg.min_messages,
                             min_text_blocks=_thr_cfg.min_text_blocks,
                             target_pct=_thr_cfg.target_pct,
+                            max_consecutive_failures=_thr_cfg.max_consecutive_failures,
+                            output_token_reserve=_thr_cfg.output_token_reserve,
                         )
+                        # Lazily bind a per-runtime failure counter so the
+                        # circuit breaker can veto further attempts once
+                        # compaction has failed repeatedly.
+                        if getattr(self, "_auto_compact_state", None) is None:
+                            self._auto_compact_state = AutoCompactState()
+                        _state = self._auto_compact_state
                         _used = stop_event.usage.input_tokens
                         _max_t = getattr(self._config, "compact_after_tokens", 0) or 128_000
                         if should_compact(
-                            self.session.messages, _used, _max_t, _thresholds
+                            self.session.messages, _used, _max_t, _thresholds, state=_state,
                         ):
                             self._compaction_in_flight = True
                             yield StreamCompactionStart(
                                 used_tokens=_used, max_tokens=_max_t,
                             )
+                            _before = len(self.session.messages)
                             try:
-                                _before = len(self.session.messages)
-                                _target = int(_max_t * _thresholds.target_pct)
+                                _target = target_token_count(_max_t, _thresholds)
                                 self.session = compact_messages(
                                     self.session, target_tokens=_target,
                                 )
@@ -1557,10 +1627,19 @@ class ConversationRuntime:
                                     before_messages=_before,
                                     after_messages=len(self.session.messages),
                                 )
+                                _state.record_success()
+                            except Exception as _compact_exc:
+                                _state.record_failure()
+                                logger.warning(
+                                    "auto-compaction attempt failed (%d/%d): %s",
+                                    _state.failure_count,
+                                    _thresholds.max_consecutive_failures,
+                                    _compact_exc,
+                                )
                             finally:
                                 self._compaction_in_flight = False
                     except Exception as _exc:  # pragma: no cover - defensive
-                        logger.warning("auto-compaction failed: %s", _exc)
+                        logger.warning("auto-compaction pipeline failed: %s", _exc)
                         self._compaction_in_flight = False
 
                 # Use ACTUAL API token count for compaction (not estimated)
@@ -1907,6 +1986,14 @@ class ConversationRuntime:
                 break  # Exit the outer turn-iteration loop
 
             # 10. Loop back for LLM to process results
+
+        # Max-steps reminder — fires once when the iteration budget
+        # exhausted. ``build_reminder`` returns None unless exceeded
+        # so a clean early break (retry-loop / end_turn) stays silent.
+        if self._iteration_budget is not None:
+            reminder = self._iteration_budget.build_reminder()
+            if reminder:
+                yield StreamTextDelta(text=reminder)
 
         # Update session usage
         self.session = self.session.update_usage(accumulated_usage)

@@ -87,6 +87,7 @@ class REPLBackend(ViewBackend):
         # Install voice toggle BEFORE coordinator.start() so the Ctrl+G
         # binding is baked into the PT Application on construction.
         self._coordinator.set_voice_toggle_callback(self._toggle_voice)
+        self._coordinator.set_plan_toggle_callback(self._toggle_plan_mode)
         await self._coordinator.start()
 
     async def stop(self) -> None:
@@ -238,6 +239,31 @@ class REPLBackend(ViewBackend):
             self._stop_voice()
         else:
             self._start_voice()
+
+    def _toggle_plan_mode(self) -> None:
+        """Shift+Tab handler — flip between plan and build.
+
+        Runs synchronously on the PT event loop. Routes through
+        :meth:`PermissionPolicy.switch_to` so the ModeTransition
+        event is recorded and the build-switch reminder auto-injects
+        on the next system prompt.
+        """
+        if self._runtime is None:
+            return
+        policy = getattr(self._runtime, "_permissions", None)
+        if policy is None or not hasattr(policy, "switch_to"):
+            return
+        from llm_code.runtime.permissions import PermissionMode
+
+        plan_modes = {PermissionMode.PLAN, PermissionMode.READ_ONLY}
+        current = policy.mode
+        target = PermissionMode.WORKSPACE_WRITE if current in plan_modes else PermissionMode.PLAN
+        policy.switch_to(target)
+        # Mirror dispatcher's plan_mode flag so the status-line /
+        # mode-indicator reflects the flip on next render.
+        self._runtime.plan_mode = target is PermissionMode.PLAN
+        label = "plan" if target is PermissionMode.PLAN else "build"
+        self._coordinator.print_info_sync(f"Switched to {label} mode")
 
     def _start_voice(self) -> None:
         """Begin recording. Lazily constructs the recorder on first use.

@@ -137,6 +137,9 @@ class ScreenCoordinator:
         # Backend installs the Ctrl+G handler via set_voice_toggle_callback
         # before start() constructs the Application.
         self._voice_toggle_callback: Optional[Callable[[], None]] = None
+        # Backend installs the Shift+Tab plan/build toggle via
+        # set_plan_toggle_callback before start(). None == binding absent.
+        self._plan_toggle_callback: Optional[Callable[[], None]] = None
 
         # Main input bindings + dialog bindings merged together. Dialog
         # bindings have Condition filters that only fire while a dialog
@@ -175,6 +178,7 @@ class ScreenCoordinator:
                 on_submit=self._handle_submit,
                 on_exit=self.request_exit,
                 on_voice_toggle=self._voice_toggle_callback,
+                on_plan_toggle=self._plan_toggle_callback,
             ),
             build_dialog_key_bindings(self._dialog_popover),
             build_inline_select_keybindings(
@@ -192,6 +196,16 @@ class ScreenCoordinator:
         are the ones the PT Application uses.
         """
         self._voice_toggle_callback = callback
+
+    def set_plan_toggle_callback(
+        self, callback: Optional[Callable[[], None]],
+    ) -> None:
+        """Install the Shift+Tab plan/build toggle handler.
+
+        Must be called BEFORE ``start()`` so the rebuilt key bindings
+        are the ones the PT Application uses.
+        """
+        self._plan_toggle_callback = callback
         self._rebuild_key_bindings()
 
     # === Voice state forwarding (called by backend) ===

@@ -1,0 +1,703 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "allowed_tools": {},
+    "auto_commit": {
+      "type": "boolean"
+    },
+    "bash_rules": {
+      "additionalProperties": false,
+      "properties": {
+        "rules": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "pattern": {
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "builtin_hooks": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "compact_after_tokens": {
+      "type": "integer"
+    },
+    "compaction": {
+      "additionalProperties": false,
+      "properties": {
+        "auto_enabled": {
+          "type": "boolean"
+        },
+        "thresholds": {
+          "additionalProperties": false,
+          "properties": {
+            "max_consecutive_failures": {
+              "type": "integer"
+            },
+            "min_messages": {
+              "type": "integer"
+            },
+            "min_text_blocks": {
+              "type": "integer"
+            },
+            "output_token_reserve": {
+              "type": "integer"
+            },
+            "target_pct": {
+              "type": "number"
+            },
+            "trigger_pct": {
+              "type": "number"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "compressor": {
+      "additionalProperties": false,
+      "properties": {
+        "llm_summarize": {
+          "type": "boolean"
+        },
+        "max_summary_tokens": {
+          "type": "integer"
+        },
+        "summarize_model": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "computer_use": {
+      "additionalProperties": false,
+      "properties": {
+        "app_tiers": {
+          "items": {},
+          "type": "array"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "screenshot_delay": {
+          "type": "number"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "config_version": {
+      "type": "string"
+    },
+    "denied_tools": {},
+    "diminishing_returns": {
+      "additionalProperties": false,
+      "properties": {
+        "auto_stop_message": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "min_continuations": {
+          "type": "integer"
+        },
+        "min_delta_tokens": {
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "dream": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "min_turns": {
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "enterprise": {
+      "additionalProperties": false,
+      "properties": {
+        "audit": {
+          "additionalProperties": false,
+          "properties": {
+            "retention_days": {
+              "type": "integer"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "auth": {
+          "additionalProperties": false,
+          "properties": {
+            "oidc_client_id": {
+              "type": "string"
+            },
+            "oidc_client_secret": {
+              "type": "string"
+            },
+            "oidc_issuer": {
+              "type": "string"
+            },
+            "oidc_redirect_port": {
+              "type": "integer"
+            },
+            "oidc_scopes": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "provider": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "rbac": {
+          "additionalProperties": false,
+          "properties": {
+            "custom_roles": {},
+            "group_role_mapping": {}
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "harness": {
+      "additionalProperties": false,
+      "properties": {
+        "controls": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "category": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "trigger": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "category",
+              "kind"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "template": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "hida": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence_threshold": {
+          "type": "number"
+        },
+        "custom_profiles": {
+          "items": {},
+          "type": "array"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "hooks": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "event": {
+            "type": "string"
+          },
+          "on_error": {
+            "type": "string"
+          },
+          "timeout": {
+            "type": "number"
+          },
+          "tool_pattern": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "event",
+          "command"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "ide": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "port": {
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "keywords": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "knowledge": {
+      "additionalProperties": false,
+      "properties": {
+        "compile_model": {
+          "type": "string"
+        },
+        "compile_on_exit": {
+          "type": "boolean"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "max_context_tokens": {
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "lsp_auto_detect": {
+      "type": "boolean"
+    },
+    "lsp_auto_diagnose": {
+      "type": "boolean"
+    },
+    "lsp_servers": {},
+    "max_budget_usd": {
+      "type": "number"
+    },
+    "max_retries": {
+      "type": "integer"
+    },
+    "max_tokens": {
+      "type": "integer"
+    },
+    "max_turn_iterations": {
+      "type": "integer"
+    },
+    "mcp": {
+      "additionalProperties": false,
+      "properties": {
+        "always_on": {},
+        "on_demand": {}
+      },
+      "required": [],
+      "type": "object"
+    },
+    "mcp_servers": {},
+    "memory": {
+      "additionalProperties": false,
+      "properties": {
+        "strict_derivable_check": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "model": {
+      "type": "string"
+    },
+    "model_aliases": {},
+    "model_routing": {
+      "additionalProperties": false,
+      "properties": {
+        "compaction": {
+          "type": "string"
+        },
+        "fallback": {
+          "type": "string"
+        },
+        "fallbacks": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sub_agent": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "native_tools": {
+      "type": "boolean"
+    },
+    "output_compression": {
+      "type": "boolean"
+    },
+    "permission_mode": {
+      "type": "string"
+    },
+    "pricing": {},
+    "provider_api_key_env": {
+      "type": "string"
+    },
+    "provider_base_url": {
+      "type": "string"
+    },
+    "registries": {},
+    "sandbox": {},
+    "skill_router": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "max_skills_per_turn": {
+          "type": "integer"
+        },
+        "similarity_threshold": {
+          "type": "number"
+        },
+        "tier_a": {
+          "type": "boolean"
+        },
+        "tier_b": {
+          "type": "boolean"
+        },
+        "tier_c": {
+          "type": "boolean"
+        },
+        "tier_c_auto_for_cjk": {
+          "type": "boolean"
+        },
+        "tier_c_model": {
+          "type": "string"
+        },
+        "tier_c_timeout": {
+          "type": "number"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "skills_dirs": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "swarm": {
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "max_members": {
+          "type": "integer"
+        },
+        "overlap_threshold": {
+          "type": "number"
+        },
+        "role_models": {},
+        "synthesis_enabled": {
+          "type": "boolean"
+        },
+        "worktree": {
+          "additionalProperties": false,
+          "properties": {
+            "base_dir": {
+              "type": "string"
+            },
+            "cleanup_on_success": {
+              "type": "boolean"
+            },
+            "copy_gitignored": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "on_complete": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "telemetry": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "langfuse_host": {
+          "type": "string"
+        },
+        "langfuse_public_key": {
+          "type": "string"
+        },
+        "langfuse_secret_key": {
+          "type": "string"
+        },
+        "service_name": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "temperature": {
+      "type": "number"
+    },
+    "theme": {
+      "additionalProperties": false,
+      "properties": {
+        "overrides": {}
+      },
+      "required": [],
+      "type": "object"
+    },
+    "thinking": {
+      "additionalProperties": false,
+      "properties": {
+        "budget_tokens": {
+          "type": "integer"
+        },
+        "mode": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "timeout": {
+      "type": "number"
+    },
+    "tui": {
+      "additionalProperties": false,
+      "properties": {
+        "spinner_verbs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "spinner_verbs_mode": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "vcr": {
+      "additionalProperties": false,
+      "properties": {
+        "auto_record": {
+          "type": "boolean"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "vim_mode": {
+      "type": "boolean"
+    },
+    "vision": {
+      "additionalProperties": false,
+      "properties": {
+        "fallback": {
+          "type": "string"
+        },
+        "vision_api": {
+          "type": "string"
+        },
+        "vision_api_key_env": {
+          "type": "string"
+        },
+        "vision_model": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "voice": {
+      "additionalProperties": false,
+      "properties": {
+        "anthropic_ws_url": {
+          "type": "string"
+        },
+        "backend": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "google_language_code": {
+          "type": "string"
+        },
+        "hotkey": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "local_model": {
+          "type": "string"
+        },
+        "silence_seconds": {
+          "type": "number"
+        },
+        "silence_threshold": {
+          "type": "integer"
+        },
+        "whisper_url": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "web_fetch": {
+      "additionalProperties": false,
+      "properties": {
+        "browser_timeout": {
+          "type": "number"
+        },
+        "cache_max_entries": {
+          "type": "integer"
+        },
+        "cache_ttl": {
+          "type": "number"
+        },
+        "default_renderer": {
+          "type": "string"
+        },
+        "max_length": {
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "web_search": {
+      "additionalProperties": false,
+      "properties": {
+        "brave_api_key_env": {
+          "type": "string"
+        },
+        "default_backend": {
+          "type": "string"
+        },
+        "domain_allowlist": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "domain_denylist": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "max_results": {
+          "type": "integer"
+        },
+        "searxng_base_url": {
+          "type": "string"
+        },
+        "tavily_api_key_env": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    }
+  },
+  "required": [],
+  "type": "object",
+  "x-llmcode-schema-version": 1
+}

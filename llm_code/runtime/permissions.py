@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import fnmatch
 import logging
+from dataclasses import dataclass
 from enum import Enum
 
 from llm_code.tools.base import PermissionLevel
@@ -62,6 +63,19 @@ class PermissionOutcome(Enum):
     DENY = "deny"
     NEED_PROMPT = "need_prompt"
     NEED_PLAN = "need_plan"
+
+
+@dataclass(frozen=True)
+class ModeTransition:
+    """A single ``(from_mode → to_mode)`` transition event.
+
+    Surfaced by :meth:`PermissionPolicy.switch_to` so downstream
+    callers (system-prompt builder, status-line renderer) can react
+    once per transition instead of polling the mode on every turn.
+    """
+
+    from_mode: "PermissionMode"
+    to_mode: "PermissionMode"
 
 
 # Numeric levels for comparison (higher = more permissive)
@@ -160,10 +174,48 @@ class PermissionPolicy:
         self._deny_tools = deny_tools
         self._deny_patterns = deny_patterns
         self._rbac = rbac
+        self._last_transition: ModeTransition | None = None
 
         # Warn about conflicting or redundant rules at construction time
         for warning in detect_shadowed_rules(allow_tools, deny_tools, mode):
             _log.warning("PermissionPolicy: %s", warning)
+
+    @property
+    def mode(self) -> "PermissionMode":
+        """Return the active :class:`PermissionMode`.
+
+        Exposed so callers (e.g. :class:`SystemPromptBuilder`) can
+        branch on plan-mode without reaching into the private
+        ``_mode`` attribute.
+        """
+        return self._mode
+
+    def switch_to(self, target: "PermissionMode") -> ModeTransition | None:
+        """Flip the active mode to ``target`` and record the transition.
+
+        Returns the :class:`ModeTransition` that was stored, or
+        ``None`` when ``target`` equals the current mode (no-op).
+        Stored events persist until :meth:`consume_last_transition`
+        reads them so callers can observe the flip once before it
+        clears itself — prevents the reminder from spamming on every
+        subsequent turn.
+        """
+        if target is self._mode:
+            return None
+        event = ModeTransition(from_mode=self._mode, to_mode=target)
+        self._mode = target
+        self._last_transition = event
+        return event
+
+    def last_transition(self) -> ModeTransition | None:
+        """Return the most recent transition without consuming it."""
+        return self._last_transition
+
+    def consume_last_transition(self) -> ModeTransition | None:
+        """Return the pending transition (if any) and clear it."""
+        event = self._last_transition
+        self._last_transition = None
+        return event
 
     def authorize(
         self,

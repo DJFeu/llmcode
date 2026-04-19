@@ -6,26 +6,48 @@ import json
 import uuid
 from pathlib import Path
 
-from llm_code.task.types import TaskState, TaskStatus, VerifyResult, _now_iso
-
-
-# Valid transitions: from_status -> set of allowed to_statuses
-_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
-    TaskStatus.PLAN: frozenset({TaskStatus.DO, TaskStatus.BLOCKED}),
-    TaskStatus.DO: frozenset({TaskStatus.VERIFY, TaskStatus.BLOCKED}),
-    TaskStatus.VERIFY: frozenset({TaskStatus.CLOSE, TaskStatus.DO, TaskStatus.BLOCKED}),
-    TaskStatus.CLOSE: frozenset({TaskStatus.DONE, TaskStatus.BLOCKED}),
-    TaskStatus.DONE: frozenset(),  # terminal
-    TaskStatus.BLOCKED: frozenset({TaskStatus.PLAN, TaskStatus.DO, TaskStatus.VERIFY}),
-}
+from llm_code.task.kill_protocol import TaskOutputStore
+from llm_code.task.types import (
+    TaskState,
+    TaskStatus,
+    TaskTransition,
+    VerifyResult,
+    _now_iso,
+)
 
 
 class TaskLifecycleManager:
     """Manages task creation, state transitions, and persistence."""
 
-    def __init__(self, task_dir: Path) -> None:
+    def __init__(self, task_dir: Path, output_dir: Path | None = None) -> None:
         self._task_dir = task_dir
         self._task_dir.mkdir(parents=True, exist_ok=True)
+        # H5b wire — optional TaskOutputStore for out-of-band task logs.
+        # None keeps the pre-wire behaviour where all task state lived
+        # in the JSON files under task_dir.
+        self._output_store: TaskOutputStore | None = (
+            TaskOutputStore(output_dir) if output_dir is not None else None
+        )
+
+    @property
+    def output_store(self) -> TaskOutputStore | None:
+        return self._output_store
+
+    def append_output(self, task_id: str, text: str) -> int | None:
+        """Append ``text`` to the task log when an output store is wired.
+
+        Returns the new file size, or ``None`` when no store is attached
+        (no-op for callers that don't need the out-of-band log).
+        """
+        if self._output_store is None:
+            return None
+        return self._output_store.append(task_id, text)
+
+    def read_output(self, task_id: str) -> str:
+        """Read the full task log; empty string when no store is wired."""
+        if self._output_store is None:
+            return ""
+        return self._output_store.read(task_id)
 
     def create_task(
         self,
@@ -56,8 +78,17 @@ class TaskLifecycleManager:
         if task is None:
             raise KeyError(f"Task not found: {task_id}")
 
-        allowed = _TRANSITIONS.get(task.status, frozenset())
-        if to_status not in allowed:
+        # H5a wire: defer to the canonical table on TaskTransition but
+        # keep manager.transition()'s stricter "must be a real change"
+        # semantics — self-transitions are silently legal on the table
+        # (no-op friendliness) but here they indicate a caller bug.
+        if task.status is to_status:
+            raise ValueError(
+                f"Invalid transition: {task.status.value} -> {to_status.value}. "
+                f"Task is already in status {to_status.value}."
+            )
+        if not TaskTransition.is_valid(task.status, to_status):
+            allowed = TaskTransition.allowed_targets(task.status)
             raise ValueError(
                 f"Invalid transition: {task.status.value} -> {to_status.value}. "
                 f"Allowed: {', '.join(s.value for s in allowed)}"

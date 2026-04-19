@@ -28,6 +28,7 @@ def build_keybindings(
     on_exit: Callable[[], None],
     on_voice_toggle: Optional[Callable[[], None]] = None,
     on_expand_toggle: Optional[Callable[[], None]] = None,
+    on_plan_toggle: Optional[Callable[[], None]] = None,
 ) -> KeyBindings:
     """Construct the full KeyBindings set for the REPL.
 
@@ -37,6 +38,9 @@ def build_keybindings(
         on_submit: callback fired when Enter is pressed on non-empty text
         on_exit: callback fired on Ctrl+D (empty) / second Ctrl+C (empty)
         on_voice_toggle: optional; if set, Ctrl+G and Ctrl+Space fire it
+        on_plan_toggle: optional; if set, Shift+Tab flips plan/build
+            — this is the keystroke :data:`PLAN_MODE_DENY_MESSAGE`
+            advertises to users
 
     Note on Esc handling:
         We deliberately do NOT bind plain Esc here. prompt_toolkit treats
@@ -112,6 +116,19 @@ def build_keybindings(
         @kb.add("c-@")  # prompt_toolkit encodes Ctrl+Space as Ctrl+@
         def _voice(event: Any) -> None:
             on_voice_toggle()
+
+    # === Plan/Build mode toggle (Shift+Tab) ===
+    #
+    # Matches the keystroke advertised by ``PLAN_MODE_DENY_MESSAGE``.
+    # The callback owns mode state (it flips plan↔build via the
+    # dispatcher's ``_cmd_mode`` path, which routes through
+    # ``PermissionPolicy.switch_to`` so the build-switch reminder
+    # auto-injects on the next turn).
+
+    if on_plan_toggle is not None:
+        @kb.add("s-tab")
+        def _plan_toggle(event: Any) -> None:
+            on_plan_toggle()
 
     # === Right-arrow accept completion (fish-shell style) ===
     #
