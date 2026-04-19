@@ -351,13 +351,14 @@ class SystemPromptBuilder:
             if task_section:
                 sections.append(PromptSection(content=task_section, scope="session", priority=30))
 
-        # Plan-mode reminder — injected when the active policy is PLAN
-        # so the model can't forget the read-only constraint. Priority
-        # 1 in the session scope so it lands near the top of the
-        # dynamic section but after the MCP / active-skill headers.
+        # Plan-mode reminder — injected when the active policy is
+        # PLAN or READ_ONLY. Both modes forbid mutation, so the same
+        # reminder wording lands correctly. Priority 1 in session
+        # scope places it near the top of the dynamic section.
         if permission_policy is not None:
             mode = getattr(permission_policy, "mode", None)
-            if mode is not None and str(getattr(mode, "value", mode)) == "plan":
+            mode_value = str(getattr(mode, "value", mode)) if mode else ""
+            if mode_value in ("plan", "read_only"):
                 from llm_code.runtime.prompt_mode_reminders import (
                     plan_mode_reminder,
                     plan_mode_reminder_anthropic,
@@ -374,6 +375,28 @@ class SystemPromptBuilder:
                 sections.append(PromptSection(
                     content=reminder, scope="session", priority=1,
                 ))
+
+            # Build-switch reminder — consumed once per transition so
+            # the reminder fires on the next turn after the flip and
+            # never again until the user switches modes another time.
+            consume = getattr(permission_policy, "consume_last_transition", None)
+            if callable(consume):
+                event = consume()
+                if event is not None:
+                    from_value = getattr(event.from_mode, "value", "")
+                    to_value = getattr(event.to_mode, "value", "")
+                    if (
+                        from_value in ("plan", "read_only")
+                        and to_value in ("workspace_write", "full_access", "auto_accept")
+                    ):
+                        from llm_code.runtime.prompt_mode_reminders import (
+                            build_switch_reminder,
+                        )
+                        sections.append(PromptSection(
+                            content=build_switch_reminder(),
+                            scope="session",
+                            priority=2,
+                        ))
 
         return self._serialize(sections)
 

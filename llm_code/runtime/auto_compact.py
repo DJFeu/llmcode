@@ -60,6 +60,61 @@ class AutoCompactState:
         return self._failures >= max_consecutive_failures
 
 
+class IterationBudget:
+    """Per-turn tool-use counter with a soft max.
+
+    Pairs with :class:`AutoCompactState` in the conversation loop:
+    compaction handles long-context failure, iteration budget handles
+    long-loop failure. When ``exceeded`` is True the runtime should
+    inject :func:`prompt_mode_reminders.max_steps_reminder` on the
+    next prompt and stop dispatching tool calls for the rest of the
+    turn so the model emits a text-only summary instead of spinning.
+    """
+
+    __slots__ = ("_max", "_used")
+
+    def __init__(self, max_iterations: int) -> None:
+        if max_iterations < 1:
+            raise ValueError(
+                f"max_iterations must be >= 1 (got {max_iterations})"
+            )
+        self._max = max_iterations
+        self._used = 0
+
+    @property
+    def used(self) -> int:
+        return self._used
+
+    @property
+    def max_iterations(self) -> int:
+        return self._max
+
+    @property
+    def exceeded(self) -> bool:
+        return self._used >= self._max
+
+    def tick(self) -> None:
+        self._used += 1
+
+    def reset(self) -> None:
+        self._used = 0
+
+    def build_reminder(
+        self, work_done: str = "", remaining: str = "",
+    ) -> str | None:
+        """Return the ``max-steps`` reminder when exhausted, else None.
+
+        Keeps the call site simple: ``text = budget.build_reminder(...)``
+        returns ``None`` when the budget isn't exhausted yet so callers
+        can skip injection without threading an ``if exceeded`` check
+        through their code paths.
+        """
+        if not self.exceeded:
+            return None
+        from llm_code.runtime.prompt_mode_reminders import max_steps_reminder
+        return max_steps_reminder(work_done=work_done, remaining=remaining)
+
+
 def _count_text_blocks(messages: Sequence[Any]) -> int:
     n = 0
     for msg in messages:
