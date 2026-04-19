@@ -376,14 +376,17 @@ class CommandDispatcher:
             self._view.print_error("Runtime not initialized.")
             return
         policy = runtime._permissions
-        current = getattr(policy, "_mode", PermissionMode.PROMPT)
+        current = policy.mode
+        # Route through switch_to so the ModeTransition event is
+        # recorded for the SystemPromptBuilder to consume (and emit
+        # the build-switch reminder where applicable).
         if current == PermissionMode.AUTO_ACCEPT:
-            policy._mode = PermissionMode.PROMPT
+            policy.switch_to(PermissionMode.PROMPT)
             self._view.print_info(
                 "YOLO mode OFF — permissions will prompt again."
             )
         else:
-            policy._mode = PermissionMode.AUTO_ACCEPT
+            policy.switch_to(PermissionMode.AUTO_ACCEPT)
             self._view.print_warning(
                 "YOLO mode ON — all permissions auto-accepted. "
                 "Be careful: write/delete operations will execute "
@@ -417,7 +420,11 @@ class CommandDispatcher:
         runtime = self._state.runtime
         if runtime is not None:
             if hasattr(runtime, "_permissions") and runtime._permissions is not None:
-                runtime._permissions._mode = perm_mode
+                # Route through switch_to so the ModeTransition event is
+                # recorded — SystemPromptBuilder reads it on the next
+                # turn to inject the build-switch reminder when the
+                # flip relaxes the read-only constraint.
+                runtime._permissions.switch_to(perm_mode)
             runtime.plan_mode = self._state.plan_mode
         self._view.print_info(f"Switched to {label} mode")
 

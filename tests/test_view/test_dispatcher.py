@@ -70,11 +70,34 @@ class FakeRuntime:
 
 
 class FakePermissionPolicy:
-    """Mimics the v1.x PermissionPolicy public surface. ``_mode`` is
-    mutated by /yolo and /mode."""
+    """Mimics the PermissionPolicy public surface. ``_mode`` is
+    mutated by /yolo and /mode (historically directly, now via
+    ``switch_to`` so the ModeTransition event is recorded)."""
 
     def __init__(self, mode: Any) -> None:
         self._mode = mode
+        self._last_transition = None
+
+    @property
+    def mode(self) -> Any:
+        return self._mode
+
+    def switch_to(self, target: Any) -> Any:
+        if target is self._mode:
+            return None
+        from llm_code.runtime.permissions import ModeTransition
+        event = ModeTransition(from_mode=self._mode, to_mode=target)
+        self._mode = target
+        self._last_transition = event
+        return event
+
+    def last_transition(self) -> Any:
+        return self._last_transition
+
+    def consume_last_transition(self) -> Any:
+        event = self._last_transition
+        self._last_transition = None
+        return event
 
 
 def _make_state(

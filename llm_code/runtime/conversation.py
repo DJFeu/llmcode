@@ -43,6 +43,7 @@ from llm_code.tools.base import ToolResult
 from llm_code.tools.parsing import ParsedToolCall, parse_tool_calls
 
 if TYPE_CHECKING:
+    from llm_code.runtime.auto_compact import IterationBudget
     from llm_code.runtime.context import ProjectContext
     from llm_code.runtime.permissions import PermissionPolicy
     from llm_code.runtime.prompt import SystemPromptBuilder
@@ -474,6 +475,11 @@ class ConversationRuntime:
         # answering), and raise RuntimeError after 3 to prevent a
         # tight loop from burning a whole retry budget on nothing.
         self._consecutive_empty_responses: int = 0
+        # Per-turn tool-use budget counter. Populated at the start of
+        # run_turn; after the turn loop exhausts naturally the runtime
+        # yields the max-steps reminder so the user sees why the
+        # conversation stopped silently instead of finishing cleanly.
+        self._iteration_budget: "IterationBudget | None" = None
         # Wave2-1c: track the last-seen context pressure bucket (low/
         # mid/high) so we only fire the context_pressure hook once
         # per crossing instead of every turn past the threshold.
@@ -972,7 +978,16 @@ class ConversationRuntime:
         _retry_tracker = RecentToolCallTracker()
         _force_text_next_iteration = False
 
+        # Fresh iteration budget for this turn — exposes an observable
+        # ``used`` / ``exceeded`` counter and produces the max-steps
+        # reminder text when the turn has burned its budget.
+        from llm_code.runtime.auto_compact import IterationBudget
+        self._iteration_budget = IterationBudget(
+            max_iterations=max(1, int(self._config.max_turn_iterations)),
+        )
+
         for _iteration in range(self._config.max_turn_iterations):
+            self._iteration_budget.tick()
             # Proactive context compaction: compress before hitting model limit
             est_tokens = self.session.estimated_tokens()
 
@@ -1971,6 +1986,14 @@ class ConversationRuntime:
                 break  # Exit the outer turn-iteration loop
 
             # 10. Loop back for LLM to process results
+
+        # Max-steps reminder — fires once when the iteration budget
+        # exhausted. ``build_reminder`` returns None unless exceeded
+        # so a clean early break (retry-loop / end_turn) stays silent.
+        if self._iteration_budget is not None:
+            reminder = self._iteration_budget.build_reminder()
+            if reminder:
+                yield StreamTextDelta(text=reminder)
 
         # Update session usage
         self.session = self.session.update_usage(accumulated_usage)
