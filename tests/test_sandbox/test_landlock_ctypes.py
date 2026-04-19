@@ -74,7 +74,12 @@ class TestApplyLandlockSequence:
             call_order.append(f"syscall_{nr}")
             # create_ruleset returns a fake FD; subsequent syscalls
             # (add_rule / restrict_self) must return 0 to signal success.
-            return 3 if nr == landlock_ctypes.NR_LANDLOCK_CREATE_RULESET else 0
+            # Use a high fake fd so the eventual os.close() in
+            # apply_landlock hits an unused slot (caught by the
+            # code's try/except OSError) instead of stomping on
+            # pytest's real fd 3 (its saved stdout) — that would
+            # corrupt pytest's capture teardown.
+            return 999 if nr == landlock_ctypes.NR_LANDLOCK_CREATE_RULESET else 0
 
         with patch.object(landlock_ctypes, "_prctl", mock_prctl), \
              patch.object(landlock_ctypes, "_syscall", mock_syscall):
@@ -93,7 +98,12 @@ class TestApplyLandlockSequence:
 
         def mock_syscall(nr, *a, **kw):  # noqa: ARG001
             call_order.append(nr)
-            return 3 if nr == landlock_ctypes.NR_LANDLOCK_CREATE_RULESET else 0
+            # Use a high fake fd so the eventual os.close() in
+            # apply_landlock hits an unused slot (caught by the
+            # code's try/except OSError) instead of stomping on
+            # pytest's real fd 3 (its saved stdout) — that would
+            # corrupt pytest's capture teardown.
+            return 999 if nr == landlock_ctypes.NR_LANDLOCK_CREATE_RULESET else 0
 
         with patch.object(landlock_ctypes, "_prctl", mock_prctl), \
              patch.object(landlock_ctypes, "_syscall", mock_syscall):
