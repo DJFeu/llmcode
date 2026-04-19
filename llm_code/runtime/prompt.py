@@ -29,20 +29,45 @@ def select_intro_prompt(model: str) -> str:
     """Pick a model-tuned system intro prompt based on model name.
 
     Returns the file content from prompts/<family>.md, falling back to default.md.
+
+    Routing order matters — more specific patterns must win. Reference-
+    aligned with opencode's ``session/system.ts`` routing: ``copilot``
+    wins over ``gpt``; reasoning-class OpenAI models (o1/o3/gpt-4/gpt-5)
+    route to ``beast`` rather than the baseline ``gpt`` prompt; the
+    ``trinity`` substring catches any model id the user labels as such.
     """
     if not model:
         return _read_prompt("default")
 
     m = model.lower()
-    # Order matters — check more specific patterns first
+
+    # Most specific backends first — copilot and codex are distinct
+    # surfaces from raw OpenAI, so they must win over the generic gpt
+    # branch even when their ids contain "gpt".
+    if "copilot" in m:
+        return _read_prompt("copilot_gpt5")
     if "codex" in m:
         return _read_prompt("codex")
-    if "gpt-" in m or "gpt4" in m or "gpt5" in m or "/gpt" in m or m.startswith("gpt") or "o1" in m or "o3" in m:
+
+    # Reasoning-class OpenAI models iterate best with the beast prompt.
+    if (
+        "o1" in m
+        or "o3" in m
+        or "gpt-4" in m or "gpt4" in m
+        or "gpt-5" in m or "gpt5" in m
+    ):
+        return _read_prompt("beast")
+
+    # Plain GPT (3.5 etc.) still uses the tuned gpt prompt.
+    if "gpt-" in m or "/gpt" in m or m.startswith("gpt"):
         return _read_prompt("gpt")
+
     if "claude" in m or "anthropic" in m or "sonnet" in m or "opus" in m or "haiku" in m:
         return _read_prompt("anthropic")
     if "gemini" in m:
         return _read_prompt("gemini")
+    if "trinity" in m:
+        return _read_prompt("trinity")
     if "qwen" in m:
         return _read_prompt("qwen")
     if "llama" in m:
