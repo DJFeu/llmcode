@@ -115,6 +115,34 @@ class SeatbeltSandboxBackend:
             lines.append('(allow file-write* (subpath "/tmp"))')
             lines.append('(allow file-write* (subpath "/private/tmp"))')
             lines.append('(allow file-write* (subpath "/private/var/folders"))')
+        self._emit_network_rules(lines, policy)
+        return "\n".join(lines) + "\n"
+
+    def _emit_network_rules(self, lines: list[str], policy: SandboxPolicy) -> None:
+        """Translate policy network axis into seatbelt directives.
+
+        An explicit port/CIDR allowlist wins over the coarse
+        ``allow_network`` flag so a caller that sets
+        ``allow_network=True, allowed_ports=(443,)`` gets the tight
+        rule, not ``(allow network*)``. The allowlist is also honoured
+        when ``allow_network=False`` — the semantics of a non-empty
+        allowlist is "block everything except these."
+        """
+        if policy.allowed_ports or policy.allowed_cidrs:
+            for port in policy.allowed_ports:
+                lines.append(
+                    f'(allow network-outbound (remote tcp "*:{port}"))'
+                )
+                lines.append(
+                    f'(allow network-outbound (remote udp "*:{port}"))'
+                )
+            for cidr in policy.allowed_cidrs:
+                # seatbelt accepts the literal CIDR notation for ip
+                # sub-predicates. We emit both outbound directions so
+                # UDP (e.g. DNS, QUIC) can also be scoped.
+                lines.append(
+                    f'(allow network-outbound (remote ip "{cidr}"))'
+                )
+            return
         if policy.allow_network:
             lines.append("(allow network*)")
-        return "\n".join(lines) + "\n"

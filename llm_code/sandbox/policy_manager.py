@@ -27,16 +27,25 @@ from typing import Protocol, runtime_checkable
 class SandboxPolicy:
     """Platform-agnostic policy description.
 
-    Path lists take precedence in the order: ``deny_paths`` always
-    wins; then ``allow_paths`` (explicit allowlist); fallbacks to the
-    boolean ``allow_read`` / ``allow_write`` flags. Backends enforce
-    the policy using whatever primitives the OS provides.
+    Filesystem axis — ``deny_paths`` always wins, then ``allow_paths``
+    (explicit allowlist), then the boolean ``allow_read`` /
+    ``allow_write`` flags.
+
+    Network axis — ``allowed_ports`` and ``allowed_cidrs`` tighten an
+    otherwise-open policy to specific TCP ports / CIDR ranges. Backends
+    that can enforce network rules (seatbelt today) emit granular
+    directives; backends that only have coarse on/off (bwrap, pty)
+    still honour the coarse ``allow_network`` flag and silently ignore
+    the granular lists. An empty granular list preserves the old
+    behaviour, so existing call sites need no changes.
     """
     allow_read: bool = True       # least privilege — read-only by default
     allow_write: bool = False
     allow_network: bool = False
     allow_paths: tuple[str, ...] = ()
     deny_paths: tuple[str, ...] = ()
+    allowed_ports: tuple[int, ...] = ()
+    allowed_cidrs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
