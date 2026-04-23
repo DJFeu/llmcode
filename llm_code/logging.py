@@ -57,5 +57,15 @@ def setup_logging(
 
 
 def get_logger(name: str) -> logging.Logger:
-    """Return a child logger under the llm_code namespace."""
+    """Return a child logger under the ``llm_code`` namespace.
+
+    Callers typically pass ``__name__``. For modules inside the
+    ``llm_code`` package the dotted name already starts with
+    ``llm_code.`` — re-prefixing produces ``llm_code.llm_code.view…``
+    style double-prefixed logger names that show up in WARNING output
+    (observed on v2.2.2 glm-5.1 stream_renderer warnings). Skip the
+    prefix when the caller already provided a package-qualified name.
+    """
+    if name == "llm_code" or name.startswith("llm_code."):
+        return logging.getLogger(name)
     return logging.getLogger(f"llm_code.{name}")
