@@ -79,6 +79,8 @@ def select_intro_prompt(model: str) -> str:
         return _read_prompt("deepseek")
     if "kimi" in m or "moonshot" in m:
         return _read_prompt("kimi")
+    if "glm" in m or "zhipu" in m:
+        return _read_prompt("glm")
     return _read_prompt("default")
 
 
