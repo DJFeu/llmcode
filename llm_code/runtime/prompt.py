@@ -5,6 +5,7 @@ import dataclasses
 import json
 import logging
 import platform
+import warnings
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -12,6 +13,7 @@ from typing import TYPE_CHECKING, Literal
 from llm_code.api.types import ToolDefinition
 from llm_code.runtime.context import ProjectContext
 from llm_code.runtime.dynamic_prompt import build_delegation_section
+from llm_code.runtime.model_profile import ModelProfile
 from llm_code.runtime.prompt_guard import sanitize_mcp_instructions
 
 if TYPE_CHECKING:
@@ -27,11 +29,52 @@ _ENGINE_PROMPTS_DIR = (
 )
 
 
-def select_intro_prompt(model: str) -> str:
-    """Pick a model-tuned system intro prompt based on model name.
+def load_intro_prompt(profile: ModelProfile) -> str:
+    """Load the model-tuned system intro prompt declared by ``profile``.
 
-    Returns the file content from ``engine/prompts/models/<family>.j2``,
-    falling back to ``default.j2``.
+    Reads ``profile.prompt_template`` and returns the rendered template
+    body. The template path may be:
+
+    * A short name (e.g. ``"glm"``), resolved under
+      ``engine/prompts/models/<name>.j2``.
+    * A repo-style path (e.g. ``"models/glm.j2"``), accepted for forward
+      compatibility with the v13 spec's nested notation.
+
+    If ``profile.prompt_template`` is empty the loader falls back to
+    ``"default"``. Missing files fall back to an inline safe default
+    via :func:`_read_prompt` — never raising.
+
+    This function is profile-driven and does **no** model-id string
+    matching. The caller is expected to have resolved the profile via
+    :func:`llm_code.runtime.profile_registry.resolve_profile_for_model`.
+    """
+    template = profile.prompt_template or "default"
+    name = _template_path_to_name(template)
+    return _read_prompt(name)
+
+
+def _template_path_to_name(template: str) -> str:
+    """Normalise a profile ``prompt_template`` value to a short name.
+
+    Accepts any of ``"glm"``, ``"models/glm"``, ``"models/glm.j2"``,
+    ``"glm.j2"`` — all resolve to the short name ``"glm"``.
+    """
+    name = template
+    if name.startswith("models/"):
+        name = name[len("models/"):]
+    if name.endswith(".j2"):
+        name = name[: -len(".j2")]
+    return name or "default"
+
+
+def _legacy_select_intro_prompt(model: str) -> str:
+    """Historical if-ladder that routes a model id to a template name.
+
+    Retained as the Phase A fallback for the deprecated
+    :func:`select_intro_prompt` shim — invoked whenever the resolved
+    profile has no ``prompt_template``. Phase C deletes this function
+    entirely (together with its callers); Phase B migrates every
+    built-in TOML so this path is never taken for shipped models.
 
     Routing order matters — more specific patterns must win. Reference-
     aligned with opencode's ``session/system.ts`` routing: ``copilot``
@@ -82,6 +125,43 @@ def select_intro_prompt(model: str) -> str:
     if "glm" in m or "zhipu" in m:
         return _read_prompt("glm")
     return _read_prompt("default")
+
+
+def select_intro_prompt(model: str) -> str:
+    """Deprecated shim — use ``load_intro_prompt(resolve_profile_for_model(model))``.
+
+    Phase A behaviour: emits a :class:`DeprecationWarning` on every
+    call, then delegates via the profile registry if the resolved
+    profile declares a ``prompt_template``. Otherwise the call falls
+    back to :func:`_legacy_select_intro_prompt` so Phase A is a
+    zero-behaviour-change refactor — every model that routed to a
+    specific template before v13 continues to do so.
+
+    Removed in v13 Phase C. Callers should migrate to
+    :func:`load_intro_prompt` paired with
+    :func:`llm_code.runtime.profile_registry.resolve_profile_for_model`.
+    """
+    warnings.warn(
+        "select_intro_prompt(model) is deprecated; use "
+        "load_intro_prompt(resolve_profile_for_model(model)) from "
+        "llm_code.runtime.profile_registry — removed in v13 Phase C.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    # Lazy import so the shim does not pay the TOML-sweep cost until
+    # its first call — and so the registry module can import from
+    # runtime.prompt freely in the future without a cycle.
+    from llm_code.runtime.profile_registry import (
+        _ensure_builtin_profiles_loaded,
+        resolve_profile_for_model,
+    )
+
+    _ensure_builtin_profiles_loaded()
+    profile = resolve_profile_for_model(model)
+    if profile.prompt_template:
+        return load_intro_prompt(profile)
+    # Phase A: no Phase-B-migrated profile matched → historical ladder.
+    return _legacy_select_intro_prompt(model)
 
 
 def _read_prompt(name: str) -> str:

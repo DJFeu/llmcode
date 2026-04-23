@@ -70,6 +70,43 @@ class ModelProfile:
     max_output_tokens: int = 4096
     context_window: int = 128000  # advertised context length
 
+    # ── v13 Phase A: profile-driven adapters ──────────────────────────
+    # Replace the hardcoded if-ladder in ``runtime/prompt.py::
+    # select_intro_prompt`` (deleted in v13 Phase C). A profile that
+    # omits these fields gets the historical fallback via the
+    # deprecated shim — so Phase A is a zero-behaviour-change refactor.
+    #
+    # TOML authoring (flat sections to match existing convention):
+    #
+    #     [prompt]
+    #     template = "models/glm.j2"
+    #     match = ["glm", "zhipu"]
+    #
+    #     [parser]
+    #     variants = ["json_payload", "hermes_function", "harmony_kv",
+    #                 "glm_brace", "bare_name_tag"]
+    #
+    #     [parser_hints]
+    #     custom_close_tags = ["</arg_value>"]
+    #     call_separator_chars = "→ \t\r\n"
+    #
+    # ``prompt_template`` — path under ``engine/prompts/`` (e.g.
+    #   ``"models/glm.j2"``). Read by ``load_intro_prompt(profile)``.
+    # ``prompt_match`` — lowercase substrings; first profile whose
+    #   match list contains a substring of the user's model id is
+    #   picked by ``resolve_profile_for_model(model_id)``.
+    # ``parser_variants`` — ordered variant names consumed by
+    #   ``tools/parser_variants.REGISTRY``. Empty = use
+    #   ``DEFAULT_VARIANT_ORDER``.
+    # ``custom_close_tags`` + ``call_separator_chars`` — feed
+    #   ``view/stream_parser.StreamParser`` to replace the
+    #   GLM-specific heuristic for variant 6 / variant 7 handling.
+    prompt_template: str = ""
+    prompt_match: tuple[str, ...] = ()
+    parser_variants: tuple[str, ...] = ()
+    custom_close_tags: tuple[str, ...] = ()
+    call_separator_chars: str = ""
+
 
 # ── Built-in profiles ─────────────────────────────────────────────────
 
@@ -470,6 +507,10 @@ def _profile_from_dict(data: dict[str, Any], base: ModelProfile | None = None) -
         "sampling": ("default_temperature", "reasoning_effort"),
         "deployment": ("is_local", "unlimited_token_upgrade", "is_small_model"),
         "routing": ("tier_c_model",),
+        # v13 Phase A sections.
+        "prompt": ("prompt_template", "prompt_match"),
+        "parser": ("parser_variants",),
+        "parser_hints": ("custom_close_tags", "call_separator_chars"),
     }
     for key, value in data.items():
         if isinstance(value, dict):
@@ -497,11 +538,24 @@ def _profile_from_dict(data: dict[str, Any], base: ModelProfile | None = None) -
         elif key in valid_fields:
             flat[key] = value
 
+    # v13 Phase A: fields typed ``tuple[str, ...]`` must be coerced from
+    # the ``list`` TOML parsers hand back. Do this in a single pass so
+    # new tuple fields (parser_variants, custom_close_tags, prompt_match)
+    # don't need to be hard-wired.
+    _TUPLE_FIELDS = {
+        f.name
+        for f in fields(ModelProfile)
+        if str(f.type).startswith("tuple[") or str(f.type).startswith("Tuple[")
+    }
+
     # Merge: base fields + overrides from flat
     merged = {}
     for f in fields(ModelProfile):
         if f.name in flat:
-            merged[f.name] = flat[f.name]
+            value = flat[f.name]
+            if f.name in _TUPLE_FIELDS and isinstance(value, list):
+                value = tuple(value)
+            merged[f.name] = value
         else:
             merged[f.name] = getattr(base, f.name)
 

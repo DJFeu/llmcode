@@ -34,7 +34,10 @@ class WebSearchTool(Tool):
         return (
             "Search the web for information. "
             "Supports DuckDuckGo (default), Brave, Tavily, SearXNG, and Serper backends. "
-            "Returns ranked results with titles, URLs, and snippets."
+            "Returns ranked results with titles, URLs, and snippets. "
+            "For 'today's news' / 'latest X' asks, include the full date "
+            "(YYYY-MM-DD — see the Environment section) in the query; a "
+            "month-only query matches stale month-archive pages."
         )
 
     @property

@@ -51,11 +51,25 @@ class StreamParser:
     ``flush()``.
     """
 
+    # v13 Phase A defaults — preserve v2.2.5 behaviour when callers
+    # don't supply hints. GLM variant 6 closes on ``</arg_value>`` and
+    # separates sibling calls with U+2192 ``→``; Harmony variant 7
+    # legitimately contains ``<arg_key>`` inside the body, so the
+    # stream parser must wait for the real ``</tool_call>`` when that
+    # substring is seen. Callers that DO pass profile hints override
+    # these defaults with their own tuples.
+    _DEFAULT_CUSTOM_CLOSE_TAGS: tuple[str, ...] = ("</arg_value>",)
+    _DEFAULT_CALL_SEPARATOR_CHARS: str = "\u2192 \t\r\n"
+    _DEFAULT_STANDARD_CLOSE_REQUIRED_ON: tuple[str, ...] = ("<arg_key>",)
+
     def __init__(
         self,
         *,
         implicit_thinking: bool = False,
         known_tool_names: frozenset[str] | None = None,
+        custom_close_tags: tuple[str, ...] | None = None,
+        call_separator_chars: str | None = None,
+        standard_close_required_on: tuple[str, ...] | None = None,
     ) -> None:
         """Create a new parser.
 
@@ -67,6 +81,24 @@ class StreamParser:
         When ``known_tool_names`` is provided, the parser also
         detects bare ``<tool_name>JSON</...>`` patterns (variant 5)
         and classifies them as TOOL_CALL instead of TEXT.
+
+        v13 Phase A profile hints — each kwarg is an override; pass
+        ``None`` (the default) to keep v2.2.5 behaviour:
+
+        - ``custom_close_tags`` — fallback close tags when
+          ``</tool_call>`` is not yet visible. Defaults to
+          ``("</arg_value>",)`` to support GLM variant 6.
+        - ``call_separator_chars`` — chars ``.lstrip``ed after a
+          custom close tag before the next ``<tool_call>`` search.
+          Defaults to ``"→ \\t\\r\\n"`` to eat GLM's arrow separator.
+        - ``standard_close_required_on`` — if any substring here
+          appears in the ``<tool_call>`` buffer, wait for the real
+          ``</tool_call>`` (avoids variant 7 ``<arg_key>`` false
+          terminations on interior ``</arg_value>`` tags). Defaults
+          to ``("<arg_key>",)``.
+
+        Passing empty tuples ``()`` / ``""`` explicitly disables the
+        feature (e.g. a Claude profile with no custom behaviour).
         """
         self._buffer: str = ""
         self._in_think: bool = implicit_thinking
@@ -74,6 +106,23 @@ class StreamParser:
         self._in_bare_tool: bool = False  # inside a <known_tool_name> block
         self._bare_tool_tag: str = ""     # the opening tag name
         self._known_tool_names = known_tool_names or frozenset()
+        # Profile hints — None falls back to v2.2.5 defaults; the
+        # explicit empty tuple / empty string opts out.
+        self._custom_close_tags: tuple[str, ...] = (
+            custom_close_tags
+            if custom_close_tags is not None
+            else self._DEFAULT_CUSTOM_CLOSE_TAGS
+        )
+        self._call_separator_chars: str = (
+            call_separator_chars
+            if call_separator_chars is not None
+            else self._DEFAULT_CALL_SEPARATOR_CHARS
+        )
+        self._standard_close_required_on: tuple[str, ...] = (
+            standard_close_required_on
+            if standard_close_required_on is not None
+            else self._DEFAULT_STANDARD_CLOSE_REQUIRED_ON
+        )
 
     def feed(self, chunk: str) -> list[StreamEvent]:
         self._buffer += chunk
@@ -194,39 +243,47 @@ class StreamParser:
             return False
 
         if self._in_tool_call:
-            # Close-tag selection — variant-aware.
+            # Close-tag selection — profile-driven (v13 Phase A).
             #
-            # Variant 7 (Harmony) body contains ``<arg_key>`` and
-            # multiple ``<arg_value>``; the real close is always
-            # ``</tool_call>``. Using an interior ``</arg_value>`` as
-            # close would break the block. If ``<arg_key>`` appears
-            # anywhere in the buffer we commit to waiting for
-            # ``</tool_call>``.
-            #
-            # Variant 6 (GLM ``NAME}{JSON}</arg_value>``) never emits
-            # ``</tool_call>`` at all, so we fall back to
-            # ``</arg_value>`` when no standard close is visible and
-            # the buffer does NOT look like variant 7.
+            # 1. Standard ``</tool_call>`` ALWAYS wins when visible —
+            #    this is a universal rule, independent of variant.
+            # 2. Else, if any substring in
+            #    ``standard_close_required_on`` is present in the
+            #    buffer, wait for the real ``</tool_call>`` (avoids
+            #    eating interior tags that belong to a variant body,
+            #    e.g. Harmony variant 7's ``</arg_value>``).
+            # 3. Else, scan for the earliest ``custom_close_tags``
+            #    occurrence and use that as the close.
+            # 4. If none found, wait for more data.
             end_std = buf.find("</tool_call>")
             if end_std != -1:
                 end, close_tag = end_std, "</tool_call>"
             else:
-                if "<arg_key>" in buf:
-                    # Variant 7 in progress — wait for the real close.
+                if any(
+                    marker in buf
+                    for marker in self._standard_close_required_on
+                ):
                     return False
-                end_glm = buf.find("</arg_value>")
-                if end_glm == -1:
+                # Scan each custom close tag; use the earliest.
+                earliest: tuple[int, str] | None = None
+                for tag in self._custom_close_tags:
+                    pos = buf.find(tag)
+                    if pos == -1:
+                        continue
+                    if earliest is None or pos < earliest[0]:
+                        earliest = (pos, tag)
+                if earliest is None:
                     return False
-                end, close_tag = end_glm, "</arg_value>"
+                end, close_tag = earliest
             close_len = len(close_tag)
             block = buf[: end + close_len]
             rest = buf[end + close_len :]
-            if close_tag == "</arg_value>":
-                # GLM-5.1 separates sibling tool calls with U+2192
-                # ``→`` (plus optional whitespace). Consume any such
-                # separator so the NEXT iteration starts cleanly at
-                # the following ``<tool_call>`` (if any).
-                rest = rest.lstrip("→ \t\r\n")
+            if close_tag != "</tool_call>" and self._call_separator_chars:
+                # Consume any configured separator characters so the
+                # NEXT iteration starts cleanly at the following
+                # ``<tool_call>`` (if any). For GLM-5.1 variant 6 the
+                # separator is U+2192 ``→`` + whitespace.
+                rest = rest.lstrip(self._call_separator_chars)
             self._buffer = rest
             self._in_tool_call = False
             parsed = parse_tool_calls(block, None)

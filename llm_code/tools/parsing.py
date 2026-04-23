@@ -148,6 +148,8 @@ def parse_tool_calls(
     response_text: str,
     native_tool_calls: list[dict] | None,
     known_tool_names: set[str] | frozenset[str] | None = None,
+    *,
+    profile: "object | None" = None,
 ) -> list[ParsedToolCall]:
     """Parse tool calls from either native API format or XML tags in text.
 
@@ -162,10 +164,17 @@ def parse_tool_calls(
     variant runs unrestricted — keep in mind that permissive mode can
     match ``<p>{"a":1}</p>`` and similar HTML-ish content as a false
     positive, so production callers should always pass the set.
+
+    ``profile`` — v13 Phase A: ``ModelProfile`` (or None). When a
+    profile with a non-empty ``parser_variants`` tuple is provided,
+    the variant order is read from it via
+    ``tools.parser_variants.REGISTRY``. When ``None`` or the tuple is
+    empty, ``DEFAULT_VARIANT_ORDER`` is used — a zero-behaviour-change
+    path for callers that don't wire profiles yet.
     """
     if native_tool_calls:
         return _parse_native(native_tool_calls)
-    return _parse_xml(response_text, known_tool_names)
+    return _parse_xml(response_text, known_tool_names, profile=profile)
 
 
 def _parse_native(native: list[dict]) -> list[ParsedToolCall]:
@@ -183,38 +192,66 @@ def _parse_native(native: list[dict]) -> list[ParsedToolCall]:
 def _parse_xml(
     text: str,
     known_tool_names: set[str] | frozenset[str] | None = None,
+    *,
+    profile: "object | None" = None,
 ) -> list[ParsedToolCall]:
     """Scan the response text for tool calls, accepting the JSON-payload
     and Hermes function-calling formats inside ``<tool_call>`` blocks,
     plus the bare ``<NAME>JSON</NAME>`` variant from Qwen3.5 vLLM chat
-    templates that omit the ``<tool_call>`` wrapping entirely."""
+    templates that omit the ``<tool_call>`` wrapping entirely.
+
+    Variant order is profile-driven (v13 Phase A): when
+    ``profile.parser_variants`` is non-empty, that order wins.
+    Otherwise ``DEFAULT_VARIANT_ORDER`` reproduces the historical
+    sequence exactly.
+    """
+    # Local import to avoid circular import — parser_variants imports
+    # parsing for the regex constants + leaf parse functions.
+    from llm_code.tools.parser_variants import (
+        DEFAULT_VARIANT_ORDER,
+        _WRAPPER_LESS_SCANNERS,
+        get_variant,
+    )
+
+    # Pull ordered variants from profile, falling back to the default
+    # historical order. Empty tuple / missing attr / profile=None all
+    # resolve to DEFAULT_VARIANT_ORDER.
+    raw_order = getattr(profile, "parser_variants", None) if profile else None
+    order: tuple[str, ...] = (
+        tuple(raw_order) if raw_order else DEFAULT_VARIANT_ORDER
+    )
+
+    # Per-block loop: for each ``<tool_call>…</tool_call>`` match, try
+    # variants in order. First variant whose ``match`` predicate fires
+    # AND whose ``parse`` returns non-None wins.
     result: list[ParsedToolCall] = []
     for match in _XML_TOOL_CALL_RE.finditer(text):
         raw = match.group(1).strip()
-        # Try JSON-payload format first (cheaper).
-        parsed = _parse_json_payload(raw)
-        if parsed is None:
-            # Fall back to Hermes function-calling format.
-            parsed = _parse_hermes_block(raw)
-        if parsed is None:
-            # Variant 7 — Harmony <arg_key>/<arg_value> pairs.
-            parsed = _parse_harmony_variant(raw)
-        if parsed is not None:
-            result.append(parsed)
+        for variant_name in order:
+            variant = get_variant(variant_name)
+            if not variant.match(raw):
+                continue
+            parsed = variant.parse(raw)
+            if parsed is not None:
+                result.append(parsed)
+                break
 
-    # Variant 6 — GLM-5.1 ``<tool_call>NAME}{JSON}</arg_value>`` form.
-    # Tried before variant 5 because the opening is still ``<tool_call>``
-    # so the signal is stronger than a bare name tag.
+    # Wrapper-less fallbacks. Only fire when the per-block loop found
+    # nothing, preserving the existing fast path for well-formed
+    # emissions. The scanners walk the full text so they handle the
+    # case where the ``<tool_call>`` wrapper was never emitted.
     if not result:
-        result.extend(_parse_glm_variant(text))
-
-    # Variant 5 fallback: if no ``<tool_call>`` wrapper was found, try
-    # the bare ``<NAME>JSON</NAME>`` variant. Only triggered when the
-    # standard wrappers return nothing, so existing cases stay on the
-    # fast path and the false-positive risk from random XML-ish
-    # content is minimized.
-    if not result:
-        result.extend(_parse_bare_name_tag(text, known_tool_names))
+        for variant_name in order:
+            scanner = _WRAPPER_LESS_SCANNERS.get(variant_name)
+            if scanner is None:
+                continue
+            if variant_name == "bare_name_tag":
+                extras = scanner(text, known_tool_names)  # type: ignore[arg-type]
+            else:
+                extras = scanner(text)  # type: ignore[call-arg]
+            if extras:
+                result.extend(extras)
+                break
     return result
 
 
