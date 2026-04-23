@@ -51,6 +51,28 @@ _HERMES_PARAMETER_RE = re.compile(
     re.DOTALL,
 )
 
+# Variant 7 — Harmony / GLM key-value pair format. Captured
+# 2026-04-24 from glm-5.1 mid-session. The body wraps each arg in
+# a ``<arg_key>NAME</arg_key><arg_value>VALUE</arg_value>`` pair:
+#
+#     <tool_call>
+#     web_search
+#     <arg_key>query</arg_key>
+#     <arg_value>今日熱門新聞</arg_value>
+#     <arg_key>max_results</arg_key>
+#     <arg_value>5</arg_value>
+#     </tool_call>
+#
+# Values are parsed as raw strings; if the string itself is a valid
+# JSON scalar (number / bool / null / array / object) we decode it
+# so ``max_results`` reaches the tool as an int rather than "5".
+# Tool name is the first non-empty line of the body.
+_HARMONY_ARG_PAIR_RE = re.compile(
+    r"<arg_key>\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*</arg_key>\s*"
+    r"<arg_value>(.*?)</arg_value>",
+    re.DOTALL,
+)
+
 # Variant 6 — GLM-5.1 chat-template format. Captured 2026-04-24 from
 # llama.cpp --jinja serving glm-5.1. The on-wire shape is:
 #
@@ -174,6 +196,9 @@ def _parse_xml(
         if parsed is None:
             # Fall back to Hermes function-calling format.
             parsed = _parse_hermes_block(raw)
+        if parsed is None:
+            # Variant 7 — Harmony <arg_key>/<arg_value> pairs.
+            parsed = _parse_harmony_variant(raw)
         if parsed is not None:
             result.append(parsed)
 
@@ -191,6 +216,49 @@ def _parse_xml(
     if not result:
         result.extend(_parse_bare_name_tag(text, known_tool_names))
     return result
+
+
+def _parse_harmony_variant(raw: str) -> ParsedToolCall | None:
+    """Variant 7 — Harmony/GLM ``<arg_key>/<arg_value>`` key-value body.
+
+    The caller passes the raw body (content between ``<tool_call>``
+    and ``</tool_call>``, with the wrapper tags already stripped by
+    ``_XML_TOOL_CALL_RE``). The first non-empty line is the tool
+    name; subsequent ``<arg_key>K</arg_key><arg_value>V</arg_value>``
+    pairs populate the args dict. Values that round-trip as JSON
+    scalars / arrays / objects are decoded so ``{"max_results": 5}``
+    instead of ``{"max_results": "5"}`` reaches the runtime.
+    """
+    pairs = _HARMONY_ARG_PAIR_RE.findall(raw)
+    if not pairs:
+        return None
+    # Extract the tool name from the region BEFORE the first pair.
+    first_pair_at = _HARMONY_ARG_PAIR_RE.search(raw)
+    preamble = raw[: first_pair_at.start()] if first_pair_at else raw
+    name = ""
+    for line in preamble.splitlines():
+        candidate = line.strip()
+        if candidate:
+            name = candidate
+            break
+    if not name or not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*", name):
+        return None
+    if name in _VARIANT_5_RESERVED_NAMES:
+        return None
+    args: dict = {}
+    for key, value in pairs:
+        stripped = value.strip()
+        try:
+            decoded = json.loads(stripped)
+        except (json.JSONDecodeError, ValueError):
+            decoded = stripped
+        args[key] = decoded
+    return ParsedToolCall(
+        id=str(uuid.uuid4()),
+        name=name,
+        args=args,
+        source="xml_tag",
+    )
 
 
 def _parse_glm_variant(text: str) -> list[ParsedToolCall]:

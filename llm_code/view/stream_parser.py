@@ -194,21 +194,30 @@ class StreamParser:
             return False
 
         if self._in_tool_call:
-            # Standard close ``</tool_call>`` OR the GLM-5.1 variant 6
-            # close ``</arg_value>`` (see ``tools/parsing.py::
-            # _GLM_TOOL_CALL_VARIANT_RE``). Pick whichever appears
-            # first in the buffer so a well-formed stream is never
-            # delayed waiting for the alternative.
+            # Close-tag selection — variant-aware.
+            #
+            # Variant 7 (Harmony) body contains ``<arg_key>`` and
+            # multiple ``<arg_value>``; the real close is always
+            # ``</tool_call>``. Using an interior ``</arg_value>`` as
+            # close would break the block. If ``<arg_key>`` appears
+            # anywhere in the buffer we commit to waiting for
+            # ``</tool_call>``.
+            #
+            # Variant 6 (GLM ``NAME}{JSON}</arg_value>``) never emits
+            # ``</tool_call>`` at all, so we fall back to
+            # ``</arg_value>`` when no standard close is visible and
+            # the buffer does NOT look like variant 7.
             end_std = buf.find("</tool_call>")
-            end_glm = buf.find("</arg_value>")
-            candidates: list[tuple[int, str]] = []
             if end_std != -1:
-                candidates.append((end_std, "</tool_call>"))
-            if end_glm != -1:
-                candidates.append((end_glm, "</arg_value>"))
-            if not candidates:
-                return False
-            end, close_tag = min(candidates, key=lambda c: c[0])
+                end, close_tag = end_std, "</tool_call>"
+            else:
+                if "<arg_key>" in buf:
+                    # Variant 7 in progress — wait for the real close.
+                    return False
+                end_glm = buf.find("</arg_value>")
+                if end_glm == -1:
+                    return False
+                end, close_tag = end_glm, "</arg_value>"
             close_len = len(close_tag)
             block = buf[: end + close_len]
             rest = buf[end + close_len :]
