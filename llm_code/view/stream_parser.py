@@ -136,12 +136,37 @@ class StreamParser:
             self._in_bare_tool = False
             return events
         if self._in_tool_call:
-            # Unterminated tool_call — salvage the body as TEXT so
-            # the user at least sees what the model was generating.
-            # Strip the opening ``<tool_call>`` marker if it's still
-            # at the head of the buffer (the buffer keeps it there
-            # so ``parse_tool_calls`` can see the full block when
-            # the closer arrives; here we strip it for display).
+            # GLM-5.1 emits ``<tool_call>NAME}{JSON}</arg_value>`` +
+            # (``→``+``<tool_call>``…) chained tool calls without a
+            # trailing ``</tool_call>`` — the stream ends inside a
+            # still-open block from the standard parser's point of
+            # view. Try the full-buffer parse first so those calls
+            # reach the runtime instead of silently downgrading to
+            # TEXT. The buffer still carries the opening ``<tool_call>``
+            # marker (``_step`` keeps it so this fallback sees the
+            # full block).
+            parsed = parse_tool_calls(
+                self._buffer, None, known_tool_names=self._known_tool_names
+            )
+            if parsed:
+                for p in parsed:
+                    events.append(
+                        StreamEvent(kind=StreamEventKind.TOOL_CALL, tool_call=p)
+                    )
+                _log.info(
+                    "StreamParser.flush: recovered %d tool call(s) from "
+                    "unterminated <tool_call> block (%d chars, likely "
+                    "GLM variant 6)",
+                    len(parsed),
+                    len(self._buffer),
+                )
+                self._buffer = ""
+                self._in_tool_call = False
+                return events
+
+            # Nothing parsed — salvage the body as TEXT so the user
+            # at least sees what the model was generating. Strip the
+            # leading ``<tool_call>`` marker for display.
             salvaged = self._buffer
             if salvaged.startswith("<tool_call>"):
                 salvaged = salvaged[len("<tool_call>") :]
@@ -169,11 +194,31 @@ class StreamParser:
             return False
 
         if self._in_tool_call:
-            end = buf.find("</tool_call>")
-            if end == -1:
+            # Standard close ``</tool_call>`` OR the GLM-5.1 variant 6
+            # close ``</arg_value>`` (see ``tools/parsing.py::
+            # _GLM_TOOL_CALL_VARIANT_RE``). Pick whichever appears
+            # first in the buffer so a well-formed stream is never
+            # delayed waiting for the alternative.
+            end_std = buf.find("</tool_call>")
+            end_glm = buf.find("</arg_value>")
+            candidates: list[tuple[int, str]] = []
+            if end_std != -1:
+                candidates.append((end_std, "</tool_call>"))
+            if end_glm != -1:
+                candidates.append((end_glm, "</arg_value>"))
+            if not candidates:
                 return False
-            block = buf[: end + len("</tool_call>")]
-            self._buffer = buf[end + len("</tool_call>") :]
+            end, close_tag = min(candidates, key=lambda c: c[0])
+            close_len = len(close_tag)
+            block = buf[: end + close_len]
+            rest = buf[end + close_len :]
+            if close_tag == "</arg_value>":
+                # GLM-5.1 separates sibling tool calls with U+2192
+                # ``→`` (plus optional whitespace). Consume any such
+                # separator so the NEXT iteration starts cleanly at
+                # the following ``<tool_call>`` (if any).
+                rest = rest.lstrip("→ \t\r\n")
+            self._buffer = rest
             self._in_tool_call = False
             parsed = parse_tool_calls(block, None)
             if parsed:

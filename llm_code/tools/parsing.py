@@ -51,6 +51,25 @@ _HERMES_PARAMETER_RE = re.compile(
     re.DOTALL,
 )
 
+# Variant 6 — GLM-5.1 chat-template format. Captured 2026-04-24 from
+# llama.cpp --jinja serving glm-5.1. The on-wire shape is:
+#
+#     <tool_call>web_search}{"query":"今日新聞","max_results":5}</arg_value>
+#
+# Note the closing tag is ``</arg_value>`` (NOT ``</tool_call>``) and
+# the tool name is followed by a literal ``}`` before the JSON args
+# object opens. Multiple tool calls are separated by the ``→``
+# (U+2192) arrow character rather than being wrapped in separate
+# ``<tool_call>`` blocks — the stream parser strips the arrow.
+#
+# Name capture is a conservative Python-identifier regex so only
+# legitimate tool names match. The JSON body is parsed by
+# ``_parse_json_payload`` downstream which enforces the dict shape.
+_GLM_TOOL_CALL_VARIANT_RE = re.compile(
+    r"<tool_call>\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}(\{.*?\})\s*</arg_value>",
+    re.DOTALL,
+)
+
 # Variant 5 — bare name-as-tag form, emitted by Qwen3.5-122B on some
 # vLLM chat template configurations where NEITHER ``<tool_call>`` NOR
 # ``<function=NAME>`` appears in the stream. The on-wire shape is:
@@ -158,6 +177,12 @@ def _parse_xml(
         if parsed is not None:
             result.append(parsed)
 
+    # Variant 6 — GLM-5.1 ``<tool_call>NAME}{JSON}</arg_value>`` form.
+    # Tried before variant 5 because the opening is still ``<tool_call>``
+    # so the signal is stronger than a bare name tag.
+    if not result:
+        result.extend(_parse_glm_variant(text))
+
     # Variant 5 fallback: if no ``<tool_call>`` wrapper was found, try
     # the bare ``<NAME>JSON</NAME>`` variant. Only triggered when the
     # standard wrappers return nothing, so existing cases stay on the
@@ -165,6 +190,36 @@ def _parse_xml(
     # content is minimized.
     if not result:
         result.extend(_parse_bare_name_tag(text, known_tool_names))
+    return result
+
+
+def _parse_glm_variant(text: str) -> list[ParsedToolCall]:
+    """Variant 6 — GLM-5.1 ``<tool_call>NAME}{JSON}</arg_value>``.
+
+    Supports multiple tool calls in a single emission (GLM's chat
+    template separates them with the ``→`` U+2192 arrow character).
+    Each match is parsed independently; a bad JSON body or non-dict
+    shape skips that match without aborting the others.
+    """
+    result: list[ParsedToolCall] = []
+    for m in _GLM_TOOL_CALL_VARIANT_RE.finditer(text):
+        name = m.group(1).strip()
+        if not name or name in _VARIANT_5_RESERVED_NAMES:
+            continue
+        try:
+            args = json.loads(m.group(2))
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(args, dict):
+            continue
+        result.append(
+            ParsedToolCall(
+                id=str(uuid.uuid4()),
+                name=name,
+                args=args,
+                source="xml_tag",
+            )
+        )
     return result
 
 
