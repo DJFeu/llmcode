@@ -1,10 +1,24 @@
-"""Provider client factory — routes model names to the correct provider."""
+"""Provider client factory — routes model names to the correct provider.
+
+M5 note: providers already expose ``async def stream_message`` (see
+:class:`llm_code.api.provider.LLMProvider`), so the module-level
+:func:`stream_async` helper is a thin facade that picks the provider
+for a given model name and yields its async stream events. The legacy
+sync :func:`stream` helper bridges into the async path via an internal
+thread running ``asyncio.run`` — kept as a **compat shim** for callers
+that haven't migrated yet and removed in M8.b alongside the v12 flag.
+"""
 from __future__ import annotations
 
+import asyncio
+import queue
+import threading
 from dataclasses import dataclass
+from typing import AsyncIterator, Iterator
 
 from llm_code.api.provider import LLMProvider
 from llm_code.api.provider_registry import ProviderDescriptor, get_registry
+from llm_code.api.types import MessageRequest, StreamEvent
 from llm_code.logging import get_logger
 from llm_code.runtime.model_aliases import resolve_model
 from llm_code.runtime.model_profile import ModelProfile, get_profile
@@ -143,3 +157,81 @@ class ProviderClient:
             timeout=timeout,
             max_retries=max_retries,
         )
+
+
+# ---------------------------------------------------------------------------
+# M5 streaming facade — thin helpers around the provider's native async API
+# ---------------------------------------------------------------------------
+
+
+async def stream_async(
+    provider: LLMProvider,
+    request: MessageRequest,
+) -> AsyncIterator[StreamEvent]:
+    """Yield :class:`StreamEvent` from ``provider.stream_message``.
+
+    Exists so callers can import a single ``stream_async`` symbol
+    without reaching into specific provider classes. The underlying
+    provider method is already an async iterator — we simply forward
+    events through, keeping backpressure end-to-end.
+    """
+    async for event in await _ensure_async_iter(provider.stream_message(request)):
+        yield event
+
+
+async def _ensure_async_iter(maybe_coro):
+    """Normalise ``provider.stream_message(request)`` to an async iterator.
+
+    Providers vary: some return an ``AsyncIterator`` directly, others
+    return a coroutine that resolves to one. This helper accepts either
+    shape so callers never have to branch.
+    """
+    if asyncio.iscoroutine(maybe_coro):
+        return await maybe_coro
+    return maybe_coro
+
+
+def stream(
+    provider: LLMProvider,
+    request: MessageRequest,
+) -> Iterator[StreamEvent]:
+    """Sync facade around :func:`stream_async`.
+
+    Pumps the async iterator on a daemon thread and yields items via
+    a ``queue.Queue``. Exists for legacy callers; in-loop callers must
+    use :func:`stream_async` — calling this from inside a running loop
+    raises :class:`RuntimeError` because it would block the loop.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError(
+            "stream() cannot be called from inside a running event loop — "
+            "use `async for ev in stream_async(provider, req)` instead."
+        )
+    q: "queue.Queue[object]" = queue.Queue()
+    _SENTINEL = object()
+
+    async def _pump() -> None:
+        try:
+            async for event in stream_async(provider, request):
+                q.put(event)
+        except BaseException as exc:  # forward errors through the queue
+            q.put(exc)
+        finally:
+            q.put(_SENTINEL)
+
+    def _run() -> None:
+        asyncio.run(_pump())
+
+    threading.Thread(target=_run, daemon=True, name="llmcode-stream-bridge").start()
+
+    while True:
+        item = q.get()
+        if item is _SENTINEL:
+            return
+        if isinstance(item, BaseException):
+            raise item
+        yield item  # type: ignore[misc]

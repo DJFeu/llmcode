@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 
-from llm_code.ide.bridge import IDEBridge
+from llm_code.hayhooks.ide_rpc import IDEBridge
 from llm_code.tools.base import PermissionLevel, Tool, ToolResult
 
 

@@ -1,0 +1,134 @@
+# Synthetic leak corpus for redaction tests. Every value is obviously fake
+# (FAKE / EXAMPLE / DUMMY / TESTTOKEN). Do NOT add any real-looking credentials
+# to this file — they can trip secret scanners and push-protection rules.
+#
+# Format: one credential per line. Lines starting with # or blank lines are
+# ignored by the test loader. Leading/trailing whitespace is stripped.
+
+# ---------------------------------------------------------------------------
+# OpenAI (sk-*) — 48 char body, all letters FAKE to be safe
+# ---------------------------------------------------------------------------
+sk-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE
+sk-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE
+sk-FAKEFAKE1234FAKEFAKE5678FAKEFAKE9012FAKEFAKE3456
+sk-FAKE0000000000000000000000000000FAKE
+
+# ---------------------------------------------------------------------------
+# Anthropic (sk-ant-*)
+# ---------------------------------------------------------------------------
+sk-ant-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE
+sk-ant-api03-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE
+sk-ant-FAKE-DUMMY-EXAMPLE-0000000000000000000000
+
+# ---------------------------------------------------------------------------
+# GitHub classic PATs (ghp_) and fine-grained (github_pat_)
+# ---------------------------------------------------------------------------
+ghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE
+ghp_0000000000000000000000000000000000FAKE
+github_pat_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE
+github_pat_11AAAAAAAAAAAAAAAAAAAAAAAA_FAKEFAKEFAKEFAKE
+
+# ---------------------------------------------------------------------------
+# JWTs (three dot-separated base64url chunks, always starting with eyJ)
+# ---------------------------------------------------------------------------
+eyJFAKEFAKEFAKE.eyJFAKEFAKEFAKE.FAKESIGNATUREFAKESIGNATURE
+eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9FAKE.eyJzdWIiOiJGQUtFIn0FAKE.FAKEFAKEFAKE
+eyJhbGciOiJIUzI1NiJ9.eyJ1c2VyIjoiRkFLRSJ9.FAKEFAKEFAKEFAKE
+
+# ---------------------------------------------------------------------------
+# Bearer headers
+# ---------------------------------------------------------------------------
+Bearer FAKEFAKEFAKEFAKEFAKEFAKEFAKE
+Bearer DUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMY
+Bearer test_token_FAKE_1234567890_DUMMY
+Bearer FAKE.DUMMY.EXAMPLE.TOKEN.PAYLOAD
+
+# ---------------------------------------------------------------------------
+# AWS access keys (AKIA + 16 uppercase alnum)
+# ---------------------------------------------------------------------------
+AKIAFAKEFAKEFAKE0000
+AKIADUMMY12345678EXAM
+AKIA0000FAKEDUMMYEXAM
+
+# ---------------------------------------------------------------------------
+# Google / GCP (AIza + 35 chars)
+# ---------------------------------------------------------------------------
+AIzaFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE000
+AIzaDUMMY_EXAMPLE_FAKE_0000000000000
+AIzaFAKE-FAKE-FAKE-FAKE-FAKE-FAKE-000
+
+# ---------------------------------------------------------------------------
+# Slack tokens (xox[abpr]-*)
+# ---------------------------------------------------------------------------
+xoxb-FAKE-FAKE-FAKEFAKEFAKEFAKEFAKE
+xoxp-FAKE-FAKE-FAKE-FAKEFAKEFAKEFAKE
+xoxa-2-FAKEFAKEFAKE-FAKEFAKEFAKEFAKE
+xoxr-FAKE-FAKE-FAKEFAKEFAKEFAKEFAKE
+
+# ---------------------------------------------------------------------------
+# Generic long base64 (>120 chars, catches dumped credentials/certs)
+# ---------------------------------------------------------------------------
+FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE
+FAKEbase64DUMPFAKEbase64DUMPFAKEbase64DUMPFAKEbase64DUMPFAKEbase64DUMPFAKEbase64DUMPFAKEbase64DUMPFAKEbase64DUMPFAKEbase64DUMP00
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+
+# ---------------------------------------------------------------------------
+# Extra sk- variations (length edges)
+# ---------------------------------------------------------------------------
+sk-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE
+sk-FAKE1234567890FAKE1234567890FAKE1234
+
+# ---------------------------------------------------------------------------
+# Extra Bearer variations
+# ---------------------------------------------------------------------------
+Bearer       FAKESPACEDVALUE00000000000000
+Bearer abc123FAKE_DUMMY-EXAMPLE.0000
+
+# ---------------------------------------------------------------------------
+# Additional JWT variants (longer payloads)
+# ---------------------------------------------------------------------------
+eyJFAKEEXAMPLEHEADER.eyJFAKEEXAMPLEPAYLOAD.FAKEEXAMPLESIGNATUREVALUE00
+
+# ---------------------------------------------------------------------------
+# Additional AWS
+# ---------------------------------------------------------------------------
+AKIAEXAMPLEFAKEXXXXX
+
+# ---------------------------------------------------------------------------
+# Additional GCP
+# ---------------------------------------------------------------------------
+AIzaEXAMPLE0000000000000000000000000
+
+# ---------------------------------------------------------------------------
+# Additional Slack
+# ---------------------------------------------------------------------------
+xoxb-0000000000-FAKE000-FAKEFAKEFAKE
+
+# ---------------------------------------------------------------------------
+# Extra GitHub PAT variants
+# ---------------------------------------------------------------------------
+github_pat_DUMMYDUMMYDUMMYDUMMYDUMMYDUMMYDUMMY_FAKEFAKE
+
+# ---------------------------------------------------------------------------
+# Extra long base64 — PEM-like dump
+# ---------------------------------------------------------------------------
+MIIEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE
+
+# ---------------------------------------------------------------------------
+# Extra sk-ant-*
+# ---------------------------------------------------------------------------
+sk-ant-api03-FAKE-DUMMY-0000000000000000000000000000
+
+# ---------------------------------------------------------------------------
+# Additional synthetic entries to ensure corpus >= 50 patterns
+# ---------------------------------------------------------------------------
+sk-FAKE-ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ
+ghp_ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZFAKE
+sk-ant-FAKE-ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ
+AKIAZZZZZZZZZZZZFAKE
+AIzaZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ
+xoxp-0-0-0-FAKEFAKEFAKEFAKEFAKE
+Bearer ZZZZZZZZZZZZZZZZZZZZZZZZZZFAKE
+eyJZZZZZZZZZZ.eyJZZZZZZZZZZ.FAKEFAKEFAKEFAKE
+ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ
+github_pat_ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ

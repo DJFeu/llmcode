@@ -475,7 +475,7 @@ class AppState:
         # Register IDE tools if enabled
         if config.ide.enabled:
             try:
-                from llm_code.ide.bridge import IDEBridge
+                from llm_code.hayhooks.ide_rpc import IDEBridge
                 from llm_code.tools.ide_diagnostics import IDEDiagnosticsTool
                 from llm_code.tools.ide_open import IDEOpenTool
                 from llm_code.tools.ide_selection import IDESelectionTool

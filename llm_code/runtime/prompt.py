@@ -22,13 +22,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_PROMPTS_DIR = Path(__file__).parent / "prompts"
+_ENGINE_PROMPTS_DIR = (
+    Path(__file__).resolve().parent.parent / "engine" / "prompts" / "models"
+)
 
 
 def select_intro_prompt(model: str) -> str:
     """Pick a model-tuned system intro prompt based on model name.
 
-    Returns the file content from prompts/<family>.md, falling back to default.md.
+    Returns the file content from ``engine/prompts/models/<family>.j2``,
+    falling back to ``default.j2``.
 
     Routing order matters — more specific patterns must win. Reference-
     aligned with opencode's ``session/system.ts`` routing: ``copilot``
@@ -80,14 +83,23 @@ def select_intro_prompt(model: str) -> str:
 
 
 def _read_prompt(name: str) -> str:
-    """Read a prompt file from prompts/ directory. Falls back to embedded default."""
-    path = _PROMPTS_DIR / f"{name}.md"
+    """Load a model-family template from ``engine/prompts/models/``.
+
+    Delegates to :class:`~llm_code.engine.prompt_builder.PromptBuilder` so
+    runtime callers and engine Components share one rendering path. Falls
+    back to an inline default string when the template file is missing
+    (partial install, tests with stubbed templates dir).
+    """
+    from llm_code.engine.prompt_builder import render_template_file
+
+    path = _ENGINE_PROMPTS_DIR / f"{name}.j2"
     if path.is_file():
         try:
-            return path.read_text(encoding="utf-8").rstrip()
+            return render_template_file(
+                f"{name}.j2", templates_dir=_ENGINE_PROMPTS_DIR
+            ).rstrip()
         except OSError:
             pass
-    # Fallback when file missing (e.g. during tests, partial install)
     return (
         "You are a coding assistant running inside a terminal. "
         "You have access to tools that let you read, write, and edit files, "

@@ -1,0 +1,1 @@
+IMPORTANT: After receiving tool results, you MUST produce a substantive response based on those results. Do NOT end your turn with only a few tokens or an empty response.

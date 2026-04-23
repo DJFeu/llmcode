@@ -372,6 +372,35 @@ class RateLimitHandler:
             # Heartbeat callbacks must never crash the retry loop.
             pass
 
+    # ------------------------------------------------------------------
+    # M5 — async acquire semantics
+    # ------------------------------------------------------------------
+
+    async def acquire_async(
+        self,
+        *,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        """Block asynchronously until the handler's state permits a new call.
+
+        In v12 the retry loop is driven by :func:`run_with_rate_limit`;
+        this helper exists for callers that want to gate a *new* request
+        against the same persistent counters (e.g. a speculative prefetch
+        that must respect an ongoing 529 backoff). When counters are
+        zero the coroutine returns immediately.
+
+        We derive the sleep from the same schedule used on the OVERLOAD
+        track — the rationale is that overload is the only classification
+        that should delay an *unrelated* new request. Rate-limit on a
+        single request doesn't spill across requests.
+        """
+        if self.overload_attempt == 0:
+            return
+        # Reuse the same schedule as next_backoff(OVERLOAD).
+        idx = min(self.overload_attempt - 1, len(_OVERLOAD_BACKOFF_SCHEDULE) - 1)
+        wait = _OVERLOAD_BACKOFF_SCHEDULE[idx]
+        await sleep(min(wait, _PERSISTENT_MAX_BACKOFF_SECONDS))
+
 
 # ── Provider-specific taxonomies ──────────────────────────────────────
 

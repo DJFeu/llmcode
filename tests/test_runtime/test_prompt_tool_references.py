@@ -1,10 +1,14 @@
 """Lint: every tool name mentioned inside a TOOL_NAMES marker block in
-a system prompt markdown file must exist in the real ToolRegistry.
+a system prompt template must exist in the real ToolRegistry.
 
 Catches the failure mode from PRs #11 and #13, where the system prompt
 told the model to use a specific tool list that contradicted the actual
 registered tools. Without this lint, the contradiction only surfaced
-when a user hit the failing query in production."""
+when a user hit the failing query in production.
+
+Template source moved in v2.0 (M8.b) from ``runtime/prompts/*.md`` to
+``engine/prompts/models/*.j2``.
+"""
 from __future__ import annotations
 
 import re
@@ -12,7 +16,13 @@ from pathlib import Path
 
 import pytest
 
-PROMPTS_DIR = Path(__file__).resolve().parents[2] / "llm_code" / "runtime" / "prompts"
+PROMPTS_DIR = (
+    Path(__file__).resolve().parents[2]
+    / "llm_code"
+    / "engine"
+    / "prompts"
+    / "models"
+)
 
 _MARKER_BLOCK_RE = re.compile(
     r"<!--\s*TOOL_NAMES:\s*START\s*-->(.*?)<!--\s*TOOL_NAMES:\s*END\s*-->",
@@ -66,11 +76,12 @@ def _extract_tool_references(md_path: Path) -> set[str]:
 
 
 def _prompt_files_with_markers() -> list[Path]:
-    """Return prompt files that contain a TOOL_NAMES marker block."""
+    """Return prompt template files that contain a TOOL_NAMES marker
+    block. Scans ``engine/prompts/models/*.j2`` (v2.0 layout)."""
     if not PROMPTS_DIR.exists():
         return []
     return sorted(
-        p for p in PROMPTS_DIR.glob("*.md")
+        p for p in PROMPTS_DIR.glob("*.j2")
         if _MARKER_BLOCK_RE.search(p.read_text(encoding="utf-8"))
     )
 
@@ -96,6 +107,6 @@ def test_at_least_one_prompt_has_markers() -> None:
     reason — guard against that."""
     paths = _prompt_files_with_markers()
     assert paths, (
-        f"No prompt markdown in {PROMPTS_DIR} has a <!-- TOOL_NAMES: START --> "
-        f"/ <!-- TOOL_NAMES: END --> marker block. Add one to qwen.md."
+        f"No prompt template in {PROMPTS_DIR} has a <!-- TOOL_NAMES: START --> "
+        f"/ <!-- TOOL_NAMES: END --> marker block. Add one to qwen.j2."
     )

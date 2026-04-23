@@ -150,6 +150,7 @@ class WebSearchConfig:
     default_backend: str = "duckduckgo"
     brave_api_key_env: str = "BRAVE_API_KEY"
     tavily_api_key_env: str = "TAVILY_API_KEY"
+    serper_api_key_env: str = "SERPER_API_KEY"
     searxng_base_url: str = ""
     max_results: int = 10
     domain_allowlist: tuple[str, ...] = ()
@@ -158,7 +159,46 @@ class WebSearchConfig:
 
 @dataclass(frozen=True)
 class MemoryConfig:
+    """Memory subsystem configuration.
+
+    Historical fields (kept for backward compatibility):
+        strict_derivable_check: existing flag — untouched by v12 M7.
+
+    v12 M7 fields (plan #7 Task 7.8):
+        enabled: master switch — when False the five memory Components
+            are not wired into the default pipeline.
+        layer: storage backend name — ``hida`` / ``sqlite`` / ``in_memory``.
+        hida_index_path: path to the HIDA index file (when layer=hida).
+        embedder: embedding backend name — ``sentence_transformers`` (default),
+            ``openai``, ``anthropic``, ``onnx``, or ``deterministic``.
+        embedder_model: model identifier passed to the backend.
+        reranker: reranker backend — ``cross_encoder_onnx`` (default),
+            ``llm``, or ``noop``.
+        reranker_model: model identifier for the reranker backend.
+        retrieve_top_k: number of candidates pulled from the backend.
+        rerank_top_k: number of entries kept after reranking.
+        max_context_chars: soft cap on rendered memory-context text.
+        default_scope: scope used when the caller doesn't pass one.
+        remember_filter: policy — ``always`` / ``on_error_only`` /
+            ``non_read_only_only`` / ``never``.
+        context_template: ``default`` or ``compact``.
+    """
+
     strict_derivable_check: bool = False
+    # v12 M7 — Pipeline-borne memory
+    enabled: bool = True
+    layer: str = "in_memory"
+    hida_index_path: str = ""
+    embedder: str = "sentence_transformers"
+    embedder_model: str = "all-MiniLM-L6-v2"
+    reranker: str = "cross_encoder_onnx"
+    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    retrieve_top_k: int = 20
+    rerank_top_k: int = 5
+    max_context_chars: int = 4000
+    default_scope: str = "project"
+    remember_filter: str = "always"
+    context_template: str = "default"
 
 
 @dataclass(frozen=True)
@@ -166,6 +206,96 @@ class CompressorConfig:
     llm_summarize: bool = False
     summarize_model: str = ""
     max_summary_tokens: int = 1000
+
+
+# ---------------------------------------------------------------------------
+# v12 engine configs
+#
+# Root of the v12 Haystack-borrow overhaul (spec:
+# docs/superpowers/specs/2026-04-21-llm-code-v12-haystack-borrow-design.md).
+#
+# Post-M8.b: all runs flow through the engine path. The transitional flag
+# that gated the parity suite during M1–M7 is gone; no user-facing feature
+# flag survives the v2.0 cutover.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AgentLoopConfig:
+    """Agent loop control policies (plan #3, M3)."""
+
+    max_agent_steps: int = 50
+    retry_policy: str = "no_retry"  # no_retry | exponential | rate_limit
+    retry_max_attempts: int = 3
+    fallback_policy: str = "none"  # none | semantic | model
+    degraded_policy: str = "none"  # none | consecutive_failure | budget
+    degraded_threshold: int = 3
+    exit_conditions: tuple[str, ...] = ("max_steps",)
+    retry_budget: int = 20
+
+
+@dataclass(frozen=True)
+class ObservabilityConfig:
+    """OpenTelemetry + Langfuse + redaction + metrics (plan #6, M6)."""
+
+    enabled: bool = True
+    exporter: str = "console"  # otlp | langfuse | console | off
+    otlp_endpoint: str = ""
+    otlp_protocol: str = "http/protobuf"  # http/protobuf | grpc
+    otlp_headers: tuple[tuple[str, str], ...] = ()
+    langfuse_public_key_env: str = "LANGFUSE_PUBLIC_KEY"
+    langfuse_secret_key_env: str = "LANGFUSE_SECRET_KEY"
+    langfuse_host: str = "https://cloud.langfuse.com"
+    service_name: str = "llmcode"
+    service_version: str = ""
+    resource_attrs: tuple[tuple[str, str], ...] = ()
+    sample_rate: float = 1.0
+    redact_log_records: bool = True
+    redact_span_attributes: bool = True
+    metrics_enabled: bool = True
+    metrics_port: int = 0  # 0 = piggyback on hayhooks port
+
+
+@dataclass(frozen=True)
+class HayhooksConfig:
+    """Headless transports (plan #4, M4)."""
+
+    enabled: bool = False
+    auth_token_env: str = "LLMCODE_HAYHOOKS_TOKEN"
+    allowed_tools: tuple[str, ...] = ()
+    max_agent_steps: int = 20
+    request_timeout_s: float = 300.0
+    rate_limit_rpm: int = 60
+    enable_openai_compat: bool = True
+    enable_mcp: bool = True
+    enable_ide_rpc: bool = True  # absorbed from ide/server.py in M4.11
+    enable_debug_repl: bool = False  # absorbed from remote/server.py in M4.11
+    cors_origins: tuple[str, ...] = ()
+    host: str = "127.0.0.1"
+    port: int = 8080
+
+
+@dataclass(frozen=True)
+class EngineConfig:
+    """Root container for v12 engine subsystem configs.
+
+    Assembled by `load_config`. All runs go through the engine path; the
+    transitional flag that gated the parity suite during M1–M7 was deleted
+    in the v2.0 cutover along with the legacy fallback.
+    """
+
+    agent_loop: AgentLoopConfig = field(default_factory=AgentLoopConfig)
+    observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
+    hayhooks: HayhooksConfig = field(default_factory=HayhooksConfig)
+    pipeline_stages: tuple[str, ...] = (
+        "perm",
+        "denial",
+        "rate",
+        "speculative",
+        "resolver",
+        "exec",
+        "post",
+    )
 
 
 @dataclass(frozen=True)
@@ -483,6 +613,21 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
     memory_raw = data.get("memory", {})
     memory = MemoryConfig(
         strict_derivable_check=bool(memory_raw.get("strict_derivable_check", False)),
+        enabled=bool(memory_raw.get("enabled", True)),
+        layer=str(memory_raw.get("layer", "in_memory")),
+        hida_index_path=str(memory_raw.get("hida_index_path", "")),
+        embedder=str(memory_raw.get("embedder", "sentence_transformers")),
+        embedder_model=str(memory_raw.get("embedder_model", "all-MiniLM-L6-v2")),
+        reranker=str(memory_raw.get("reranker", "cross_encoder_onnx")),
+        reranker_model=str(
+            memory_raw.get("reranker_model", "cross-encoder/ms-marco-MiniLM-L-6-v2"),
+        ),
+        retrieve_top_k=int(memory_raw.get("retrieve_top_k", 20)),
+        rerank_top_k=int(memory_raw.get("rerank_top_k", 5)),
+        max_context_chars=int(memory_raw.get("max_context_chars", 4000)),
+        default_scope=str(memory_raw.get("default_scope", "project")),
+        remember_filter=str(memory_raw.get("remember_filter", "always")),
+        context_template=str(memory_raw.get("context_template", "default")),
     )
 
     vcr_raw = data.get("vcr", {})

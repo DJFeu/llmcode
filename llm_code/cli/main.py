@@ -36,8 +36,68 @@ _PERMISSION_CHOICES = [
 ]
 
 
-@click.command()
-@click.argument("prompt", required=False)
+class ReplGroup(click.Group):
+    """Custom click group that lets un-registered positional tokens fall
+    through to the group callback as a ``prompt`` kwarg.
+
+    Rationale
+    ---------
+    We want the top-level ``llmcode`` CLI to support three usage modes
+    simultaneously:
+
+    1. ``llmcode``                    → REPL (no args)
+    2. ``llmcode "some prompt text"`` → REPL (prompt captured)
+    3. ``llmcode <subcommand> ...``   → dispatch to the subcommand
+
+    Plain ``click.Group`` treats the first non-option positional as a
+    subcommand name and errors out when it does not match a registered
+    command. Adding ``@click.argument("prompt")`` on the group hides
+    subcommands entirely because Click consumes that positional before
+    the subcommand routing step. Neither default Click behavior
+    satisfies all three modes at once.
+
+    Strategy
+    --------
+    Override ``parse_args`` so that *after* Click's normal option +
+    positional splitting runs, we inspect ``ctx._protected_args`` (the
+    slot Click reserves for the subcommand name) and decide:
+
+    * If it matches a registered subcommand → leave Click's routing
+      alone; subcommand handler takes over.
+    * Otherwise → move every leftover token into
+      ``ctx.params['prompt']`` as a tuple, clear the protected-args
+      slot, and let Click call the group callback without dispatching
+      to a subcommand.
+
+    The group callback then sees ``prompt=("hello", "world")`` and
+    ``ctx.invoked_subcommand is None``, so it runs the REPL as before.
+    """
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        rest = super().parse_args(ctx, args)
+
+        protected = list(getattr(ctx, "_protected_args", []) or [])
+        remaining = list(getattr(ctx, "args", []) or [])
+
+        # If the first protected arg is a known subcommand name, leave
+        # everything as-is so Click dispatches normally.
+        if protected and protected[0] in self.commands:
+            return rest
+
+        # Otherwise treat the entire tail as a prompt tuple and clear
+        # the subcommand slot so the group callback runs.
+        if protected or remaining:
+            ctx.params["prompt"] = tuple(protected + remaining)
+            ctx._protected_args = []
+            ctx.args = []
+        return rest
+
+
+@click.group(
+    cls=ReplGroup,
+    invoke_without_command=True,
+    no_args_is_help=False,
+)
 @click.option("--model", "-m", default=None, help="Model name to use")
 @click.option("--api", default=None, help="API base URL")
 @click.option(
@@ -122,8 +182,9 @@ _PERMISSION_CHOICES = [
         "mixed-routing, cost-saving)"
     ),
 )
+@click.pass_context
 def main(
-    prompt: str | None,
+    ctx: click.Context,
     model: str | None,
     api: str | None,
     api_key: str | None,
@@ -145,8 +206,22 @@ def main(
     config_schema: bool = False,
     preset: str | None = None,
     log_file: str | None = None,
+    prompt: tuple[str, ...] | None = None,
 ) -> None:
     """llm-code: AI coding assistant CLI."""
+    # When a registered subcommand like ``hayhooks`` / ``memory`` /
+    # ``migrate`` / ``trace`` is invoked, the subcommand's own handler
+    # takes over; the group callback must not try to initialise a
+    # runtime or launch the REPL.
+    if ctx.invoked_subcommand is not None:
+        return
+
+    # ``prompt`` is captured by :class:`ReplGroup` as a tuple of raw
+    # tokens. Re-join with a single space so callers that want to read
+    # it downstream can use it as a single string, matching the v1.x
+    # behavior where ``prompt`` was a bare ``str | None``.
+    _ = " ".join(prompt) if prompt else None  # noqa: F841 — captured for symmetry
+
     from llm_code.logging import setup_logging
     from llm_code.runtime.config import load_config
 
@@ -247,19 +322,20 @@ def main(
         return
 
     if serve:
-        from llm_code.remote.server import RemoteServer
-        server = RemoteServer(host="0.0.0.0", port=port, config=config)
+        # Migrated from llm_code.remote.server.RemoteServer (M4.11).
+        from llm_code.hayhooks.debug_repl import DebugReplServer
+        server = DebugReplServer(host="0.0.0.0", port=port, config=config)
         asyncio.run(server.start())
         return
 
     if connect:
-        from llm_code.remote.client import RemoteClient
-        remote_client = RemoteClient(connect)
+        from llm_code.hayhooks.debug_repl import DebugReplClient
+        remote_client = DebugReplClient(connect)
         asyncio.run(remote_client.connect())
         return
 
     if ssh:
-        from llm_code.remote.ssh_proxy import ssh_connect
+        from llm_code.hayhooks.debug_repl import ssh_connect
         asyncio.run(ssh_connect(ssh, port=port))
         return
 
@@ -331,6 +407,50 @@ def main(
     asyncio.run(_run_repl(backend, state))
 
 
+def _register_subcommands() -> None:
+    """Attach the standalone click groups to ``main`` as subcommands.
+
+    Each of the four subcommand groups — hayhooks, memory, migrate,
+    trace — lives in its own module and was intentionally kept out of
+    ``main.py`` so the main CLI doesn't grow an import-time dependency
+    on optional extras (``hayhooks`` pulls FastAPI; ``memory`` pulls
+    sentence-transformers when its migrate step runs). Registering them
+    here is safe because each group's module only imports click at
+    module scope — all heavy deps are lazily imported inside command
+    callbacks.
+
+    Registration runs exactly once at import time. Any import failure
+    is swallowed so a partial checkout or missing optional module
+    cannot break the top-level ``llmcode`` entry point.
+    """
+    try:
+        from llm_code.hayhooks.cli import hayhooks_serve
+        main.add_command(hayhooks_serve, name="hayhooks")
+    except Exception:  # pragma: no cover — defensive: optional extra
+        pass
+
+    try:
+        from llm_code.memory.cli import memory as memory_group
+        main.add_command(memory_group, name="memory")
+    except Exception:  # pragma: no cover — defensive
+        pass
+
+    try:
+        from llm_code.migrate.cli import migrate_cli
+        main.add_command(migrate_cli, name="migrate")
+    except Exception:  # pragma: no cover — defensive
+        pass
+
+    try:
+        from llm_code.engine.observability.trace_cli import cli as trace_group
+        main.add_command(trace_group, name="trace")
+    except Exception:  # pragma: no cover — defensive
+        pass
+
+
+_register_subcommands()
+
+
 async def _run_repl(backend, state) -> None:
     """Start + run + stop the REPL backend with proper lifecycle.
 
@@ -367,6 +487,38 @@ async def _run_repl(backend, state) -> None:
         pass
     await backend.start()
     _push_cursor_to_bottom()
+
+    # Prime the status line with model / cwd / branch so the bar isn't
+    # rendered as ``?`` while waiting for the user's first turn.
+    # ViewStreamRenderer re-pushes the full context (including
+    # context_limit + plan_mode) on every turn_start; this initial
+    # push just covers the idle-REPL window before turn 1.
+    try:
+        from llm_code.view.stream_renderer import ViewStreamRenderer
+        from llm_code.view.types import StatusUpdate
+
+        initial_cwd = str(state.cwd) if getattr(state, "cwd", None) else None
+        initial_branch = (
+            ViewStreamRenderer._detect_git_branch(state.cwd)
+            if state.cwd is not None
+            else None
+        )
+        initial_model = (
+            getattr(state.config, "model", None)
+            if state.config is not None
+            else None
+        )
+        backend.update_status(
+            StatusUpdate(
+                model=initial_model,
+                cwd=initial_cwd,
+                branch=initial_branch,
+            )
+        )
+    except Exception:
+        # Priming is best-effort: a failure here must not block
+        # REPL startup. Status will render `?` for any missing field.
+        pass
 
     async def _welcome_after_start() -> None:
         await asyncio.sleep(0.1)

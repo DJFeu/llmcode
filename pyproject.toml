@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "llmcode-cli"
-version = "2.1.0"
+version = "2.2.0rc1"
 description = "Open-source AI agent runtime for any LLM — production-grade coding agent with multi-layer memory, multi-agent orchestration, and defense-in-depth security"
 license = {text = "MIT"}
 authors = [{name = "Adam Hung"}]
@@ -33,6 +33,11 @@ dependencies = [
     # tomllib entered the stdlib in 3.11; pull tomli (same API) on 3.10
     # so model_profile._load_toml keeps working there.
     'tomli>=2.0 ; python_version < "3.11"',
+    # v12 M6 — core tracing is OTel-first, so the API + SDK ship in core.
+    # The *exporters* (OTLP, Langfuse) + metrics backend (prometheus_client)
+    # live in the optional [observability] extra to avoid install bloat.
+    "opentelemetry-api>=1.20",
+    "opentelemetry-sdk>=1.20",
 ]
 
 [project.urls]
@@ -42,23 +47,64 @@ Issues = "https://github.com/DJFeu/llmcode/issues"
 
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.40"]
+# v12 M7 — memory embedding defaults (heavy torch stack; opt-in)
+memory = ["sentence-transformers>=2.7.0"]
+memory-rerank = ["onnxruntime>=1.17.0"]
 websocket = ["websockets>=12.0"]
+hayhooks = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.29.0",
+    "sse-starlette>=2.0.0",
+    "mcp>=1.0.0",
+]
 voice = ["sounddevice>=0.5"]
 voice-local = ["sounddevice>=0.5", "faster-whisper>=1.0"]
 voice-google = ["google-cloud-speech>=2.0"]
 computer-use = ["pyautogui>=0.9", "Pillow>=10.0", "mss>=9.0"]
 ide = ["psutil>=5.9"]
-telemetry = [
-    "opentelemetry-api>=1.20",
-    "opentelemetry-sdk>=1.20",
+# Optional observability stack: OTLP span exporter + Langfuse + Prometheus
+# metrics. The OTel API/SDK themselves stay in core (see `dependencies`
+# above) so tracing call sites always link; only the exporters / metrics
+# backend are opt-in here.
+observability = [
     "opentelemetry-exporter-otlp>=1.20",
     "langfuse>=3.0",
+    "prometheus-client>=0.20",
+]
+# Backwards-compatible alias — keeps existing `pip install llmcode-cli[telemetry]`
+# recipes working after the rename to [observability].
+telemetry = [
+    "opentelemetry-exporter-otlp>=1.20",
+    "langfuse>=3.0",
+    "prometheus-client>=0.20",
+]
+# Codemod toolchain for `llmcode migrate v12`. libcst rewrites Python
+# source; tomlkit rewrites pyproject.toml while preserving comments.
+migrate = [
+    "libcst>=1.1.0",
+    "tomlkit>=0.13.0",
 ]
 web = ["readability-lxml>=0.8", "html2text>=2024.2"]
 web-browser = ["readability-lxml>=0.8", "html2text>=2024.2", "playwright>=1.40"]
 docs = ["mkdocs>=1.6", "mkdocs-material>=9.5"]
 tiktoken = ["tiktoken>=0.7"]
 treesitter = ["tree-sitter>=0.23", "tree-sitter-language-pack>=0.5"]
+# Umbrella extra — pins observability + Hayhooks + memory + memory-rerank
+# + migrate so `pip install llmcode-cli[all]` lands a production-ready
+# install in a single step.
+all = [
+    "opentelemetry-exporter-otlp>=1.20",
+    "langfuse>=3.0",
+    "prometheus-client>=0.20",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.29.0",
+    "sse-starlette>=2.0.0",
+    "mcp>=1.0.0",
+    "sentence-transformers>=2.7.0",
+    "onnxruntime>=1.17.0",
+    "libcst>=1.1.0",
+    "tomlkit>=0.13.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
@@ -97,6 +143,8 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "unit: unit test — exercises a single function/class with no I/O or external deps",
+    "slow: slow test (>1s) — default-skipped unless LLMCODE_SLOW=1",
+    "perf: perf benchmark/soak/memory test — default-skipped unless LLMCODE_PERF=1",
 ]
 
 [tool.ruff]

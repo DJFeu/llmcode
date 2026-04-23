@@ -67,7 +67,20 @@ class ToolProgress:
 
 
 class Tool(ABC):
-    """Abstract base class for all tools."""
+    """Abstract base class for all tools.
+
+    **M5 async support.** Tools that own async-native resources (HTTP
+    clients, sockets, DB drivers) override :meth:`execute_async` and
+    set :attr:`is_async` = ``True``. The default :meth:`execute_async`
+    bridges to the sync :meth:`execute` via ``asyncio.to_thread`` so
+    the engine can always ``await tool.execute_async(args)`` regardless
+    of the tool's native shape.
+    """
+
+    #: Whether the canonical implementation is ``execute_async``.
+    #: When ``True``, :meth:`execute` raises :class:`NotImplementedError`
+    #: — async-only tools must not be called from sync code paths.
+    is_async: bool = False
 
     @property
     @abstractmethod
@@ -87,6 +100,25 @@ class Tool(ABC):
 
     @abstractmethod
     def execute(self, args: dict) -> ToolResult: ...
+
+    async def execute_async(self, args: dict) -> ToolResult:
+        """Async facade over :meth:`execute`.
+
+        Default bridges sync ``execute`` onto a thread via
+        :func:`asyncio.to_thread`. Async-native tools override this and
+        set :attr:`is_async` = ``True`` so the engine knows to skip
+        the thread-pool hop (the tool is already cooperative).
+        """
+        import asyncio  # local import keeps cold-start cost at zero
+        if type(self).is_async:
+            # Subclasses that set is_async=True but forgot to override
+            # execute_async fall through to this branch — give them a
+            # clear error rather than the silent to_thread fallback.
+            raise NotImplementedError(
+                f"{type(self).__name__} sets is_async=True but did not "
+                "override execute_async — implement it or flip is_async=False."
+            )
+        return await asyncio.to_thread(self.execute, args)
 
     @property
     def input_model(self) -> type[BaseModel] | None:

@@ -282,7 +282,7 @@ See [docs/coordinator.md](docs/coordinator.md) for the full tutorial.
 |----------|-------|
 | **File I/O** | read_file, write_file, edit_file, multi_edit (with resolve_path workspace boundary check) |
 | **Search** | glob_search, grep_search, tool_search |
-| **Web** | web_search (DuckDuckGo / Brave / Tavily / SearXNG backends), web_fetch |
+| **Web** | web_search (DuckDuckGo / Brave / Tavily / SearXNG / Serper backends), web_fetch |
 | **Execution** | bash (21-point security + Docker sandbox + PTY mode), agent (sub-agents with tier-based role routing: build / plan / explore / verify / general), enter_plan_mode, exit_plan_mode |
 | **LSP** | lsp_hover, lsp_document_symbol, lsp_workspace_symbol, lsp_go_to_definition, lsp_find_references, lsp_go_to_implementation, lsp_call_hierarchy, lsp_diagnostics (auto-detects 25+ language servers via walk-up root finder) |
 | **Git** | git_status, git_diff, git_log, git_commit, git_push, git_stash, git_branch |
@@ -536,8 +536,12 @@ finishes; skill-scoped servers live for the session.
 pip install llmcode-cli[voice]          # Voice input via STT
 pip install llmcode-cli[computer-use]   # GUI automation
 pip install llmcode-cli[ide]            # IDE integration
-pip install llmcode-cli[telemetry]      # OpenTelemetry tracing
+pip install llmcode-cli[observability]  # OTel exporters + Langfuse + Prometheus
 pip install llmcode-cli[treesitter]     # Tree-sitter multi-language repo map
+pip install llmcode-cli[memory]         # Local embeddings (torch stack)
+pip install llmcode-cli[memory-rerank]  # ONNX reranker (no torch)
+pip install llmcode-cli[migrate]        # Plugin migration codemod
+pip install llmcode-cli[all]            # Everything above, minus dev/voice
 ```
 
 ---

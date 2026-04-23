@@ -2026,3 +2026,69 @@ class ConversationRuntime:
     def _budget_tool_result(self, result: ToolResult, call_id: str) -> ToolResult:
         """Delegate to ToolExecutionPipeline."""
         return self._tool_pipeline.budget_result(result, call_id)
+
+
+# ---------------------------------------------------------------------------
+# v12 Agent entry points.
+#
+# Post-M8.b there is no legacy fallback. Both functions unconditionally
+# drive :class:`llm_code.engine.agent.Agent`. The class-based
+# :class:`ConversationRuntime` above remains the streaming TUI entry
+# point; these module-level helpers are what headless transports (REPL,
+# Hayhooks, MCP) and tests call for synchronous/async non-streaming runs.
+# ---------------------------------------------------------------------------
+
+
+def run_conversation(
+    messages: list[Any],
+    config: Any,
+    pipeline: Any,
+    chat_fn: Any,
+) -> Any:
+    """Drive the v12 tool-calling loop synchronously.
+
+    Args:
+        messages: Initial conversation (``[{"role": "user", ...}, ...]``).
+        config: The runtime config; must expose ``.engine.agent_loop``.
+        pipeline: A v12 :class:`~llm_code.engine.pipeline.Pipeline`
+            instance (or a ``MagicMock(spec=Pipeline)`` in tests).
+        chat_fn: Callable ``(messages, tools) -> (tool_calls, text)``.
+
+    Returns:
+        :class:`llm_code.engine.agent_result.AgentResult`.
+    """
+    from llm_code.engine import build_agent_from_config
+
+    engine_cfg = getattr(config, "engine", None)
+    agent_cfg = (
+        getattr(engine_cfg, "agent_loop", None)
+        if engine_cfg is not None
+        else None
+    )
+    agent = build_agent_from_config(agent_cfg, pipeline, chat_fn)
+    return agent.run(messages)
+
+
+async def run_conversation_async(
+    messages: list[Any],
+    config: Any,
+    pipeline: Any,
+    chat_fn: Any,
+) -> Any:
+    """Async entry point for the v12 tool-calling loop.
+
+    Mirrors :func:`run_conversation` but awaits :meth:`Agent.run_async`
+    instead of calling :meth:`Agent.run`. Use this from code paths that
+    already have an event loop (REPL, Hayhooks, MCP transport).
+    """
+    from llm_code.engine import build_agent_from_config
+
+    engine_cfg = getattr(config, "engine", None)
+    agent_cfg = (
+        getattr(engine_cfg, "agent_loop", None)
+        if engine_cfg is not None
+        else None
+    )
+    agent = build_agent_from_config(agent_cfg, pipeline, chat_fn)
+    return await agent.run_async(messages)
+

@@ -13,7 +13,7 @@ from llm_code.tools.search_backends import RateLimitError, SearchResult, create_
 
 logger = logging.getLogger(__name__)
 
-_VALID_BACKENDS = ("auto", "duckduckgo", "brave", "tavily", "searxng")
+_VALID_BACKENDS = ("auto", "duckduckgo", "brave", "tavily", "searxng", "serper")
 
 
 class WebSearchInput(BaseModel):
@@ -33,7 +33,7 @@ class WebSearchTool(Tool):
     def description(self) -> str:
         return (
             "Search the web for information. "
-            "Supports DuckDuckGo (default), Brave, Tavily, and SearXNG backends. "
+            "Supports DuckDuckGo (default), Brave, Tavily, SearXNG, and Serper backends. "
             "Returns ranked results with titles, URLs, and snippets."
         )
 
@@ -113,6 +113,10 @@ class WebSearchTool(Tool):
             kwargs["api_key"] = api_key
         elif backend_name == "searxng" and cfg is not None:
             kwargs["base_url"] = getattr(cfg, "searxng_base_url", "")
+        elif backend_name == "serper" and cfg is not None:
+            api_key_env = getattr(cfg, "serper_api_key_env", "SERPER_API_KEY")
+            api_key = os.environ.get(api_key_env, "")
+            kwargs["api_key"] = api_key
 
         backend = create_backend(backend_name, **kwargs)
         return backend, backend_name
@@ -250,7 +254,7 @@ class WebSearchTool(Tool):
     ) -> tuple[SearchResult, ...]:
         """Try backends in order until one returns results.
 
-        Fallback order: duckduckgo -> brave -> searxng -> tavily.
+        Fallback order: duckduckgo -> brave -> searxng -> serper -> tavily.
         Only backends that are configured (have API keys / base_url set) are tried.
         """
         # Build ordered list of (backend_name, kwargs) to try
@@ -272,7 +276,14 @@ class WebSearchTool(Tool):
             if searxng_url:
                 chain.append(("searxng", {"base_url": searxng_url}))
 
-        # 4. Tavily (if API key configured)
+        # 4. Serper (if API key configured)
+        if cfg is not None:
+            serper_key_env = getattr(cfg, "serper_api_key_env", "SERPER_API_KEY")
+            serper_key = os.environ.get(serper_key_env, "")
+            if serper_key:
+                chain.append(("serper", {"api_key": serper_key}))
+
+        # 5. Tavily (if API key configured)
         if cfg is not None:
             tavily_key_env = getattr(cfg, "tavily_api_key_env", "TAVILY_API_KEY")
             tavily_key = os.environ.get(tavily_key_env, "")

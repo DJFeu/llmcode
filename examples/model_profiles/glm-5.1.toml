@@ -1,0 +1,64 @@
+# GLM-5.1 (Zhipu) — self-hosted via llama.cpp
+#
+# Tested config: llama-server with --jinja, --alias glm-5.1.
+# Architecture: 753.86B total / ~40B active (MoE), MLA attention,
+# native context 202752, reasoning chain in `reasoning_content` field.
+#
+# To activate: copy this file to ~/.llmcode/model_profiles/glm-5.1.toml
+# (file name without .toml is matched against the `model` value in
+# ~/.llmcode/config.json — case-insensitive prefix match).
+
+name = "GLM-5.1 (744B.A40B)"
+
+[provider]
+type = "openai-compat"
+# llama.cpp + jinja exposes function calling, but GLM-5.1 tool-call
+# robustness over OpenAI-compat is still uneven; use llmcode's XML
+# fallback (proven path on Qwen3 / DeepSeek-R1) until verified.
+native_tools = false
+supports_reasoning = true
+supports_images = false
+force_xml_tools = true
+
+[streaming]
+# GLM-5.1 emits reasoning in a SEPARATE `reasoning_content` field
+# (verified via smoke test against the running server). Unlike Qwen
+# under vLLM — which prepends <think>...</think> to the main content —
+# llama.cpp keeps reasoning isolated, so implicit_thinking must be
+# false to prevent llmcode from stripping a non-existent prefix.
+implicit_thinking = false
+reasoning_field = "reasoning_content"
+
+[thinking]
+# llama.cpp jinja templates accept thinking budget via the same
+# chat_template_kwargs route as vLLM.
+thinking_extra_body_format = "chat_template_kwargs"
+default_thinking_budget = 16384
+
+[sampling]
+# GLM family upstream guidance suggests 0.6; matches DeepSeek-R1 which
+# shares the long-CoT pattern.
+default_temperature = 0.6
+reasoning_effort = "high"
+
+[deployment]
+# Enables llmcode's "unlimited token upgrade" path for self-hosted models.
+is_local = true
+
+[limits]
+# Aligned with the actual --ctx-size used at server startup (64K).
+# Bump if the server is later restarted with a larger context window.
+# Native training context is 202752 — server can be re-launched up to
+# that limit, in which case raise this number to match.
+context_window = 65536
+max_output_tokens = 8192
+
+[pricing]
+# Self-hosted — no per-token cost.
+price_input = 0.0
+price_output = 0.0
+
+[routing]
+# Tier C (LLM-based skill router) reuses the same model. Override to a
+# smaller hosted model if the routing latency becomes a problem.
+tier_c_model = ""

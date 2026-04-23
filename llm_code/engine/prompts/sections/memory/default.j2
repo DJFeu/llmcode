@@ -1,0 +1,25 @@
+{# Default memory-context template (v12 M7 Task 7.6).
+
+Renders retrieved memory entries as a bulleted list. Each entry shows
+the creation date (UTC, YYYY-MM-DD), the source tool (or `unknown`),
+and the text truncated to `max_entry_chars` codepoints.
+
+Inputs:
+    entries        - iterable of MemoryEntry
+    entry_count    - optional integer; if 0/absent the template emits
+                     nothing so the PromptAssembler can drop the
+                     section entirely.
+    max_entry_chars - optional integer; default 280.
+
+User-supplied fields (`text`, `source_tool`) are passed through Jinja2's
+`e` filter to prevent template injection.
+#}
+{% set count = entry_count | default(entries | length) %}
+{% if count > 0 %}
+## Relevant memory ({{ count }} entr{{ "y" if count == 1 else "ies" }})
+
+{% for entry in entries %}
+- {{ entry.created_at.strftime('%Y-%m-%d') }} · {{ (entry.source_tool or 'unknown') | e }}: {{ (entry.text[:(max_entry_chars | default(280))]) | e }}{% if entry.text | length > (max_entry_chars | default(280)) %}…{% endif %}
+
+{% endfor %}
+{% endif %}

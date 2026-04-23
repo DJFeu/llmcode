@@ -316,6 +316,7 @@ class TestDuckDuckGoRateLimit:
                 results = tool._search_with_fallback("test", 10, MagicMock(
                     brave_api_key_env="BRAVE_API_KEY",
                     searxng_base_url="",
+                    serper_api_key_env="SERPER_API_KEY",
                     tavily_api_key_env="TAVILY_API_KEY",
                 ))
         assert len(results) == 1

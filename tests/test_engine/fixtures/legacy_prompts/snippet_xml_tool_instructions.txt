@@ -1,0 +1,3 @@
+When you need to use a tool, emit exactly one JSON block wrapped in <tool_call>...</tool_call> XML tags — nothing else on those lines. The JSON must have two keys: "tool" (the tool name) and "args" (an object of parameters). Example:
+<tool_call>{"tool": "read_file", "args": {"path": "/README.md"}}</tool_call>
+Wait for the tool result before continuing.

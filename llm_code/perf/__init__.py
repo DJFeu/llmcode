@@ -4,6 +4,10 @@ from llm_code.perf.harness import (
     ComparisonResult,
     MeasureResult,
     PerfHarness,
+    PipelineBenchResult,
+    append_history,
+    bench_async_pipeline_parallel,
+    bench_sync_pipeline,
     iqr_filter,
 )
 
@@ -12,5 +16,9 @@ __all__ = (
     "ComparisonResult",
     "MeasureResult",
     "PerfHarness",
+    "PipelineBenchResult",
+    "append_history",
+    "bench_async_pipeline_parallel",
+    "bench_sync_pipeline",
     "iqr_filter",
 )

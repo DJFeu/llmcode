@@ -108,10 +108,14 @@ class ViewStreamRenderer:
             )
             return
 
-        # Mark the view as streaming. A matching is_streaming=False is
-        # sent in the finally block below so a mid-turn exception
-        # doesn't leave the status line stuck.
-        self._view.update_status(StatusUpdate(is_streaming=True))
+        # Mark the view as streaming and refresh the status-line context
+        # fields (model / cwd / branch / context-window / plan-mode).
+        # A matching is_streaming=False is sent in the finally block
+        # below so a mid-turn exception doesn't leave the status line
+        # stuck. Context fields are recomputed per-turn because the
+        # user may have switched model (``/model``), moved directories,
+        # or entered plan mode mid-session.
+        self._view.update_status(self._build_turn_start_status(runtime))
         self._view.on_turn_start()
 
         # Per-turn counters (snapshotted for the turn summary); the
@@ -523,6 +527,72 @@ class ViewStreamRenderer:
             runtime.send_permission_response(result)
 
     # === Status push ===
+
+    def _build_turn_start_status(self, runtime) -> StatusUpdate:
+        """Collect context fields (model/cwd/branch/limit/mode) for a
+        turn-start ``StatusUpdate``. All lookups are best-effort: any
+        exception leaves the corresponding field ``None`` so the status
+        line falls back to ``?`` but never crashes the render.
+        """
+        model: str | None = None
+        context_limit: int | None = None
+        permission_mode: str | None = None
+
+        try:
+            model = getattr(runtime, "_active_model", None) or None
+        except Exception:
+            pass
+        try:
+            cfg = getattr(runtime, "_config", None)
+            if cfg is not None:
+                raw_limit = getattr(cfg, "compact_after_tokens", None)
+                if raw_limit:
+                    context_limit = int(raw_limit)
+            detected = getattr(runtime, "_detected_context_window", 0)
+            if detected and detected > 0:
+                context_limit = min(context_limit or detected, int(detected))
+        except Exception:
+            pass
+        try:
+            if getattr(runtime, "plan_mode", False):
+                permission_mode = "plan"
+        except Exception:
+            pass
+
+        cwd_path = getattr(self._state, "cwd", None)
+        cwd = str(cwd_path) if cwd_path else None
+        branch = self._detect_git_branch(cwd_path) if cwd_path else None
+
+        return StatusUpdate(
+            model=model,
+            cwd=cwd,
+            branch=branch,
+            context_limit_tokens=context_limit,
+            permission_mode=permission_mode,
+            is_streaming=True,
+        )
+
+    @staticmethod
+    def _detect_git_branch(cwd) -> str | None:
+        """Return the current git branch for ``cwd`` or ``None`` if the
+        directory isn't a git repo / git is unavailable. Best-effort:
+        1-second timeout, all exceptions swallowed."""
+        try:
+            import subprocess
+
+            result = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=str(cwd),
+                capture_output=True,
+                text=True,
+                timeout=1.0,
+            )
+        except Exception:
+            return None
+        if result.returncode != 0:
+            return None
+        branch = result.stdout.strip()
+        return branch or None
 
     def _push_status_update(self, last_input_tokens: int) -> None:
         """Emit a StatusUpdate reflecting the latest token / cost

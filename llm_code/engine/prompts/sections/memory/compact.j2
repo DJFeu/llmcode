@@ -1,0 +1,14 @@
+{# Compact memory-context template (v12 M7 Task 7.6).
+
+Renders retrieved memory entries inline, comma-separated, with no
+headers. Useful when the total context budget is tight and bullet-list
+overhead is unwelcome.
+
+Inputs match `default.j2` — the two templates are interchangeable at
+wire-time via `MemoryConfig.context_template`.
+#}
+{% set count = entry_count | default(entries | length) %}
+{% if count > 0 %}
+Memory: {% for entry in entries %}{{ (entry.text[:(max_entry_chars | default(120))]) | e }}{% if entry.text | length > (max_entry_chars | default(120)) %}…{% endif %}{% if not loop.last %}; {% endif %}{% endfor %}
+
+{% endif %}

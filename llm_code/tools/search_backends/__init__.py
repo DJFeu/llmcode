@@ -39,7 +39,7 @@ def create_backend(backend_name: str, **kwargs: object) -> SearchBackend:
     """Factory function to create a search backend by name.
 
     Args:
-        backend_name: One of "duckduckgo", "brave", "tavily", "searxng".
+        backend_name: One of "duckduckgo", "brave", "tavily", "searxng", "serper".
         **kwargs: Backend-specific keyword arguments (e.g. api_key, base_url).
 
     Raises:
@@ -57,4 +57,7 @@ def create_backend(backend_name: str, **kwargs: object) -> SearchBackend:
     if backend_name == "searxng":
         from llm_code.tools.search_backends.searxng import SearXNGBackend
         return SearXNGBackend(**kwargs)
+    if backend_name == "serper":
+        from llm_code.tools.search_backends.serper import SerperBackend
+        return SerperBackend(**kwargs)
     raise ValueError(f"Unknown search backend: {backend_name!r}")

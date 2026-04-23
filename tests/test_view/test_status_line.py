@@ -257,3 +257,57 @@ def test_rate_limit_warning_expired_hidden():
     past = datetime.now() - timedelta(minutes=1)
     sl.merge(StatusUpdate(rate_limit_until=past))
     assert sl.is_rate_limited() is False
+
+
+# === M6 trace glyph ===
+
+
+def test_trace_glyph_absent_by_default(monkeypatch):
+    """Without a trace URL or active OTel span, no glyph appears."""
+    from llm_code.view.repl.components import status_line as sl_mod
+
+    monkeypatch.delenv("LLMCODE_TRACE_URL", raising=False)
+    # With no active OTel span, tracing_link returns None.
+    sl = StatusLine()
+    sl.merge(StatusUpdate(model="m", cwd="~", branch="main"))
+    text = _text(sl.render_formatted_text())
+    assert sl_mod.TRACE_GLYPH not in text
+
+
+def test_trace_glyph_shown_with_override_env(monkeypatch):
+    """LLMCODE_TRACE_URL override forces the glyph on."""
+    from llm_code.view.repl.components import status_line as sl_mod
+
+    monkeypatch.setenv("LLMCODE_TRACE_URL", "https://example.com/trace/abc")
+    sl = StatusLine()
+    sl.merge(StatusUpdate(model="m", cwd="~", branch="main"))
+    text = _text(sl.render_formatted_text())
+    assert sl_mod.TRACE_GLYPH in text
+    # OSC 8 bracket sequence is present when the glyph renders.
+    assert "\x1b]8;;" in text
+
+
+def test_format_trace_glyph_wraps_in_osc8():
+    from llm_code.view.repl.components.status_line import (
+        TRACE_GLYPH,
+        format_trace_glyph,
+    )
+
+    result = format_trace_glyph("https://example.com/trace/abc")
+    assert TRACE_GLYPH in result
+    assert result.startswith("\x1b]8;;https://example.com/trace/abc\x1b\\")
+    assert result.endswith("\x1b]8;;\x1b\\")
+
+
+def test_format_trace_glyph_empty_when_no_url():
+    from llm_code.view.repl.components.status_line import format_trace_glyph
+
+    assert format_trace_glyph(None) == ""
+    assert format_trace_glyph("") == ""
+
+
+def test_tracing_link_override_wins(monkeypatch):
+    from llm_code.view.repl.components.status_line import tracing_link
+
+    monkeypatch.setenv("LLMCODE_TRACE_URL", "https://override.example/x")
+    assert tracing_link() == "https://override.example/x"

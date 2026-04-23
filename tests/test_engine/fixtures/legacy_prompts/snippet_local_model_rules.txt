@@ -1,0 +1,1 @@
+- Do NOT use the agent tool unless the user explicitly asks for it or the task genuinely requires parallel sub-tasks. For normal questions, conversations, or simple tasks, respond directly without spawning agents.

@@ -1,0 +1,20 @@
+{# Base system-prompt skeleton for the v12 engine.
+
+This is the scaffolding base template. Mode and model templates will
+extend it via `{% extends "base.j2" %}` plus `{% block mode_specific %}`
+overrides once the shim in `runtime/prompt.py` routes through
+PromptBuilder (later task in M1). For now the base is intentionally
+minimal so existing prompt assembly remains unchanged. #}
+You are llmcode, an agentic CLI coding assistant.
+
+{% block capability_intro %}{% endblock %}
+
+{% block tools %}{% endblock %}
+
+{% block memory_context %}{% endblock %}
+
+{% block permission_hint %}{% endblock %}
+
+{% block mode_specific %}{% endblock %}
+
+{% block reminders %}{% endblock %}

@@ -117,7 +117,7 @@ class Telemetry:
                 logging.getLogger(__name__).warning(
                     "Telemetry: langfuse keys are set but the 'langfuse' "
                     "package is not installed. Continuing with OTLP only. "
-                    "Install with: pip install 'llm-code[telemetry]'"
+                    "Install with: pip install 'llmcode-cli[observability]'"
                 )
             except Exception as exc:
                 import logging

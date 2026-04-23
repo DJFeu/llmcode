@@ -1,5 +1,72 @@
 # Changelog
 
+## v2.2.0rc1 — v12 Haystack-borrow GA: engine cutover + legacy deletion
+
+The final milestone of the v12 overhaul. All eight v12 plans (M0–M8)
+are now landed and the transitional shims are gone. The engine path
+shipped in v2.0.x is now the only path — every legacy fallback has
+been deleted.
+
+If you are an end-user running llmcode via `pip install llmcode-cli`,
+the upgrade is drop-in: session files, HIDA indices, and slash commands
+all continue to work. If you are a plugin author who subclassed
+`ToolExecutionPipeline` or imported from `llm_code.runtime.prompts.mode`,
+run `llmcode migrate v12 <plugin>/` to source-rewrite your code to the
+new Component API before upgrading. See `docs/plugin_migration_guide.md`.
+
+### Breaking changes
+
+- **Python 3.11 or newer is required.** Python 3.10 support is dropped;
+  `pip install` on 3.10 now fails at dependency resolution with a clear
+  `requires-python` marker.
+- **`LLMCODE_V12` environment variable removed.** It was a transitional,
+  internal-only flag used by the M1–M7 parity suite; no supported code
+  path ever read it after GA.
+- **`EngineConfig._v12_enabled` field removed.** Callers that flipped
+  the flag manually (tests, experimental harnesses) must drop the kwarg
+  — all runs now flow through the engine path unconditionally.
+- **`runtime/prompts/*.md` and `runtime/prompts/mode/*.md` directories
+  removed.** Templates live at `llm_code/engine/prompts/models/*.j2`
+  and `llm_code/engine/prompts/modes/*.j2`. Both directories are the
+  canonical source; the legacy markdown dir no longer ships in the
+  wheel.
+- **`ToolExecutionPipeline` subclassing no longer supported.** Plugins
+  that customised tool dispatch via subclass must migrate to the M2
+  Component API. The codemod `llmcode migrate v12` handles the common
+  shapes; unsupported patterns are reported with file:line pointers.
+- **`remote/server.py` and `ide/server.py` removed.** Absorbed into the
+  `hayhooks/` transport (M4) with equivalent endpoints. Set
+  `hayhooks.enable_debug_repl` / `hayhooks.enable_ide_rpc` in config to
+  restore the old behaviour.
+- **`tests/test_engine/parity/` directory removed.** Parity tests had
+  no legacy counterpart left to compare against.
+
+### New features
+
+- **Hayhooks transport (M4)** — unified FastAPI surface covering
+  OpenAI-compat chat, MCP, headless REPL, and IDE RPC. Single port,
+  single auth token, single rate-limit policy.
+- **OpenTelemetry + Langfuse observability (M6)** — first-class tracing
+  and metrics, opt-in via `observability.exporter = "otlp" | "langfuse"`.
+  Redaction is on by default; sample rate is tuneable.
+- **Memory Components (M7)** — HIDA retrieval, vector recall, and
+  summarisation ship as composable Components. The legacy
+  `memory/service.py` indirection is gone.
+- **Async engine path (M5)** — `AsyncPipeline` alongside `Pipeline`;
+  sync/async parity was the M5 ship gate.
+- **PromptBuilder (M1)** — Jinja2-backed template rendering. Every
+  model- and mode-specific prompt now lives in `engine/prompts/`.
+- **Codemod CLI (M8.a)** — `llmcode migrate v12 <path>` rewrites the
+  four most common plugin migration shapes in place.
+
+### Upgrade pointer
+
+See `docs/upgrade_to_v2.md` for the end-user and plugin-author
+checklists, `docs/plugin_migration_guide.md` for the codemod walkthrough,
+and `docs/breaking_changes_v2.md` for the full old→new symbol table.
+
+---
+
 ## v2.1.0 — Reference-alignment sprint: sandbox enforcement, granular network policy, mode reminders
 
 Fifty commits of reference-aligned improvements against opencode,

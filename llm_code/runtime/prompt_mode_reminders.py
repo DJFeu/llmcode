@@ -7,20 +7,32 @@ is active, or the per-turn tool budget is exhausted. We ship the same four
 as reusable builder functions so callers can assemble the right reminder
 for the active session.
 
-Templates live under ``prompts/mode/`` with ``{name_section}`` placeholders
-so callers can provide dynamic context (plan file path, work-done summary,
-remaining-tasks summary) without string-bashing.
+Templates live under ``engine/prompts/modes/*.j2`` (moved in v12 M1 and
+consolidated in M8.b). They carry ``{placeholder}`` markers — literal
+Python ``str.replace`` sentinels, not Jinja2 variables — so callers can
+continue to substitute dynamic context (plan file path, work-done summary,
+remaining-tasks summary) after the template loads.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-_MODE_DIR = Path(__file__).parent / "prompts" / "mode"
+_MODE_DIR = (
+    Path(__file__).resolve().parent.parent / "engine" / "prompts" / "modes"
+)
 
 
 def _load(template_name: str) -> str:
-    path = _MODE_DIR / f"{template_name}.md"
-    return path.read_text(encoding="utf-8")
+    """Load a mode-reminder template via the engine PromptBuilder.
+
+    Thin delegate to :func:`~llm_code.engine.prompt_builder.render_template_file`;
+    keeps the rendering path unified with Component-based callers.
+    """
+    from llm_code.engine.prompt_builder import render_template_file
+
+    return render_template_file(
+        f"{template_name}.j2", templates_dir=_MODE_DIR
+    )
 
 
 def plan_mode_reminder(plan_file: str | None = None) -> str:

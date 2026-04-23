@@ -96,6 +96,18 @@ def test_telemetry_records_langfuse_setup_attempt(monkeypatch) -> None:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
+        def shutdown(self) -> None:
+            """No-op to satisfy atexit TracerProvider.shutdown()."""
+
+        def force_flush(self, timeout_millis: int = 30_000) -> bool:
+            return True
+
+        def on_start(self, span, parent_context=None) -> None:
+            pass
+
+        def on_end(self, span) -> None:
+            pass
+
     class _FakeOtelMod:
         LangfuseSpanProcessor = _FakeProcessor
 
