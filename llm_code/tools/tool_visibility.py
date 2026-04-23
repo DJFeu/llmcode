@@ -87,7 +87,16 @@ _INTENT_KEYWORDS: dict[str, re.Pattern[str]] = {
         re.IGNORECASE,
     ),
     "web": re.compile(
-        r"(?:search\s+(?:the\s+)?web|google|fetch\s+url|http|搜尋網路|上網|網頁)",
+        # Original patterns — explicit "search the web" / URLs / fetch
+        r"(?:search\s+(?:the\s+)?web|google|fetch\s+url|http|"
+        r"搜尋網路|上網|網頁|"
+        # Real-time / current-info patterns — the user didn't say
+        # "web search" explicitly but the query can only be answered
+        # by a live lookup (news, today's X, current Y, latest Z).
+        # Without these, "今日熱門新聞三則" falls through to code_edit
+        # and the model answers from training-cutoff knowledge.
+        r"news|latest|current(?:ly)?|today'?s|real[-\s]?time|"
+        r"新聞|最新|現在|目前|今日|即時|最近)",
         re.IGNORECASE,
     ),
     "test": re.compile(
@@ -101,12 +110,22 @@ _INTENT_KEYWORDS: dict[str, re.Pattern[str]] = {
     ),
 }
 
-# Tools always visible regardless of intent
+# Tools always visible regardless of intent.
+#
+# ``tool_search`` + ``agent`` are meta-dispatchers: without them the
+# deferred-tool system collapses (model can't find ``web_search`` /
+# ``web_fetch`` that the intent filter hid) and sub-agent delegation
+# becomes impossible. Keeping them in the always-visible set costs
+# two tool definitions per turn and unblocks the entire dispatch
+# surface when intent classification mis-routes (e.g. "今日熱門新聞"
+# hitting ``code_edit`` fallback instead of ``web``).
 ALWAYS_VISIBLE: frozenset[str] = frozenset({
     "read_file",
     "bash",
     "glob_search",
     "grep_search",
+    "tool_search",
+    "agent",
 })
 
 # MCP tool prefix — always pass through

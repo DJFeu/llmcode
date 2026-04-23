@@ -10,7 +10,7 @@ from llm_code.tools.tool_visibility import (
 
 ALL_TOOLS: frozenset[str] = frozenset({
     "read_file", "write_file", "edit_file", "multi_edit",
-    "bash", "glob_search", "grep_search",
+    "bash", "glob_search", "grep_search", "tool_search",
     "web_search", "web_fetch",
     "git_status", "git_diff", "git_log", "git_commit", "git_push",
     "git_stash", "git_branch",
@@ -112,3 +112,59 @@ class TestVisibleToolsForTurn:
     def test_returns_frozenset(self) -> None:
         result = visible_tools_for_turn(ALL_TOOLS, "fix bug")
         assert isinstance(result, frozenset)
+
+
+class TestRealTimeIntentAndDispatchTools:
+    """Regression coverage for the v2.2.1 → v2.2.2 fix:
+
+    1. ``tool_search`` must survive the intent filter so the deferred-
+       tool unlock path is always reachable.
+    2. ``agent`` must survive so sub-agent delegation is always
+       reachable.
+    3. Real-time queries ("today's news", "最新 X", "latest Y") must
+       classify as ``web`` intent so ``web_search`` lands in the
+       visible set — not just explicit "search the web" phrasing.
+    """
+
+    def test_tool_search_always_visible(self) -> None:
+        assert "tool_search" in ALWAYS_VISIBLE
+        result = visible_tools_for_turn(ALL_TOOLS, "fix bug")
+        assert "tool_search" in result
+
+    def test_agent_always_visible(self) -> None:
+        assert "agent" in ALWAYS_VISIBLE
+        result = visible_tools_for_turn(ALL_TOOLS, "fix bug")
+        assert "agent" in result
+
+    def test_today_news_chinese_classifies_web(self) -> None:
+        """The exact screenshot query that surfaced the bug."""
+        assert "web" in classify_intents("今日熱門新聞三則")
+
+    def test_latest_news_english_classifies_web(self) -> None:
+        assert "web" in classify_intents("give me today's top news")
+        assert "web" in classify_intents("latest python 3.13 release notes")
+
+    def test_current_events_classifies_web(self) -> None:
+        assert "web" in classify_intents("what is currently trending")
+        assert "web" in classify_intents("最新 FastAPI 版本是什麼")
+
+    def test_real_time_hyphenated_classifies_web(self) -> None:
+        assert "web" in classify_intents("give me real-time stock prices")
+
+    def test_web_search_visible_on_chinese_news_query(self) -> None:
+        """End-to-end: the user's screenshot query must now surface
+        web_search in the visible tool set."""
+        result = visible_tools_for_turn(ALL_TOOLS, "今日熱門新聞三則")
+        assert "web_search" in result
+
+    def test_web_search_visible_on_latest_release_query(self) -> None:
+        result = visible_tools_for_turn(
+            ALL_TOOLS, "what's the latest python release"
+        )
+        assert "web_search" in result
+
+    def test_unrelated_query_does_not_classify_web(self) -> None:
+        """Defensive: don't widen the web intent so far that everyday
+        code queries pull web_search in and waste tokens."""
+        assert "web" not in classify_intents("fix the bug in main.py")
+        assert "web" not in classify_intents("跑測試")
