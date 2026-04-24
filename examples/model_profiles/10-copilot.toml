@@ -1,0 +1,32 @@
+# GitHub Copilot — GPT-5 backend
+#
+# Copilot ships GPT-5 under a different API surface and tool-call dialect
+# than raw OpenAI, so it gets its own tuned prompt and routing token.
+# The numeric filename prefix (10-) ensures this profile registers BEFORE
+# the more generic ``25-gpt.toml`` and ``20-beast.toml`` so an id like
+# ``copilot-gpt-5`` hits this profile (which contains ``copilot``) rather
+# than falling through to beast on the ``gpt-5`` substring.
+
+name = "GitHub Copilot (GPT-5)"
+
+[provider]
+type = "openai-compat"
+native_tools = true
+supports_reasoning = true
+supports_images = false
+
+[prompt]
+template = "copilot_gpt5"
+match = ["copilot"]
+
+[parser]
+# Copilot streams native tool calls; XML fallback variants are
+# defensive for proxy setups that don't expose ``tool_use`` blocks.
+variants = [
+    "json_payload",
+    "hermes_function",
+    "hermes_truncated",
+    "harmony_kv",
+    "glm_brace",
+    "bare_name_tag",
+]

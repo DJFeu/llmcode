@@ -1,0 +1,26 @@
+# Google Gemini — gemini.j2 prompt
+#
+# Catches gemini-2.5-flash, gemini-2.0-pro, and any future ids that
+# contain the ``gemini`` substring.
+
+name = "Google Gemini"
+
+[provider]
+type = "openai-compat"
+native_tools = true
+supports_reasoning = true
+supports_images = true
+
+[prompt]
+template = "gemini"
+match = ["gemini"]
+
+[parser]
+variants = [
+    "json_payload",
+    "hermes_function",
+    "hermes_truncated",
+    "harmony_kv",
+    "glm_brace",
+    "bare_name_tag",
+]

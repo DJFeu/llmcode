@@ -1,0 +1,27 @@
+# Trinity — opencode self-identification convention
+#
+# Catch-all for models whose id contains ``trinity``. Tracks opencode's
+# routing convention; the trinity.j2 prompt provides a baseline that
+# works for any model fronted under that label.
+
+name = "Trinity"
+
+[provider]
+type = "openai-compat"
+native_tools = true
+supports_reasoning = true
+supports_images = false
+
+[prompt]
+template = "trinity"
+match = ["trinity"]
+
+[parser]
+variants = [
+    "json_payload",
+    "hermes_function",
+    "hermes_truncated",
+    "harmony_kv",
+    "glm_brace",
+    "bare_name_tag",
+]

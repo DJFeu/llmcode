@@ -1,0 +1,151 @@
+{
+  "json_simple": [
+    {
+      "name": "bash",
+      "args": {
+        "command": "ls"
+      },
+      "source": "xml_tag"
+    }
+  ],
+  "json_no_args": [
+    {
+      "name": "task_close",
+      "args": {},
+      "source": "xml_tag"
+    }
+  ],
+  "hermes_full_basic": [
+    {
+      "name": "read_file",
+      "args": {
+        "path": "/tmp/foo"
+      },
+      "source": "xml_tag"
+    }
+  ],
+  "hermes_full_multi_param": [
+    {
+      "name": "edit_file",
+      "args": {
+        "path": "/x.py",
+        "old_string": "a",
+        "new_string": "b"
+      },
+      "source": "xml_tag"
+    }
+  ],
+  "hermes_truncated_param_blocks": [
+    {
+      "name": "web_search",
+      "args": {
+        "query": "news"
+      },
+      "source": "xml_tag"
+    }
+  ],
+  "hermes_truncated_json_args": [
+    {
+      "name": "web_search",
+      "args": {
+        "query": "news",
+        "max_results": 3
+      },
+      "source": "xml_tag"
+    }
+  ],
+  "hermes_truncated_brace_no_gt": [
+    {
+      "name": "bash",
+      "args": {
+        "command": "ls"
+      },
+      "source": "xml_tag"
+    }
+  ],
+  "harmony_simple": [
+    {
+      "name": "web_search",
+      "args": {
+        "query": "news",
+        "max_results": 5
+      },
+      "source": "xml_tag"
+    }
+  ],
+  "glm_variant_simple": [
+    {
+      "name": "web_search",
+      "args": {
+        "query": "news",
+        "max_results": 3
+      },
+      "source": "xml_tag"
+    }
+  ],
+  "glm_variant_arrow_chain": [
+    {
+      "name": "web_search",
+      "args": {
+        "query": "a"
+      },
+      "source": "xml_tag"
+    },
+    {
+      "name": "web_search",
+      "args": {
+        "query": "b"
+      },
+      "source": "xml_tag"
+    }
+  ],
+  "bare_name_simple": [
+    {
+      "name": "web_search",
+      "args": {
+        "query": "news"
+      },
+      "source": "xml_tag"
+    }
+  ],
+  "bare_name_truncated_close": [
+    {
+      "name": "web_search",
+      "args": {
+        "query": "news"
+      },
+      "source": "xml_tag"
+    }
+  ],
+  "json_with_prose": [
+    {
+      "name": "bash",
+      "args": {
+        "command": "ls"
+      },
+      "source": "xml_tag"
+    }
+  ],
+  "two_json_calls": [
+    {
+      "name": "bash",
+      "args": {
+        "command": "ls"
+      },
+      "source": "xml_tag"
+    },
+    {
+      "name": "bash",
+      "args": {
+        "command": "pwd"
+      },
+      "source": "xml_tag"
+    }
+  ],
+  "empty": [],
+  "plain_text": [],
+  "only_open_tag": [],
+  "malformed_json": [],
+  "unknown_format": [],
+  "nothing_visible": []
+}

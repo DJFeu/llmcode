@@ -1,0 +1,28 @@
+# OpenAI Codex CLI backend
+#
+# A distinct surface from raw OpenAI tool calling — codex.j2 ships the
+# tuned prompt. Filename prefix (15-) ensures codex wins over the more
+# generic ``25-gpt.toml`` even though OpenAI Codex ids may contain
+# ``gpt``-flavoured fragments.
+
+name = "OpenAI Codex"
+
+[provider]
+type = "openai-compat"
+native_tools = true
+supports_reasoning = false
+supports_images = false
+
+[prompt]
+template = "codex"
+match = ["codex"]
+
+[parser]
+variants = [
+    "json_payload",
+    "hermes_function",
+    "hermes_truncated",
+    "harmony_kv",
+    "glm_brace",
+    "bare_name_tag",
+]

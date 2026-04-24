@@ -1,0 +1,45 @@
+# Claude Sonnet 4.6 — Anthropic API
+#
+# Demonstrates anthropic_native thinking format and pricing.
+# The built-in profile is usually sufficient; use this as a template
+# if you need to override defaults for a proxy or custom endpoint.
+
+name = "Claude Sonnet 4.6"
+
+[provider]
+type = "anthropic"
+native_tools = true
+supports_reasoning = true
+supports_images = true
+
+[thinking]
+thinking_extra_body_format = "anthropic_native"
+default_thinking_budget = 10000
+
+[pricing]
+price_input = 3.00
+price_output = 15.00
+
+[limits]
+max_output_tokens = 16384
+context_window = 200000
+
+# v13 — profile-driven adapters. Claude streams native tool calls so
+# the parser variant list is mostly defensive (the JSON payload form
+# is what surfaces when llmcode falls back to XML on a proxy that
+# doesn't expose tool_use blocks). The match list also catches
+# ``opus``/``haiku``/``sonnet`` so the OEM model ids that drop the
+# ``claude-`` prefix still resolve to this profile.
+[prompt]
+template = "anthropic"
+match = ["claude", "anthropic", "sonnet", "opus", "haiku"]
+
+[parser]
+variants = [
+    "json_payload",
+    "hermes_function",
+    "hermes_truncated",
+    "harmony_kv",
+    "glm_brace",
+    "bare_name_tag",
+]

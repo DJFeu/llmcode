@@ -62,3 +62,39 @@ price_output = 0.0
 # Tier C (LLM-based skill router) reuses the same model. Override to a
 # smaller hosted model if the routing latency becomes a problem.
 tier_c_model = ""
+
+# v13 — profile-driven adapters. The ``[prompt]`` template + match
+# tokens replace the legacy if-ladder in ``runtime/prompt.py``; the
+# ``[parser]`` variants + ``[parser_hints]`` replace the GLM-specific
+# defaults that used to live in ``view/stream_parser.py``.
+[prompt]
+template = "glm"
+# Substring-matched against ``model_id.lower()``; first match wins so
+# numeric filename prefix decides ordering. ``zhipu`` covers the
+# original vendor brand (e.g. ``zhipu-chatglm``).
+match = ["glm", "zhipu"]
+
+[parser]
+# Full default order — GLM streams emit any of the six variants
+# depending on the chat template + tool path, so the registry walks
+# the full list. Order matches DEFAULT_VARIANT_ORDER.
+variants = [
+    "json_payload",
+    "hermes_function",
+    "hermes_truncated",
+    "harmony_kv",
+    "glm_brace",
+    "bare_name_tag",
+]
+
+[parser_hints]
+# Variant 6 closes on ``</arg_value>`` (NOT ``</tool_call>``). Variant 7
+# bodies legitimately contain ``</arg_value>`` but the StreamParser
+# must wait for the real ``</tool_call>`` when ``<arg_key>`` is present
+# — that hint is encoded on the ``harmony_kv`` variant itself
+# (``requires_standard_close_when=("<arg_key>",)``) and StreamParser
+# reads it via the registry. The chained variant-6 emissions separate
+# sibling calls with U+2192 (``→``) plus whitespace, which we strip
+# after each custom close.
+custom_close_tags = ["</arg_value>"]
+call_separator_chars = "\u2192 \t\r\n"

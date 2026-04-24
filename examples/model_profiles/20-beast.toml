@@ -1,0 +1,38 @@
+# OpenAI reasoning-class models — beast prompt
+#
+# Reasoning models (o1 / o3 / gpt-4 / gpt-5) reward long autonomous
+# iteration + explicit planning, so the baseline gpt prompt under-
+# delivers. The beast.j2 template ships the "keep going, plan,
+# iterate" instruction set that opencode pioneered.
+#
+# Filename prefix (20-) sequences this profile AFTER copilot/codex so
+# specific backends win on ids like ``copilot-gpt-5`` / ``codex-mini``.
+# Match tokens deliberately omit the bare ``"beast"`` substring so user
+# ids like ``beast-qwen`` continue to route to the qwen profile (which
+# is the historical behaviour preserved by the parity snapshot).
+
+name = "OpenAI Reasoning (Beast)"
+
+[provider]
+type = "openai-compat"
+native_tools = true
+supports_reasoning = true
+supports_images = true
+
+[prompt]
+template = "beast"
+# Match the legacy ``_legacy_select_intro_prompt`` reasoning-class
+# branch exactly — anything containing one of these substrings hits
+# beast as long as no earlier (copilot / codex) profile already
+# claimed the id via filename ordering.
+match = ["o1", "o3", "gpt-4", "gpt4", "gpt-5", "gpt5"]
+
+[parser]
+variants = [
+    "json_payload",
+    "hermes_function",
+    "hermes_truncated",
+    "harmony_kv",
+    "glm_brace",
+    "bare_name_tag",
+]

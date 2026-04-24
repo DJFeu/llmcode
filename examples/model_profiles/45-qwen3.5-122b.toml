@@ -30,3 +30,20 @@ context_window = 131072
 
 # [routing]
 # tier_c_model = ""  # leave empty to use self for skill routing
+
+# v13 — profile-driven adapters. Qwen routes to the tuned ``qwen.j2``
+# prompt and walks the full variant list because vLLM-served Qwen3.5
+# can emit any of the truncated forms depending on chat template.
+[prompt]
+template = "qwen"
+match = ["qwen"]
+
+[parser]
+variants = [
+    "json_payload",
+    "hermes_function",
+    "hermes_truncated",
+    "harmony_kv",
+    "glm_brace",
+    "bare_name_tag",
+]

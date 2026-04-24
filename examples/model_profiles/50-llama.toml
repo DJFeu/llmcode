@@ -1,0 +1,28 @@
+# Meta Llama — llama.j2 prompt
+#
+# Catches llama-3.1, llama-3.3-70b, and any future ids containing the
+# ``llama`` substring. Most ids in the wild are self-hosted via vLLM /
+# Ollama / LM Studio, so the prompt assumes a local deployment and the
+# parser walks the full variant list because chat templates vary.
+
+name = "Meta Llama"
+
+[provider]
+type = "openai-compat"
+native_tools = true
+supports_reasoning = false
+supports_images = false
+
+[prompt]
+template = "llama"
+match = ["llama"]
+
+[parser]
+variants = [
+    "json_payload",
+    "hermes_function",
+    "hermes_truncated",
+    "harmony_kv",
+    "glm_brace",
+    "bare_name_tag",
+]

@@ -1,0 +1,27 @@
+# Moonshot Kimi — kimi.j2 prompt
+#
+# Catches kimi-k2 and the legacy ``moonshot-v1`` brand id (Kimi is
+# Moonshot's product line, so both substrings route to the same
+# prompt).
+
+name = "Moonshot Kimi"
+
+[provider]
+type = "openai-compat"
+native_tools = true
+supports_reasoning = false
+supports_images = false
+
+[prompt]
+template = "kimi"
+match = ["kimi", "moonshot"]
+
+[parser]
+variants = [
+    "json_payload",
+    "hermes_function",
+    "hermes_truncated",
+    "harmony_kv",
+    "glm_brace",
+    "bare_name_tag",
+]
