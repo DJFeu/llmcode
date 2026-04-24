@@ -1,19 +1,18 @@
-"""One-shot: capture pre-v13 prompt routing as a golden fixture.
+"""Capture prompt routing / parser / stream-parser behaviour as a
+golden fixture — used by Phase B of the v13 migration to lock in
+the pre-migration behaviour and verify Phase B didn't regress any
+shipped model id.
 
-Run this BEFORE migrating built-in TOMLs (Phase B) so the snapshot
-reflects the pre-Phase-B behaviour — the legacy if-ladder via the
-``select_intro_prompt`` shim falling through ``_legacy_select_intro_prompt``.
-After Phase B, the parity test reads this snapshot and asserts that
-``load_intro_prompt(resolve_profile_for_model(mid))`` produces a
-byte-identical string for every recorded model id.
+Phase C removed the parity test suites that consumed these snapshots
+(mainline tests now cover the same paths). The script is kept for
+future migrations: if a similar cleanup ever needs a byte-for-byte
+baseline, run this first, rename the outputs to ``pre_v14_*``, and
+repurpose as needed.
 
 Usage:
     .venv/bin/python scripts/capture_prompt_baseline.py
 
-The script also captures parser and stream-parser baselines so the
-parser registry / stream-parser hint refactors carry the same
-zero-behaviour-change guarantee. All three snapshots land under
-``tests/fixtures/`` and are committed alongside this script.
+The three snapshots land under ``tests/fixtures/``.
 """
 from __future__ import annotations
 

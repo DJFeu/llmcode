@@ -51,16 +51,15 @@ class StreamParser:
     ``flush()``.
     """
 
-    # v13 Phase A defaults — preserve v2.2.5 behaviour when callers
-    # don't supply hints. GLM variant 6 closes on ``</arg_value>`` and
-    # separates sibling calls with U+2192 ``→``; Harmony variant 7
-    # legitimately contains ``<arg_key>`` inside the body, so the
-    # stream parser must wait for the real ``</tool_call>`` when that
-    # substring is seen. Callers that DO pass profile hints override
-    # these defaults with their own tuples.
-    _DEFAULT_CUSTOM_CLOSE_TAGS: tuple[str, ...] = ("</arg_value>",)
-    _DEFAULT_CALL_SEPARATOR_CHARS: str = "\u2192 \t\r\n"
-    _DEFAULT_STANDARD_CLOSE_REQUIRED_ON: tuple[str, ...] = ("<arg_key>",)
+    # v13 Phase C: no-op defaults. The GLM-specific hints that lived
+    # here until v2.2.5 now flow through ``65-glm-5.1.toml``
+    # ``[parser_hints]`` instead. Callers that need GLM variant-6 /
+    # Harmony variant-7 support must pass the relevant kwargs
+    # explicitly (or resolve a GLM ``ModelProfile`` and forward its
+    # ``custom_close_tags`` / ``call_separator_chars`` tuples).
+    _DEFAULT_CUSTOM_CLOSE_TAGS: tuple[str, ...] = ()
+    _DEFAULT_CALL_SEPARATOR_CHARS: str = ""
+    _DEFAULT_STANDARD_CLOSE_REQUIRED_ON: tuple[str, ...] = ()
 
     def __init__(
         self,
@@ -82,23 +81,30 @@ class StreamParser:
         detects bare ``<tool_name>JSON</...>`` patterns (variant 5)
         and classifies them as TOOL_CALL instead of TEXT.
 
-        v13 Phase A profile hints — each kwarg is an override; pass
-        ``None`` (the default) to keep v2.2.5 behaviour:
+        v13 profile hints — each kwarg is an override; pass ``None``
+        (the default) to opt into the v2.3.0 no-op defaults (only
+        ``</tool_call>`` counts as a close tag). Callers that need
+        GLM variant 6 / Harmony variant 7 support must supply the
+        values themselves, typically by forwarding the resolved
+        ``ModelProfile``'s ``custom_close_tags``,
+        ``call_separator_chars`` and the variant-registry-derived
+        ``standard_close_required_on`` tuple.
 
         - ``custom_close_tags`` — fallback close tags when
-          ``</tool_call>`` is not yet visible. Defaults to
-          ``("</arg_value>",)`` to support GLM variant 6.
+          ``</tool_call>`` is not yet visible. Empty tuple (the
+          v2.3.0 default) means only ``</tool_call>`` terminates
+          ``<tool_call>`` blocks.
         - ``call_separator_chars`` — chars ``.lstrip``ed after a
           custom close tag before the next ``<tool_call>`` search.
-          Defaults to ``"→ \\t\\r\\n"`` to eat GLM's arrow separator.
+          Empty string (the default) means no separator stripping.
         - ``standard_close_required_on`` — if any substring here
           appears in the ``<tool_call>`` buffer, wait for the real
-          ``</tool_call>`` (avoids variant 7 ``<arg_key>`` false
-          terminations on interior ``</arg_value>`` tags). Defaults
-          to ``("<arg_key>",)``.
+          ``</tool_call>`` and ignore custom close tags. Empty
+          tuple (the default) disables this guard.
 
-        Passing empty tuples ``()`` / ``""`` explicitly disables the
-        feature (e.g. a Claude profile with no custom behaviour).
+        Passing ``None`` (or omitting the kwarg entirely) is
+        equivalent to passing the class-level default — both paths
+        produce the v2.3.0 no-op behaviour.
         """
         self._buffer: str = ""
         self._in_think: bool = implicit_thinking
@@ -106,8 +112,9 @@ class StreamParser:
         self._in_bare_tool: bool = False  # inside a <known_tool_name> block
         self._bare_tool_tag: str = ""     # the opening tag name
         self._known_tool_names = known_tool_names or frozenset()
-        # Profile hints — None falls back to v2.2.5 defaults; the
-        # explicit empty tuple / empty string opts out.
+        # Profile hints — ``None`` and omitting the kwarg both fall
+        # back to the v2.3.0 no-op defaults. Callers pass explicit
+        # tuples / strings when they need non-default behaviour.
         self._custom_close_tags: tuple[str, ...] = (
             custom_close_tags
             if custom_close_tags is not None

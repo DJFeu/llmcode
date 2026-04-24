@@ -18,22 +18,20 @@ Design choices (match the plan file):
   it — via ``register_profile()`` (programmatic) or
   ``_load_builtin_profiles(path)`` (TOML directory sweep).
 * **Lazy built-in load.** ``_ensure_builtin_profiles_loaded()``
-  runs the directory sweep once per process. The deprecated
-  ``runtime.prompt.select_intro_prompt`` shim calls it so the
-  Phase A behaviour-change-free path is in place without forcing
-  every llmcode import to touch the filesystem.
+  runs the directory sweep once per process. Called from
+  :class:`~llm_code.runtime.prompt.SystemPromptBuilder` and from the
+  :func:`~llm_code.runtime.prompt.select_intro_prompt` deprecation
+  shim so downstream callers never have to remember to populate
+  the registry.
 * **User profiles first, built-ins last.** Registration order is
   preserved. A caller that wants a user override to win simply
   registers it before ``_ensure_builtin_profiles_loaded()`` runs.
 
-Phase A ships this infrastructure with zero built-in TOML edits —
-the existing profiles have no ``[prompt]`` section yet, so their
-``prompt_match`` tuples are empty, so ``resolve_profile_for_model``
-always returns ``_DEFAULT_PROFILE``. The ``select_intro_prompt``
-shim handles this by falling back to the historical if-ladder in
-``_legacy_select_intro_prompt`` whenever the resolved profile has
-no ``prompt_template``. Phase B migrates the TOMLs; Phase C deletes
-the legacy ladder.
+Phase C (v2.3.0) deleted the legacy ``_legacy_select_intro_prompt``
+if-ladder. Every built-in profile under ``examples/model_profiles/``
+now declares a ``[prompt]`` section, so
+``resolve_profile_for_model`` plus ``load_intro_prompt`` is the only
+route from a ``model_id`` to its tuned intro prompt.
 """
 from __future__ import annotations
 
@@ -55,9 +53,8 @@ _PROFILES: list[ModelProfile] = []
 # Returned when ``model_id`` does not match any registered profile
 # or when the caller passes an empty string. The default is a plain
 # ``ModelProfile()`` so every field takes its dataclass default —
-# i.e. ``prompt_template == ""`` which signals "let the caller pick
-# its own fallback" (used by the ``select_intro_prompt`` shim to
-# hand control to the legacy if-ladder).
+# i.e. ``prompt_template == ""`` which ``load_intro_prompt`` treats
+# as "use the engine/prompts/models/default.j2 template".
 _DEFAULT_PROFILE: ModelProfile = ModelProfile()
 
 # Guards ``_ensure_builtin_profiles_loaded`` so the directory sweep

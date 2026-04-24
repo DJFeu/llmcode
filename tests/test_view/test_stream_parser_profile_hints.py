@@ -1,6 +1,7 @@
-"""StreamParser profile hints — v13 Phase A.
+"""StreamParser profile hints — v13.
 
-Exercises the new kwargs on ``StreamParser.__init__``:
+Exercises the three keyword-only profile hint kwargs on
+``StreamParser.__init__``:
 
 - ``custom_close_tags`` — additional close tags tried when
   ``</tool_call>`` is not visible.
@@ -9,13 +10,11 @@ Exercises the new kwargs on ``StreamParser.__init__``:
 - ``standard_close_required_on`` — substrings that force the parser
   to wait for ``</tool_call>`` and ignore custom close tags.
 
-Default behaviour (no kwargs, all ``None``) is documented in the
-class docstring: custom_close_tags defaults to ``("</arg_value>",)``,
-call_separator_chars to ``"→ \\t\\r\\n"``, and
-standard_close_required_on to ``("<arg_key>",)`` — i.e. v2.2.5 GLM
-variant 6 + Harmony variant 7 support continues to work out of the
-box. Those baseline tests live elsewhere; here we only cover the
-new kwarg paths.
+v13 Phase C default behaviour (no kwargs / all ``None``): the class
+defaults are all empty/no-op tuples/string, so only ``</tool_call>``
+terminates a ``<tool_call>`` block. Callers that need GLM variant-6
+/ Harmony variant-7 support must pass the relevant hints explicitly
+(or resolve the GLM ``ModelProfile`` and forward its fields).
 """
 from __future__ import annotations
 
@@ -32,51 +31,43 @@ def _fire(parser: StreamParser, *chunks: str, flush: bool = True) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Defaults preserve v2.2.5 behaviour
+# Defaults are no-op — only </tool_call> counts as a close
 # ---------------------------------------------------------------------------
 
 
-class TestDefaultsMatchLegacyGlmSupport:
-    """With no kwargs, the parser still supports GLM variant 6
-    (``</arg_value>`` close + U+2192 separator). This is the
-    "empty-hints equals default GLM behaviour" requirement."""
+class TestDefaultsAreNoOp:
+    """v13 Phase C flipped the class defaults to empty tuples/string so
+    a plain ``StreamParser()`` only recognises ``</tool_call>`` as a
+    close. GLM-specific behaviour must be opted in explicitly."""
 
-    def test_no_kwargs_parses_variant_6(self) -> None:
+    def test_no_kwargs_ignores_arg_value_close(self) -> None:
+        """A variant-6 body has no ``</tool_call>`` — with no hints
+        the block stays open until ``flush()`` salvages it."""
+        p = StreamParser()
+        # Feed without flush — the buffer holds the open block.
+        live = p.feed('<tool_call>web_search}{"query":"a"}</arg_value>')
+        tc_live = [e for e in live if e.kind == StreamEventKind.TOOL_CALL]
+        assert tc_live == []
+        # Flush runs the recovery parser; variant-6 scanner still
+        # exists in parser_variants, so something comes out (either a
+        # recovered tool call or a TEXT salvage). Either way — not a
+        # silent drop.
+        flush_events = p.flush()
+        assert len(flush_events) >= 1
+
+    def test_no_kwargs_well_formed_tool_call_still_parses(self) -> None:
+        """With the standard ``</tool_call>`` close present, a
+        well-formed JSON-payload body parses cleanly under the no-op
+        defaults."""
         p = StreamParser()
         events = _fire(
             p,
-            '<tool_call>web_search}{"query":"a"}</arg_value>',
+            '<tool_call>{"tool": "bash", "args": {"command": "ls"}}</tool_call>',
         )
         tc = [e for e in events if e.kind == StreamEventKind.TOOL_CALL]
         assert len(tc) == 1
         assert tc[0].tool_call is not None
-        assert tc[0].tool_call.args == {"query": "a"}
-
-    def test_no_kwargs_arrow_separator_consumed(self) -> None:
-        p = StreamParser()
-        events = _fire(
-            p,
-            '<tool_call>web_search}{"query":"a"}</arg_value>'
-            "\u2192"
-            '<tool_call>web_search}{"query":"b"}</arg_value>',
-        )
-        tc = [e for e in events if e.kind == StreamEventKind.TOOL_CALL]
-        assert len(tc) == 2
-
-    def test_no_kwargs_variant_7_waits_for_tool_call_close(self) -> None:
-        """``<arg_key>`` in the buffer must prevent ``</arg_value>``
-        from closing the block early — default behaviour."""
-        p = StreamParser()
-        events = _fire(
-            p,
-            "<tool_call>web_search\n"
-            "<arg_key>query</arg_key><arg_value>news</arg_value>"
-            "<arg_key>max_results</arg_key><arg_value>5</arg_value>"
-            "</tool_call>",
-        )
-        tc = [e for e in events if e.kind == StreamEventKind.TOOL_CALL]
-        assert len(tc) == 1
-        assert tc[0].tool_call.args == {"query": "news", "max_results": 5}
+        assert tc[0].tool_call.name == "bash"
 
 
 # ---------------------------------------------------------------------------
@@ -343,15 +334,23 @@ class TestClaudeLikeEmptyHints:
         assert len(flush_events) >= 1
 
 
-class TestRequiredOnUnionBounded:
-    """Phase A risk mitigation R3: the union of
-    ``requires_standard_close_when`` across enabled variants should
-    stay small. StreamParser doesn't enforce a cap, but the built-in
-    set is ``("<arg_key>",)`` only — guard that."""
+class TestDefaultHintTuples:
+    """v13 Phase C: class defaults are all empty/no-op. Profile
+    authors opt in by passing kwargs explicitly (or forwarding
+    ``ModelProfile.custom_close_tags`` + ``call_separator_chars``
+    and the variant-registry ``requires_standard_close_when`` union)."""
 
-    def test_default_required_on_is_single_substring(self) -> None:
+    def test_default_required_on_is_empty(self) -> None:
         p = StreamParser()
-        assert p._standard_close_required_on == ("<arg_key>",)
+        assert p._standard_close_required_on == ()
+
+    def test_default_custom_close_tags_is_empty(self) -> None:
+        p = StreamParser()
+        assert p._custom_close_tags == ()
+
+    def test_default_call_separator_chars_is_empty(self) -> None:
+        p = StreamParser()
+        assert p._call_separator_chars == ""
 
 
 class TestExplicitOverrideEmptyTuple:

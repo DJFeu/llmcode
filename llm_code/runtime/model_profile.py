@@ -70,11 +70,12 @@ class ModelProfile:
     max_output_tokens: int = 4096
     context_window: int = 128000  # advertised context length
 
-    # ── v13 Phase A: profile-driven adapters ──────────────────────────
-    # Replace the hardcoded if-ladder in ``runtime/prompt.py::
-    # select_intro_prompt`` (deleted in v13 Phase C). A profile that
-    # omits these fields gets the historical fallback via the
-    # deprecated shim — so Phase A is a zero-behaviour-change refactor.
+    # ── v13: profile-driven adapters ─────────────────────────────────
+    # Replaced the hardcoded if-ladder that used to live in
+    # ``runtime/prompt.py::select_intro_prompt`` (GA'd in v2.3.0).
+    # Every built-in TOML now declares its own [prompt]/[parser]/
+    # [parser_hints] sections; the shim is kept only as a
+    # deprecation warning surface (removal scheduled for v14).
     #
     # TOML authoring (flat sections to match existing convention):
     #

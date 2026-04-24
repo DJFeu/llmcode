@@ -67,101 +67,37 @@ def _template_path_to_name(template: str) -> str:
     return name or "default"
 
 
-def _legacy_select_intro_prompt(model: str) -> str:
-    """Historical if-ladder that routes a model id to a template name.
-
-    Retained as the Phase A fallback for the deprecated
-    :func:`select_intro_prompt` shim — invoked whenever the resolved
-    profile has no ``prompt_template``. Phase C deletes this function
-    entirely (together with its callers); Phase B migrates every
-    built-in TOML so this path is never taken for shipped models.
-
-    Routing order matters — more specific patterns must win. Reference-
-    aligned with opencode's ``session/system.ts`` routing: ``copilot``
-    wins over ``gpt``; reasoning-class OpenAI models (o1/o3/gpt-4/gpt-5)
-    route to ``beast`` rather than the baseline ``gpt`` prompt; the
-    ``trinity`` substring catches any model id the user labels as such.
-    """
-    if not model:
-        return _read_prompt("default")
-
-    m = model.lower()
-
-    # Most specific backends first — copilot and codex are distinct
-    # surfaces from raw OpenAI, so they must win over the generic gpt
-    # branch even when their ids contain "gpt".
-    if "copilot" in m:
-        return _read_prompt("copilot_gpt5")
-    if "codex" in m:
-        return _read_prompt("codex")
-
-    # Reasoning-class OpenAI models iterate best with the beast prompt.
-    if (
-        "o1" in m
-        or "o3" in m
-        or "gpt-4" in m or "gpt4" in m
-        or "gpt-5" in m or "gpt5" in m
-    ):
-        return _read_prompt("beast")
-
-    # Plain GPT (3.5 etc.) still uses the tuned gpt prompt.
-    if "gpt-" in m or "/gpt" in m or m.startswith("gpt"):
-        return _read_prompt("gpt")
-
-    if "claude" in m or "anthropic" in m or "sonnet" in m or "opus" in m or "haiku" in m:
-        return _read_prompt("anthropic")
-    if "gemini" in m:
-        return _read_prompt("gemini")
-    if "trinity" in m:
-        return _read_prompt("trinity")
-    if "qwen" in m:
-        return _read_prompt("qwen")
-    if "llama" in m:
-        return _read_prompt("llama")
-    if "deepseek" in m:
-        return _read_prompt("deepseek")
-    if "kimi" in m or "moonshot" in m:
-        return _read_prompt("kimi")
-    if "glm" in m or "zhipu" in m:
-        return _read_prompt("glm")
-    return _read_prompt("default")
-
-
 def select_intro_prompt(model: str) -> str:
-    """Deprecated shim — use ``load_intro_prompt(resolve_profile_for_model(model))``.
+    """Deprecated since v13 — use
+    ``load_intro_prompt(resolve_profile_for_model(model))`` directly.
 
-    Phase A behaviour: emits a :class:`DeprecationWarning` on every
-    call, then delegates via the profile registry if the resolved
-    profile declares a ``prompt_template``. Otherwise the call falls
-    back to :func:`_legacy_select_intro_prompt` so Phase A is a
-    zero-behaviour-change refactor — every model that routed to a
-    specific template before v13 continues to do so.
+    Phase C behaviour: emits a :class:`DeprecationWarning`, resolves
+    the profile via :func:`llm_code.runtime.profile_registry.
+    resolve_profile_for_model` and returns the rendered template via
+    :func:`load_intro_prompt`. The legacy if-ladder that used to
+    hand-map model-id substrings to template names was deleted in
+    Phase C — every built-in profile TOML now declares its own
+    ``[prompt]`` section.
 
-    Removed in v13 Phase C. Callers should migrate to
-    :func:`load_intro_prompt` paired with
-    :func:`llm_code.runtime.profile_registry.resolve_profile_for_model`.
+    Scheduled for removal in v14.
     """
     warnings.warn(
         "select_intro_prompt(model) is deprecated; use "
         "load_intro_prompt(resolve_profile_for_model(model)) from "
-        "llm_code.runtime.profile_registry — removed in v13 Phase C.",
+        "llm_code.runtime.profile_registry — removed in v14.",
         DeprecationWarning,
         stacklevel=2,
     )
     # Lazy import so the shim does not pay the TOML-sweep cost until
     # its first call — and so the registry module can import from
-    # runtime.prompt freely in the future without a cycle.
+    # runtime.prompt freely without a cycle.
     from llm_code.runtime.profile_registry import (
         _ensure_builtin_profiles_loaded,
         resolve_profile_for_model,
     )
 
     _ensure_builtin_profiles_loaded()
-    profile = resolve_profile_for_model(model)
-    if profile.prompt_template:
-        return load_intro_prompt(profile)
-    # Phase A: no Phase-B-migrated profile matched → historical ladder.
-    return _legacy_select_intro_prompt(model)
+    return load_intro_prompt(resolve_profile_for_model(model))
 
 
 def _read_prompt(name: str) -> str:
@@ -281,7 +217,19 @@ class SystemPromptBuilder:
         # GLOBAL scope — governance rules, behavior rules, tool instructions
         # Shared across all projects; cached at global boundary.
         # ------------------------------------------------------------------ #
-        intro = select_intro_prompt(model_name) if model_name else _INTRO
+        if model_name:
+            # v13 Phase C: call the profile-driven path directly to
+            # avoid the DeprecationWarning the legacy shim now emits
+            # on every turn. Lazy import keeps import graph flat.
+            from llm_code.runtime.profile_registry import (
+                _ensure_builtin_profiles_loaded,
+                resolve_profile_for_model,
+            )
+
+            _ensure_builtin_profiles_loaded()
+            intro = load_intro_prompt(resolve_profile_for_model(model_name))
+        else:
+            intro = _INTRO
         sections.append(PromptSection(content=intro, scope="global", priority=0))
 
         # Governance rules (L0) — injected before behavior rules

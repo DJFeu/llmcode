@@ -1,13 +1,13 @@
-"""Unit tests for the v13 Phase A prompt loader + deprecated shim.
+"""Unit tests for the v13 prompt loader + deprecated shim.
 
 Covers:
 * :func:`load_intro_prompt` — reads ``profile.prompt_template``,
   accepts both short names and repo-style paths, falls back cleanly
   on missing templates.
 * :func:`select_intro_prompt` — deprecated shim emits
-  :class:`DeprecationWarning`, delegates to the profile registry
-  when a migrated profile matches, falls back to the historical
-  ladder otherwise so Phase A preserves byte-level output.
+  :class:`DeprecationWarning`, delegates to the profile registry via
+  ``resolve_profile_for_model`` + ``load_intro_prompt``. Phase C
+  deleted the hardcoded if-ladder that used to back this shim.
 """
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ import pytest
 from llm_code.runtime import profile_registry as pr
 from llm_code.runtime.model_profile import ModelProfile
 from llm_code.runtime.prompt import (
-    _legacy_select_intro_prompt,
     _template_path_to_name,
     load_intro_prompt,
     select_intro_prompt,
@@ -27,7 +26,11 @@ from llm_code.runtime.prompt import (
 
 @pytest.fixture(autouse=True)
 def _reset_registry():
-    """Isolate every test from the process-global registry."""
+    """Isolate every test from the process-global registry.
+
+    The shim lazily loads the built-in TOMLs on first call; resetting
+    before/after keeps the test environment deterministic.
+    """
     pr._reset_registry_for_tests()
     yield
     pr._reset_registry_for_tests()
@@ -119,83 +122,83 @@ class TestSelectIntroPromptShim:
         dep = [w for w in caught if issubclass(w.category, DeprecationWarning)]
         assert len(dep) == 3
 
-    def test_empty_model_delegates_to_legacy_default(self) -> None:
+    def test_empty_model_returns_default_prompt(self) -> None:
+        """Empty model id falls back to the default profile — which
+        has ``prompt_template=""`` — so ``load_intro_prompt`` emits
+        the ``default.j2`` template."""
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            shim_out = select_intro_prompt("")
-            legacy_out = _legacy_select_intro_prompt("")
-        assert shim_out == legacy_out
+            out = select_intro_prompt("")
+        assert "coding assistant running inside a terminal" in out
 
-    def test_unmigrated_model_matches_legacy_output_claude(self) -> None:
-        # In Phase A no built-in TOML has a ``[prompt]`` section — the
-        # registry returns the default profile → shim falls back to
-        # the historical ladder. The output must match byte-for-byte.
+    def test_shim_delegates_to_profile_registry_for_glm(self) -> None:
+        """The shim must surface the GLM-tuned prompt for ``glm-5.1``
+        after Phase B migrated the GLM profile to declare ``[prompt]``."""
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            shim_out = select_intro_prompt("claude-sonnet-4-6")
-            legacy_out = _legacy_select_intro_prompt("claude-sonnet-4-6")
-        assert shim_out == legacy_out
+            out = select_intro_prompt("glm-5.1")
+        assert "powered by GLM (Zhipu)" in out
 
-    def test_unmigrated_model_matches_legacy_output_gpt4(self) -> None:
+    def test_shim_delegates_to_profile_registry_for_claude(self) -> None:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            shim_out = select_intro_prompt("gpt-4-turbo")
-            legacy_out = _legacy_select_intro_prompt("gpt-4-turbo")
-        assert shim_out == legacy_out
+            out = select_intro_prompt("claude-sonnet-4-6")
+        # anthropic.j2 contains a distinctive phrase.
+        assert "powered by Claude" in out
 
-    def test_unmigrated_model_matches_legacy_output_qwen(self) -> None:
+    def test_shim_delegates_to_profile_registry_for_beast(self) -> None:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            shim_out = select_intro_prompt("qwen3.5-122b")
-            legacy_out = _legacy_select_intro_prompt("qwen3.5-122b")
-        assert shim_out == legacy_out
+            out = select_intro_prompt("gpt-4-turbo")
+        assert "# Beast" in out
 
-    def test_unmigrated_model_matches_legacy_output_glm(self) -> None:
+    def test_shim_delegates_to_profile_registry_for_qwen(self) -> None:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            shim_out = select_intro_prompt("glm-5.1")
-            legacy_out = _legacy_select_intro_prompt("glm-5.1")
-        assert shim_out == legacy_out
+            out = select_intro_prompt("qwen3.5-122b")
+        # qwen.j2 contains a distinctive phrase.
+        assert "powered by Qwen" in out
 
-    def test_unmigrated_model_matches_legacy_unknown(self) -> None:
+    def test_unknown_model_falls_back_to_default_template(self) -> None:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            shim_out = select_intro_prompt("some-brand-new-model-99b")
-            legacy_out = _legacy_select_intro_prompt("some-brand-new-model-99b")
-        assert shim_out == legacy_out
+            out = select_intro_prompt("some-brand-new-model-99b")
+        # Unknown ids resolve to the default profile which has no
+        # template → load_intro_prompt emits default.j2.
+        assert "coding assistant running inside a terminal" in out
 
-    def test_migrated_profile_takes_precedence(self) -> None:
-        # Pre-seed the registry with a migrated profile. The shim must
-        # route through ``load_intro_prompt`` for this model — the
-        # legacy ladder would have picked ``default`` (no known token),
-        # but the profile overrides that.
-        pr.register_profile(ModelProfile(
-            name="Fake-FooChat",
-            prompt_template="models/glm.j2",
-            prompt_match=("foochat",),
-        ))
+    def test_user_profile_takes_precedence_over_builtins(self) -> None:
+        """A pre-registered profile wins over any built-in loaded
+        lazily by the shim — user overrides must be respected."""
+        pr.register_profile(
+            ModelProfile(
+                name="Fake-FooChat",
+                prompt_template="models/glm.j2",
+                prompt_match=("foochat",),
+            )
+        )
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            shim_out = select_intro_prompt("foochat-13b")
-            legacy_out = _legacy_select_intro_prompt("foochat-13b")
-        # Profile-driven path picked the glm template; legacy picked default.
-        assert "powered by GLM (Zhipu)" in shim_out
-        assert shim_out != legacy_out
+            out = select_intro_prompt("foochat-13b")
+        # Routed through the user profile's glm template.
+        assert "powered by GLM (Zhipu)" in out
 
-    def test_profile_match_but_no_template_falls_back_to_legacy(self) -> None:
-        # Profile matches the id but carries no ``prompt_template`` —
-        # the shim treats this as "nothing migrated" and falls through
-        # to the legacy ladder so existing behaviour is preserved.
-        pr.register_profile(ModelProfile(
-            name="MatchOnly",
-            prompt_match=("claude",),
-            prompt_template="",
-        ))
+    def test_profile_match_but_no_template_yields_default(self) -> None:
+        """A profile that matches the id but carries no
+        ``prompt_template`` yields the default prompt — Phase C
+        deleted the legacy fallback ladder so empty templates can no
+        longer be silently upgraded."""
+        pr.register_profile(
+            ModelProfile(
+                name="MatchOnly",
+                prompt_match=("novelmodel",),
+                prompt_template="",
+            )
+        )
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            shim_out = select_intro_prompt("claude-sonnet-4-6")
-            legacy_out = _legacy_select_intro_prompt("claude-sonnet-4-6")
-        assert shim_out == legacy_out
+            out = select_intro_prompt("novelmodel-v2")
+        assert "coding assistant running inside a terminal" in out
 
     def test_shim_triggers_lazy_builtin_load(
         self, monkeypatch: pytest.MonkeyPatch
@@ -207,9 +210,7 @@ class TestSelectIntroPromptShim:
             calls.append("called")
             original()
 
-        monkeypatch.setattr(
-            pr, "_ensure_builtin_profiles_loaded", _spy
-        )
+        monkeypatch.setattr(pr, "_ensure_builtin_profiles_loaded", _spy)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             select_intro_prompt("claude-sonnet-4-6")

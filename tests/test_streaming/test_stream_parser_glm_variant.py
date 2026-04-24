@@ -15,10 +15,29 @@ Reproduces the exact screenshot from the bug report:
 
     <tool_call>web_search}{"query":"今日熱門新聞 2026年4月","max_results":5}</arg_value>
     →<tool_call>web_search}{"query":"top news today April 2026","max_results":5}</arg_value>
+
+v13 Phase C note: the GLM-specific hints no longer live in
+``StreamParser`` class defaults. Each test constructs the parser via
+``_glm_parser()`` below which injects the hints the GLM profile
+(``examples/model_profiles/65-glm-5.1.toml``) declares in its
+``[parser_hints]`` section.
 """
 from __future__ import annotations
 
 from llm_code.view.stream_parser import StreamEventKind, StreamParser
+
+_GLM_CUSTOM_CLOSE = ("</arg_value>",)
+_GLM_CALL_SEPARATOR = "\u2192 \t\r\n"
+_GLM_STANDARD_CLOSE_REQUIRED_ON = ("<arg_key>",)
+
+
+def _glm_parser() -> StreamParser:
+    """Build a ``StreamParser`` with the GLM-5.1 parser hints."""
+    return StreamParser(
+        custom_close_tags=_GLM_CUSTOM_CLOSE,
+        call_separator_chars=_GLM_CALL_SEPARATOR,
+        standard_close_required_on=_GLM_STANDARD_CLOSE_REQUIRED_ON,
+    )
 
 
 def _fire(parser: StreamParser, *chunks: str, flush: bool = True) -> list:
@@ -35,7 +54,7 @@ class TestArgValueAsClose:
         """``</arg_value>`` must terminate the tool_call state mid-
         stream — the rest of the buffer returns to normal TEXT
         handling immediately."""
-        p = StreamParser()
+        p = _glm_parser()
         events = _fire(
             p,
             '<tool_call>web_search}{"query":"news","max_results":3}</arg_value>',
@@ -55,7 +74,7 @@ class TestArgValueAsClose:
         """Chained GLM calls separated by U+2192 — the arrow and any
         whitespace around it must be swallowed so the second
         ``<tool_call>`` is recognised."""
-        p = StreamParser()
+        p = _glm_parser()
         events = _fire(
             p,
             '<tool_call>web_search}{"query":"a"}</arg_value>',
@@ -71,7 +90,7 @@ class TestArgValueAsClose:
         """If the standard ``</tool_call>`` close arrives before an
         ``</arg_value>``, use it (don't regress well-formed
         emissions)."""
-        p = StreamParser()
+        p = _glm_parser()
         events = _fire(
             p,
             '<tool_call>\n{"tool":"read_file","args":{"path":"/x"}}\n</tool_call>',
@@ -85,7 +104,7 @@ class TestChunkedStreaming:
     def test_close_tag_split_across_chunks(self) -> None:
         """``</arg_value>`` straddling a chunk boundary must still
         trigger the close once both halves are fed."""
-        p = StreamParser()
+        p = _glm_parser()
         events: list = []
         for chunk in (
             '<tool_call>web_search}{"query":"news",',
@@ -102,7 +121,7 @@ class TestChunkedStreaming:
         """The separator and the next ``<tool_call>`` arrive in
         different chunks — the arrow must not block the next
         recognition."""
-        p = StreamParser()
+        p = _glm_parser()
         events: list = []
         for chunk in (
             '<tool_call>web_search}{"query":"a"}</arg_value>',
@@ -123,7 +142,7 @@ class TestFlushRecovery:
         the caller — via feed()'s streaming emits if the step parser
         can close them on the fly, or via flush() recovery if the
         stream terminated mid-block."""
-        p = StreamParser()
+        p = _glm_parser()
         events = _fire(
             p,
             '<tool_call>web_search}{"query":"今日熱門新聞 2026年4月","max_results":5}</arg_value>'
@@ -147,7 +166,7 @@ class TestFlushRecovery:
         what it can (none in this case — the body is incomplete),
         or fall back to TEXT salvage. Guard against the old bug
         where everything was silently dropped."""
-        p = StreamParser()
+        p = _glm_parser()
         events: list = []
         events.extend(p.feed(
             '<tool_call>web_search}{"query":"unterminated'
@@ -167,7 +186,7 @@ class TestFlushRecovery:
         TEXT salvage so the original bug fix
         (unterminated-tool-call swallowing news items) keeps
         working."""
-        p = StreamParser()
+        p = _glm_parser()
         p.feed("<tool_call>1. **News item one**\n2. **News item two**\n")
         events = p.flush()
         tool_events = [e for e in events if e.kind == StreamEventKind.TOOL_CALL]

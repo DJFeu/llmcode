@@ -165,12 +165,12 @@ def parse_tool_calls(
     match ``<p>{"a":1}</p>`` and similar HTML-ish content as a false
     positive, so production callers should always pass the set.
 
-    ``profile`` — v13 Phase A: ``ModelProfile`` (or None). When a
-    profile with a non-empty ``parser_variants`` tuple is provided,
-    the variant order is read from it via
+    ``profile`` — v13: ``ModelProfile`` (or None). When a profile
+    with a non-empty ``parser_variants`` tuple is provided, the
+    variant order is read from it via
     ``tools.parser_variants.REGISTRY``. When ``None`` or the tuple is
-    empty, ``DEFAULT_VARIANT_ORDER`` is used — a zero-behaviour-change
-    path for callers that don't wire profiles yet.
+    empty, ``DEFAULT_VARIANT_ORDER`` is used so profile-less callers
+    (notably the stream parser's internal recovery path) keep working.
     """
     if native_tool_calls:
         return _parse_native(native_tool_calls)
@@ -200,10 +200,11 @@ def _parse_xml(
     plus the bare ``<NAME>JSON</NAME>`` variant from Qwen3.5 vLLM chat
     templates that omit the ``<tool_call>`` wrapping entirely.
 
-    Variant order is profile-driven (v13 Phase A): when
+    Variant order is profile-driven (v13): when
     ``profile.parser_variants`` is non-empty, that order wins.
-    Otherwise ``DEFAULT_VARIANT_ORDER`` reproduces the historical
-    sequence exactly.
+    Otherwise ``DEFAULT_VARIANT_ORDER`` (from ``parser_variants``) is
+    used — this keeps profile-less callers (tests, StreamParser
+    internal recovery) working with the historical variant sequence.
     """
     # Local import to avoid circular import — parser_variants imports
     # parsing for the regex constants + leaf parse functions.
