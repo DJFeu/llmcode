@@ -1,5 +1,127 @@
 # Changelog
 
+## v2.3.0 — Profile-driven adapters GA (v13 migration complete)
+
+Three years ago the easiest way to add a new model family to llmcode
+was to land another `if "<family>" in model_name:` branch inside
+`runtime/prompt.py`, `tools/parsing.py`, and `view/stream_parser.py`.
+Over ~12 model families that approach accumulated a tangle of
+hardcoded substring checks. v13 replaces all three call sites with a
+single lookup against a flat registry of `ModelProfile` objects that
+ship as TOML files under `examples/model_profiles/`.
+
+v2.3.0 is the GA of that migration. Built-in behaviour is **unchanged
+for every model id llmcode has ever supported** — the Phase B parity
+test verified byte-level identical system prompts and tool-call
+parse results for 36 model ids before the legacy code was deleted.
+The new path is strictly additive from the user's perspective: to add
+a new model family you write a ~30-line TOML in
+`~/.llmcode/model_profiles/`, no Python changes required.
+
+`pip install -U llmcode-cli` picks it up.
+
+### New features
+
+- **Profile-driven adapters** — `ModelProfile` gained five new fields
+  (`prompt_template`, `prompt_match`, `parser_variants`,
+  `custom_close_tags`, `call_separator_chars`) that route a model id
+  to its tuned intro prompt + parser behaviour. Built-in profiles
+  ship under `examples/model_profiles/<NN>-<name>.toml`; user
+  overrides are picked up from `~/.llmcode/model_profiles/`.
+- **Parser variant registry** (`llm_code.tools.parser_variants`) —
+  the six tool-call formats (JSON payload, Hermes full, Hermes
+  truncated, Harmony / variant 7, GLM variant 6, bare name-tag) are
+  now named plugins. A profile's `parser_variants` tuple declares
+  enabled variants and their order; empty = `DEFAULT_VARIANT_ORDER`.
+- **Profile registry** (`llm_code.runtime.profile_registry`) —
+  `resolve_profile_for_model(model_id)` walks the registered
+  profiles and returns the first whose `prompt_match` substring hits.
+  User profiles registered before the lazy built-in sweep win on
+  collision.
+- **12 new built-in TOMLs** under `examples/model_profiles/` covering
+  the full legacy ladder: 10-copilot, 15-codex, 20-beast, 25-gpt,
+  30-claude-sonnet, 35-gemini, 40-trinity, 45-qwen3.5-122b,
+  50-llama, 55-deepseek, 60-kimi, 65-glm-5.1, 99-custom-local.
+  Numeric filename prefixes enforce resolution order so substring
+  collisions (e.g. `copilot-gpt-5` containing both "copilot" and
+  "gpt-5") resolve to the correct profile.
+
+### Deprecations
+
+- **`llm_code.runtime.prompt.select_intro_prompt(model)`** is
+  deprecated and now emits `DeprecationWarning` on every call. It
+  remains as a thin shim that calls
+  `load_intro_prompt(resolve_profile_for_model(model))` so
+  third-party imports keep working. **Removal is scheduled for
+  v14.** Migrate now:
+
+  ```python
+  # Before (v2.2.5 and earlier)
+  from llm_code.runtime.prompt import select_intro_prompt
+  intro = select_intro_prompt(model)
+
+  # After (v2.3.0+)
+  from llm_code.runtime.prompt import load_intro_prompt
+  from llm_code.runtime.profile_registry import (
+      _ensure_builtin_profiles_loaded,
+      resolve_profile_for_model,
+  )
+  _ensure_builtin_profiles_loaded()
+  intro = load_intro_prompt(resolve_profile_for_model(model))
+  ```
+
+### Breaking changes
+
+- **`StreamParser` defaults no longer assume GLM.** In v2.2.4 and
+  v2.2.5 a bare `StreamParser()` supported GLM variant 6
+  (`</arg_value>` close tag) and Harmony variant 7
+  (`<arg_key>` required-on guard) out of the box. In v2.3.0 the
+  class-level defaults are empty tuples / empty string — only
+  `</tool_call>` terminates a `<tool_call>` block by default.
+  Callers that need variant-6 / variant-7 behaviour must either
+  (a) pass the hints explicitly, or (b) resolve the GLM profile and
+  forward its `custom_close_tags` + `call_separator_chars` fields.
+  The GLM profile (`65-glm-5.1.toml`) now carries those settings
+  in a `[parser_hints]` section.
+
+  Impact: any downstream code that constructed `StreamParser()` with
+  no kwargs and depended on GLM support must switch to
+  `StreamParser(custom_close_tags=("</arg_value>",),
+  call_separator_chars="\u2192 \t\r\n",
+  standard_close_required_on=("<arg_key>",))`. The llmcode built-in
+  dispatcher already reads profile hints at construction time; only
+  custom integrations are affected.
+
+- **`_legacy_select_intro_prompt` function removed** from
+  `llm_code.runtime.prompt`. It was an internal helper — not part of
+  any documented API — but plugins that imported it directly will
+  break. Use `load_intro_prompt(resolve_profile_for_model(model))`
+  instead.
+
+- **`tests/test_runtime/parity/`, `tests/test_tools/parity/`, and
+  `tests/test_view/parity/` directories removed** along with the
+  three `tests/fixtures/pre_v13_*.json` snapshots. Mainline tests
+  now cover the same assertions. The
+  `scripts/capture_prompt_baseline.py` capture script is kept for
+  future migrations.
+
+### Internal guards
+
+- `tests/test_no_model_branch_in_core.py` is a new parametrised
+  regression guard. It fails if any `if "<model-family>" in VAR:`
+  shape reappears in `runtime/prompt.py`, `tools/parsing.py`, or
+  `view/stream_parser.py`. Part of the "model-specific logic lives
+  in TOMLs, not Python branches" ship gate.
+
+### Upgrade pointer
+
+End users: drop-in. Plugin authors with custom `ModelProfile`
+subclasses or who patched the legacy if-ladder: update to the
+profile-driven path before v14 drops the shim. See
+`docs/engine/model_profile_author_guide.md` (updated).
+
+---
+
 ## v2.2.0rc1 — v12 Haystack-borrow GA: engine cutover + legacy deletion
 
 The final milestone of the v12 overhaul. All eight v12 plans (M0–M8)
