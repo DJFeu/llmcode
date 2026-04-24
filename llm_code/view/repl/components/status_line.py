@@ -94,7 +94,7 @@ def _shorten_cwd(cwd: Optional[str], max_width: int = MAX_CWD_WIDTH) -> str:
 def _format_tokens(n: Optional[int]) -> str:
     """Format a token count compactly: 1234 -> '1.2k'; 123000 -> '123k'."""
     if n is None:
-        return "?"
+        return "-"
     if n < 1000:
         return str(n)
     if n < 10000:

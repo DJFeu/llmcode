@@ -52,7 +52,7 @@ def _warn_thinking_dropped_once(count: int) -> None:
     if _thinking_drop_warned:
         return
     _thinking_drop_warned = True
-    _logger.warning(
+    _logger.debug(
         "openai_compat: dropping %d thinking block(s) from outbound "
         "assistant message — OpenAI-compat servers reject unknown "
         "content types.",

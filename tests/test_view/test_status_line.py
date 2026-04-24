@@ -50,7 +50,7 @@ def test_shorten_model_with_provider_prefix_fits():
 def test_format_tokens_small():
     assert _format_tokens(500) == "500"
     assert _format_tokens(0) == "0"
-    assert _format_tokens(None) == "?"
+    assert _format_tokens(None) == "-"
 
 
 def test_format_tokens_thousand():

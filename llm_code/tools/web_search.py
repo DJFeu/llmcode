@@ -4,6 +4,8 @@ from __future__ import annotations
 import fnmatch
 import logging
 import os
+import re
+from datetime import date
 from urllib.parse import urlparse
 
 from pydantic import BaseModel
@@ -14,6 +16,24 @@ from llm_code.tools.search_backends import RateLimitError, SearchResult, create_
 logger = logging.getLogger(__name__)
 
 _VALID_BACKENDS = ("auto", "duckduckgo", "brave", "tavily", "searxng", "serper")
+
+_TIME_SENSITIVE_TRIGGERS: tuple[str, ...] = (
+    "今日", "今天", "現在", "即時",
+    "today", "latest", "current", "breaking", "right now",
+)
+_ISO_DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+
+
+def _augment_time_sensitive_query(query: str) -> str:
+    """Append today's ISO date when a query signals current-moment intent
+    but omits an explicit date. Prevents search engines matching stale
+    month-archive pages for asks like "today's top news"."""
+    lower = query.lower()
+    if not any(t in lower for t in _TIME_SENSITIVE_TRIGGERS):
+        return query
+    if _ISO_DATE_RE.search(query):
+        return query
+    return f"{query} {date.today().isoformat()}"
 
 
 class WebSearchInput(BaseModel):
@@ -218,6 +238,7 @@ class WebSearchTool(Tool):
                 is_error=True,
             )
 
+        query = _augment_time_sensitive_query(str(query))
         max_results = int(args.get("max_results", 10))
         backend_arg = str(args.get("backend", "auto"))
 

@@ -7,7 +7,7 @@ import pytest
 
 from llm_code.tools.base import PermissionLevel, ToolResult
 from llm_code.tools.search_backends import SearchResult
-from llm_code.tools.web_search import WebSearchTool
+from llm_code.tools.web_search import WebSearchTool, _augment_time_sensitive_query
 
 
 class TestWebSearchToolProperties:
@@ -322,3 +322,39 @@ class TestDuckDuckGoRateLimit:
         assert len(results) == 1
         assert results[0].title == "Fallback"
         assert call_count >= 2
+
+
+class TestAugmentTimeSensitiveQuery:
+    """Tool-side query hygiene: append today's ISO date when a query
+    signals current-moment intent but omits an explicit date."""
+
+    def test_today_trigger_appends_date(self) -> None:
+        out = _augment_time_sensitive_query("today's top news")
+        assert out.startswith("today's top news ")
+        import re
+        assert re.search(r"\b\d{4}-\d{2}-\d{2}$", out)
+
+    def test_jp_trigger_appends_date(self) -> None:
+        out = _augment_time_sensitive_query("今日熱門新聞")
+        import re
+        assert re.search(r"\b\d{4}-\d{2}-\d{2}$", out)
+
+    def test_existing_iso_date_preserved(self) -> None:
+        q = "today news 2026-04-01"
+        assert _augment_time_sensitive_query(q) == q
+
+    def test_no_trigger_unchanged(self) -> None:
+        q = "python asyncio tutorial"
+        assert _augment_time_sensitive_query(q) == q
+
+    def test_case_insensitive(self) -> None:
+        out = _augment_time_sensitive_query("Latest AI news")
+        import re
+        assert re.search(r"\b\d{4}-\d{2}-\d{2}$", out)
+
+    def test_month_only_still_augmented(self) -> None:
+        """Month-level query with a today-trigger still gets a precise
+        date appended — month alone hits stale archive pages."""
+        out = _augment_time_sensitive_query("今日熱門新聞 2026年4月")
+        import re
+        assert re.search(r"\b\d{4}-\d{2}-\d{2}$", out)

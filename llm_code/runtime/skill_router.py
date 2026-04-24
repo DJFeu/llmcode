@@ -516,7 +516,7 @@ class SkillRouter:
                     timeout=_tc_timeout,
                 )
             except asyncio.TimeoutError:
-                logger.warning(
+                logger.debug(
                     "skill_router tier_c timed out after %.0fs; skipping",
                     _tc_timeout,
                 )

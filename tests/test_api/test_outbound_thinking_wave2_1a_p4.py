@@ -3,9 +3,10 @@
 P3 pinned that ``_convert_message`` does not crash on a ThinkingBlock.
 P4 makes the drop explicit: instead of silently falling through the
 has_multiple branch, we count the dropped blocks and fire a one-shot
-warning the first time any request sends thinking to an openai-compat
-server. This surfaces the "thinking is not being round-tripped" fact
-in the log without spamming it on every request.
+debug log the first time any request sends thinking to an openai-compat
+server. The drop is expected behaviour (protocol mismatch, not user-
+actionable) so the log lives at DEBUG — loud enough for bug reports,
+quiet enough to stay out of the user-visible WARNING stream.
 """
 from __future__ import annotations
 
@@ -40,7 +41,7 @@ def test_outbound_drop_logs_warning_on_first_occurrence(
             TextBlock(text="visible answer"),
         ),
     )
-    with caplog.at_level(logging.WARNING, logger="llm_code.api.openai_compat"):
+    with caplog.at_level(logging.DEBUG, logger="llm_code.api.openai_compat"):
         provider._convert_message(msg)
     warnings = [r for r in caplog.records if "dropping" in r.message and "thinking" in r.message]
     assert len(warnings) == 1
@@ -61,7 +62,7 @@ def test_outbound_drop_warns_only_once_across_many_requests(
             TextBlock(text="answer"),
         ),
     )
-    with caplog.at_level(logging.WARNING, logger="llm_code.api.openai_compat"):
+    with caplog.at_level(logging.DEBUG, logger="llm_code.api.openai_compat"):
         for _ in range(10):
             provider._convert_message(msg)
     warnings = [r for r in caplog.records if "dropping" in r.message]
@@ -83,7 +84,7 @@ def test_outbound_drop_count_reflects_multiple_thinking_blocks(
             TextBlock(text="answer"),
         ),
     )
-    with caplog.at_level(logging.WARNING, logger="llm_code.api.openai_compat"):
+    with caplog.at_level(logging.DEBUG, logger="llm_code.api.openai_compat"):
         provider._convert_message(msg)
     warnings = [r for r in caplog.records if "dropping" in r.message]
     assert len(warnings) == 1
@@ -102,7 +103,7 @@ def test_outbound_message_without_thinking_does_not_warn(
             TextBlock(text="just text"),
         ),
     )
-    with caplog.at_level(logging.WARNING, logger="llm_code.api.openai_compat"):
+    with caplog.at_level(logging.DEBUG, logger="llm_code.api.openai_compat"):
         provider._convert_message(msg)
     warnings = [r for r in caplog.records if "dropping" in r.message]
     assert warnings == []
