@@ -289,14 +289,16 @@ def test_flush_state_cleared_after_salvage() -> None:
     # or the trailing flush — both are acceptable).
 
 
-def test_flush_salvage_emits_warning_log(caplog) -> None:
-    """The salvage fires a warning log so ``-v`` runs capture the
-    event. Silent data loss is worse than loud data loss."""
+def test_flush_salvage_emits_log(caplog) -> None:
+    """The salvage fires a debug log so ``-v`` runs capture the event.
+    Silent data loss is worse than loud data loss; the level is DEBUG
+    because the salvage path handles the case gracefully and the user
+    has no action to take."""
     import logging
     p = StreamParser()
     p.feed("<tool_call>data that would have been lost")
-    with caplog.at_level(logging.WARNING, logger="llm_code.tui.stream_parser"):
-        p.flush()
+    caplog.set_level(logging.DEBUG, logger="llm_code.view.stream_parser")
+    p.flush()
     assert any(
         "unterminated <tool_call>" in r.message for r in caplog.records
     )

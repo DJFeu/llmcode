@@ -231,14 +231,16 @@ class WebSearchTool(Tool):
         Returns:
             ToolResult with formatted search results, or error.
         """
-        query = args.get("query", "")
-        if not query or not str(query).strip():
+        raw_query = args.get("query", "")
+        if not raw_query or not str(raw_query).strip():
             return ToolResult(
                 output="Error: 'query' is required and must not be empty.",
                 is_error=True,
             )
 
-        query = _augment_time_sensitive_query(str(query))
+        query = _augment_time_sensitive_query(str(raw_query))
+        if query != raw_query:
+            logger.info("web_search: augmented query %r → %r", raw_query, query)
         max_results = int(args.get("max_results", 10))
         backend_arg = str(args.get("backend", "auto"))
 

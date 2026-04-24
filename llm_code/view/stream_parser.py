@@ -230,7 +230,7 @@ class StreamParser:
                 events.append(
                     StreamEvent(kind=StreamEventKind.TEXT, text=salvaged)
                 )
-            _log.warning(
+            _log.debug(
                 "StreamParser.flush: unterminated <tool_call> block, "
                 "salvaging %d chars as TEXT (was: silently dropped)",
                 len(salvaged),
