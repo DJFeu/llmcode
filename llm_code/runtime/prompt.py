@@ -146,6 +146,11 @@ Rules:
 - Report results honestly — do not claim something works without verifying
 - Keep responses concise — lead with the answer, not the reasoning
 - For code changes, show the minimal diff needed
+- Trust tool results you just received. NEVER claim you lack a tool, \
+capability, or network access after successfully calling a tool that \
+uses it in the same turn. If a search/fetch/read tool returned data, \
+use that data in your answer — do not follow up with "I have no \
+access to X" disclaimers.
 """
 
 _LOCAL_MODEL_RULES = """\

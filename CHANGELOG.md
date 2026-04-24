@@ -1,5 +1,26 @@
 # Changelog
 
+## v2.3.2 — Tool-result consumption discipline (anti-contradiction)
+
+Observed in a GLM-5.1 session: model calls `web_search`, receives valid
+results, then writes in `content`: "I don't have access to news APIs
+or the internet." The tool output is silently dropped and the user
+sees a generic capability disclaimer instead of the requested
+summary.
+
+Two prompt-level fixes:
+
+- `_BEHAVIOR_RULES` (universal, all models) gains: "Trust tool
+  results you just received. NEVER claim you lack a tool, capability,
+  or network access after successfully calling a tool that uses it
+  in the same turn."
+- `engine/prompts/models/glm.j2` gains a dedicated "Tool results ARE
+  your ground truth" section and two new Common-Mistakes bullets
+  spelling out the exact failure pattern (call → receive → deny) so
+  the model recognises it in its own reasoning.
+
+No API / tool surface changes; prompt text only.
+
 ## v2.3.1 — UX: quiet expected-fallback logs + time-sensitive search hygiene
 
 Five signals observed in a GLM-5.1 session were user-visible noise
