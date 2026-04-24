@@ -1,5 +1,32 @@
 # Changelog
 
+## v2.3.1 — UX: quiet expected-fallback logs + time-sensitive search hygiene
+
+Five signals observed in a GLM-5.1 session were user-visible noise
+rather than actionable problems. This release demotes them to DEBUG
+and tightens one search query path:
+
+- `skill_router tier_c timed out ... skipping` — was WARNING, now DEBUG.
+  The skip falls back to tier A/B routing; expected path under slow
+  models.
+- `openai_compat: dropping N thinking block(s) from outbound assistant
+  message` — was WARNING, now DEBUG. Protocol mismatch: OpenAI-compat
+  servers reject ThinkingBlocks, so dropping is correct. The once-per-
+  process guard is retained.
+- `StreamParser.flush: unterminated <tool_call> block, salvaging N
+  chars as TEXT` — was WARNING, now DEBUG. The salvage handles the
+  truncation gracefully; user has no action.
+- Status line `?/Nk tok` token placeholder — now `-/Nk tok`. The `?`
+  read as a warning glyph during first-turn streaming before the
+  usage chunk arrived.
+- `web_search` added `_augment_time_sensitive_query` at the tool
+  entry point — appends today's ISO date when the query hits a
+  trigger word (`today`/`latest`/`今日`/`現在`/…) AND lacks an
+  explicit `YYYY-MM-DD`. Fixes the `今日熱門新聞 2026年4月` →
+  stale-archive hit case. The augmented query is logged at INFO.
+
+No behaviour change for non-GLM models; no API surface change.
+
 ## v2.3.0 — Profile-driven adapters GA (v13 migration complete)
 
 Three years ago the easiest way to add a new model family to llmcode
