@@ -85,18 +85,25 @@ class TestBuiltinsRegistered:
         for name in DEFAULT_VARIANT_ORDER:
             assert name in REGISTRY, f"missing built-in: {name}"
 
-    def test_default_order_has_six_entries(self) -> None:
-        assert len(DEFAULT_VARIANT_ORDER) == 6
+    def test_default_order_has_seven_entries(self) -> None:
+        # v15 M5 added ``webfetch_inline`` at the end; total = 7.
+        assert len(DEFAULT_VARIANT_ORDER) == 7
 
     def test_default_order_json_first(self) -> None:
         """json_payload is cheapest + most common for llm-code's
         own protocol — must stay first."""
         assert DEFAULT_VARIANT_ORDER[0] == "json_payload"
 
-    def test_default_order_bare_name_tag_last(self) -> None:
-        """bare_name_tag scans the whole text — must be the last
-        resort to avoid double-matching."""
-        assert DEFAULT_VARIANT_ORDER[-1] == "bare_name_tag"
+    def test_default_order_webfetch_inline_last(self) -> None:
+        """v15 M5 ``webfetch_inline`` is the last resort — fires only
+        when no earlier wrapper-based variant matched."""
+        assert DEFAULT_VARIANT_ORDER[-1] == "webfetch_inline"
+
+    def test_default_order_bare_name_tag_second_to_last(self) -> None:
+        """Pre-M5, ``bare_name_tag`` was last. After M5 it sits at -2,
+        still after every wrapped variant — preserves the original
+        priority intent."""
+        assert DEFAULT_VARIANT_ORDER[-2] == "bare_name_tag"
 
     def test_harmony_variant_has_required_close_when(self) -> None:
         v = get_variant("harmony_kv")

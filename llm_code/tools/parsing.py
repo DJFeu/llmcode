@@ -136,6 +136,108 @@ _VARIANT_5_RESERVED_NAMES: frozenset[str] = frozenset({
 })
 
 
+# Variant 8 — v15 M5 — inline WebFetch / WebSearch JSON detection.
+# Models trained on Claude Code transcripts occasionally emit:
+#
+#     WebFetch{"url": "https://example.com", "prompt": "..."}
+#     WebSearch{"query": "..."}
+#     web_fetch{"url": "..."}
+#
+# …as plain text inside an assistant message — no ``<tool_call>``
+# wrapper, no XML tag, just a function name immediately followed by
+# a JSON object. The 6 v13 variants don't catch this exact shape; M5
+# adds it as the last-priority fallback.
+#
+# The regex captures the function name as a Python identifier
+# (alphabetic + underscore + digits, but starting with letter/_) and
+# the JSON object that immediately follows. Whitespace between name
+# and ``{`` is tolerated. The JSON pattern handles 1 level of nested
+# braces (sufficient for WebFetch / WebSearch which take flat-or-
+# slightly-nested arg shapes); deeper nesting is rejected to keep
+# the regex bounded against catastrophic backtrack.
+#
+# Gating: the leaf parser checks ``known_tool_names`` and rejects
+# matches whose normalised name (PascalCase → snake_case) isn't a
+# registered tool this turn. This prevents false-positive matches
+# on code blocks that happen to contain ``WebFetch{…}`` literally.
+_WEBFETCH_INLINE_RE = re.compile(
+    r"\b(WebFetch|WebSearch|web_fetch|web_search)\s*"
+    r"(\{(?:[^{}]|\{[^{}]*\})*\})",
+    re.S,
+)
+
+
+def _normalise_webfetch_name(
+    name: str, known_tool_names: set[str] | frozenset[str] | None,
+) -> str | None:
+    """Map ``WebFetch`` / ``WebSearch`` to their snake_case registered
+    names, falling back to the original if the snake_case form is not
+    in the registry.
+
+    Returns ``None`` when no variant is in ``known_tool_names`` (so
+    the caller can skip the match). When ``known_tool_names`` is
+    ``None`` (permissive mode used by some unit tests) the normalised
+    snake_case name is returned without verification.
+    """
+    snake_map = {
+        "WebFetch": "web_fetch",
+        "WebSearch": "web_search",
+        "web_fetch": "web_fetch",
+        "web_search": "web_search",
+    }
+    snake = snake_map.get(name, name)
+    if known_tool_names is None:
+        return snake
+    if snake in known_tool_names:
+        return snake
+    # Edge case: if the user registered the literal PascalCase name,
+    # honour that rather than rewriting it.
+    if name in known_tool_names:
+        return name
+    return None
+
+
+def _parse_webfetch_inline(
+    block_text: str,
+    known_tool_names: set[str] | frozenset[str] | None = None,
+) -> list[ParsedToolCall]:
+    """Variant 8 — match inline WebFetch / WebSearch JSON in plain text.
+
+    Gates on ``known_tool_names``: only fires when the matched
+    function name (after PascalCase → snake_case normalisation) is in
+    the registry. This is the production guard against false
+    positives — without it, a literal ``WebFetch{…}`` inside a code
+    block could be picked up and dispatched as a real tool call.
+    """
+    if known_tool_names is None:
+        # Permissive mode (tests). The normaliser returns the
+        # snake_case name without verification.
+        pass
+    elif not known_tool_names:
+        # Empty registry → no matches possible. Bail fast.
+        return []
+
+    results: list[ParsedToolCall] = []
+    for match in _WEBFETCH_INLINE_RE.finditer(block_text):
+        raw_name = match.group(1)
+        normalised = _normalise_webfetch_name(raw_name, known_tool_names)
+        if normalised is None:
+            continue
+        try:
+            args = json.loads(match.group(2))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(args, dict):
+            continue
+        results.append(ParsedToolCall(
+            id=str(uuid.uuid4()),
+            name=normalised,
+            args=args,
+            source="xml_tag",
+        ))
+    return results
+
+
 @dataclasses.dataclass(frozen=True)
 class ParsedToolCall:
     id: str
@@ -246,7 +348,12 @@ def _parse_xml(
             scanner = _WRAPPER_LESS_SCANNERS.get(variant_name)
             if scanner is None:
                 continue
-            if variant_name == "bare_name_tag":
+            # v15 M5 — webfetch_inline takes the same ``(text,
+            # known_tool_names)`` shape as bare_name_tag for the same
+            # reason: the registry guard MUST run at the wrapper-less
+            # scanner level to suppress false-positive matches on
+            # code blocks containing literal ``WebFetch{…}`` text.
+            if variant_name in ("bare_name_tag", "webfetch_inline"):
                 extras = scanner(text, known_tool_names)  # type: ignore[arg-type]
             else:
                 extras = scanner(text)  # type: ignore[call-arg]

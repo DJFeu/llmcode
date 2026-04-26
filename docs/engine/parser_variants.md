@@ -1,4 +1,4 @@
-# Parser Variants — v13 Phase A
+# Parser Variants — v13 Phase A (extended in v15 M5)
 
 llm-code's tool-call parser is a pluggable registry of named
 variants. Each variant knows how to detect and parse one on-wire
@@ -7,7 +7,7 @@ which variants are enabled, and in what order.
 
 This page is the reference for:
 
-- The six built-in variants
+- The seven built-in variants (six v13 + one v15 M5)
 - What the `match` / `parse` / `requires_standard_close_when` fields
   mean
 - How to write a plugin variant for a new model format
@@ -129,6 +129,36 @@ wild: `<web_search>{"q":"x"}</search>`.
   multi-call fallback level.
 - **Requires standard close when:** never.
 
+### `webfetch_inline` — Claude-Code dialect, no wrapper (variant 8 — v15 M5)
+
+On-wire shape:
+
+```
+WebFetch{"url": "https://example.com", "prompt": "..."}
+WebSearch{"query": "x"}
+web_fetch{"url": "..."}
+web_search{"query": "..."}
+```
+
+Models trained on Claude-Code transcripts occasionally emit a
+function name immediately followed by a JSON object — no
+`<tool_call>` wrapper, no XML tag. The PascalCase form
+(`WebFetch` / `WebSearch`) is normalised to the snake_case
+registered name (`web_fetch` / `web_search`) before dispatch.
+
+- **Match:** regex `\b(WebFetch|WebSearch|web_fetch|web_search)\s*(\{...\})`
+  fires anywhere in the body. JSON body supports up to one level
+  of brace nesting (sufficient for flat-or-near-flat web tool args;
+  the cap prevents catastrophic backtracking on adversarial input).
+- **Parse:** registry-gated. Only fires when the matched name
+  (after normalisation) is in `known_tool_names` for the current
+  turn. This is the production guard against false positives —
+  without it, a code block containing literal `WebFetch{…}` text
+  would be picked up as a real tool call.
+- **Requires standard close when:** never. The variant lives in the
+  wrapper-less scanner branch — only runs when no `<tool_call>`-
+  wrapped match was found.
+
 ---
 
 ## `DEFAULT_VARIANT_ORDER`
@@ -143,14 +173,16 @@ DEFAULT_VARIANT_ORDER = (
     "harmony_kv",
     "glm_brace",
     "bare_name_tag",
+    "webfetch_inline",  # v15 M5 — wrapper-less, last priority
 )
 ```
 
-This mirrors the pre-v13 sequence in `parsing._parse_xml` exactly.
-Parity is the gate: switching from `profile=None` to an explicit
-profile with the same variant tuple must produce byte-identical
-output on the same input. See `test_parser_variant_registry.py`
-for the parity tests.
+The first six entries mirror the pre-v13 sequence in
+`parsing._parse_xml` exactly. v15 M5 added `webfetch_inline` at
+the end so wrapper-based variants always run first. Parity is the
+gate: switching from `profile=None` to an explicit profile with the
+same variant tuple must produce byte-identical output on the same
+input. See `test_parser_variant_registry.py` for the parity tests.
 
 ---
 

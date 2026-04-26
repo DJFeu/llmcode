@@ -49,12 +49,14 @@ from llm_code.tools.parsing import (
     _HERMES_BARE_NAME_TAG_RE,
     _HERMES_FUNCTION_TRUNCATED_RE,
     _VARIANT_5_RESERVED_NAMES,
+    _WEBFETCH_INLINE_RE,
     ParsedToolCall,
     _parse_bare_name_tag,
     _parse_glm_variant,
     _parse_harmony_variant,
     _parse_hermes_block,
     _parse_json_payload,
+    _parse_webfetch_inline,
 )
 
 
@@ -173,9 +175,12 @@ def get_variant(name: str) -> ParserVariant:
 
 # ── Default order ─────────────────────────────────────────────────────
 
-# Mirrors the pre-v13 sequence in ``parsing._parse_xml`` exactly.
-# Parity is the gate: a test that declares profile=None must produce
-# the same list of ParsedToolCalls as the profile-driven sequence.
+# Mirrors the pre-v13 sequence in ``parsing._parse_xml`` exactly,
+# extended with v15 M5's inline WebFetch detector at the end (lowest
+# priority — only fires when no earlier wrapper-based variant
+# matched). Parity is the gate: a test that declares profile=None
+# must produce the same list of ParsedToolCalls as the profile-
+# driven sequence.
 DEFAULT_VARIANT_ORDER: tuple[str, ...] = (
     "json_payload",
     "hermes_function",
@@ -183,6 +188,7 @@ DEFAULT_VARIANT_ORDER: tuple[str, ...] = (
     "harmony_kv",
     "glm_brace",
     "bare_name_tag",
+    "webfetch_inline",  # v15 M5 — last priority; wrapper-less, gated
 )
 
 
@@ -231,6 +237,14 @@ def _match_bare_name_tag(raw: str) -> bool:
     full text (not a wrapped body) because this variant never sees a
     ``<tool_call>`` wrapper. Match is against the whole string."""
     return _HERMES_BARE_NAME_TAG_RE.search(raw) is not None
+
+
+def _match_webfetch_inline(raw: str) -> bool:
+    """v15 M5 — ``WebFetch{…}`` / ``WebSearch{…}`` / lowercase variants
+    in plain text without any XML wrapper. Matches the full text;
+    gating on ``known_tool_names`` happens inside the parse function
+    so the wrapper-less scanner can verify the registered tool list."""
+    return _WEBFETCH_INLINE_RE.search(raw) is not None
 
 
 # ── Wrapper adapters for variants that scan full text ─────────────────
@@ -287,6 +301,21 @@ def _parse_bare_name_tag_single(raw: str) -> ParsedToolCall | None:
     return matches[0] if matches else None
 
 
+def _parse_webfetch_inline_single(raw: str) -> ParsedToolCall | None:
+    """Single-call adapter for v15 M5.
+
+    The wrapper-less scanner branch runs the full multi-call
+    ``_parse_webfetch_inline`` (which gates on ``known_tool_names``).
+    The per-block path here is permissive (``known_tool_names=None``)
+    because the per-block loop is only reached after a ``<tool_call>``
+    wrapper match — and inside such a wrapper, the inline shape
+    almost never appears. Returning the first match keeps the
+    contract consistent with the other single-call adapters.
+    """
+    matches = _parse_webfetch_inline(raw, known_tool_names=None)
+    return matches[0] if matches else None
+
+
 # ── Built-in variant instances ────────────────────────────────────────
 
 
@@ -330,6 +359,12 @@ bare_name_tag_variant = ParserVariant(
     parse=_parse_bare_name_tag_single,
 )
 
+webfetch_inline_variant = ParserVariant(
+    name="webfetch_inline",
+    match=_match_webfetch_inline,
+    parse=_parse_webfetch_inline_single,
+)
+
 
 # Register all built-ins at module import.
 register_variant(json_payload_variant)
@@ -338,6 +373,7 @@ register_variant(hermes_truncated_variant)
 register_variant(harmony_kv_variant)
 register_variant(glm_brace_variant)
 register_variant(bare_name_tag_variant)
+register_variant(webfetch_inline_variant)
 
 
 # Re-export multi-call fallback scanners so ``parsing._parse_xml`` can
@@ -345,4 +381,9 @@ register_variant(bare_name_tag_variant)
 _WRAPPER_LESS_SCANNERS: dict[str, Callable[[str, object], list[ParsedToolCall]] | Callable[[str], list[ParsedToolCall]]] = {
     "glm_brace": _parse_glm_variant,
     "bare_name_tag": _parse_bare_name_tag,
+    # v15 M5 — wrapper-less inline WebFetch / WebSearch JSON detection.
+    # Takes ``known_tool_names`` so the registry guard fires on the
+    # multi-call scanner path (the per-block adapter above runs in
+    # permissive mode).
+    "webfetch_inline": _parse_webfetch_inline,
 }

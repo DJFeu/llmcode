@@ -13,10 +13,15 @@ Handles:
   with JSON args)
 - Tag boundaries that straddle chunk boundaries (e.g. ``<thi`` arrives
   in one chunk and ``nk>`` in the next)
+- v15 M4: raw chat-template control tokens (``<|im_end|>``,
+  ``<|endoftext|>``, ``<|start_header_id|>``, ``<|eot_id|>``, etc.)
+  leaked from model output. These never appear inside structured
+  tool-call blocks, so a global text-path strip is safe.
 """
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from enum import Enum
 
@@ -27,6 +32,38 @@ _log = logging.getLogger(__name__)
 # Longest tag string we need to reserve at a chunk tail so we don't
 # accidentally emit the start of a tag as plain text.
 _TAG_RESERVE = len("</tool_call>")
+
+# v15 M4 — strip raw chat-template control tokens that some models
+# (Qwen, Llama, GLM under certain chat templates) occasionally emit
+# verbatim into ``content``. Examples observed in the wild:
+#
+#   <|im_end|>          (Qwen / chatML)
+#   <|endoftext|>       (Llama / GPT-2-style)
+#   <|start_header_id|> (Llama-3 instruct)
+#   <|eot_id|>          (Llama-3 end-of-turn)
+#   <|file_separator|>  (some merge / multi-doc templates)
+#
+# These render as visible noise in the REPL. A control token never
+# appears inside a structured ``<tool_call>`` block in any observed
+# emission — they live only on the assistant text path — so a global
+# strip on emit is safe. Inbound user input is NEVER filtered (the
+# parser only ever sees model output here).
+#
+# Pattern: ``<|`` + 1-80 chars excluding ``|``, ``>``, whitespace +
+# ``|>``. The character cap prevents catastrophic backtracking on
+# adversarial input. The whitespace exclusion avoids matching
+# ``<| not_a_token |>`` shapes that aren't real control tokens.
+_CONTROL_TOKEN_RE = re.compile(r"<\|[^|>\s]{1,80}\|>")
+
+
+def _strip_control_tokens(text: str) -> str:
+    """Remove all chat-template control-token occurrences from ``text``.
+
+    Returns the cleaned string (possibly the same object if no match
+    was found, since :py:meth:`re.Pattern.sub` is identity-preserving
+    in that case).
+    """
+    return _CONTROL_TOKEN_RE.sub("", text)
 
 
 class StreamEventKind(Enum):
@@ -238,7 +275,13 @@ class StreamParser:
             self._buffer = ""
             self._in_tool_call = False
             return events
-        events.append(StreamEvent(kind=StreamEventKind.TEXT, text=self._buffer))
+        # v15 M4 — strip control tokens from any residual buffer text
+        # before emitting. Only fires on the model-output text path
+        # (this method is called from ``StreamParser.flush`` at end-
+        # of-stream, never on user input).
+        text = _strip_control_tokens(self._buffer)
+        if text:
+            events.append(StreamEvent(kind=StreamEventKind.TEXT, text=text))
         self._buffer = ""
         return events
 
@@ -367,7 +410,14 @@ class StreamParser:
             safe_emit = self._safe_text_cut(buf)
             if safe_emit == 0:
                 return False
-            events.append(StreamEvent(kind=StreamEventKind.TEXT, text=buf[:safe_emit]))
+            # v15 M4 — strip control tokens from emitted text. Tokens
+            # never appear inside <tool_call> blocks (handled below),
+            # so the global strip on text emission is safe.
+            stripped = _strip_control_tokens(buf[:safe_emit])
+            if stripped:
+                events.append(
+                    StreamEvent(kind=StreamEventKind.TEXT, text=stripped)
+                )
             self._buffer = buf[safe_emit:]
             return True
 
@@ -386,7 +436,14 @@ class StreamParser:
 
         # Emit any text before the opening tag as TEXT.
         if pos > 0:
-            events.append(StreamEvent(kind=StreamEventKind.TEXT, text=buf[:pos]))
+            # v15 M4 — strip control tokens from the text segment that
+            # precedes the next tag. Tokens never sit between text and
+            # a structured tag, so the strip is safe.
+            stripped = _strip_control_tokens(buf[:pos])
+            if stripped:
+                events.append(
+                    StreamEvent(kind=StreamEventKind.TEXT, text=stripped)
+                )
             self._buffer = buf[pos:]
             return True
 
