@@ -25,7 +25,6 @@ from llm_code.api.conversion import (
 from llm_code.api.types import (
     ImageBlock,
     Message,
-    ServerToolResultBlock,
     ServerToolUseBlock,
     TextBlock,
     ThinkingBlock,

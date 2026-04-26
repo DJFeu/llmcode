@@ -31,7 +31,6 @@ from llm_code.api.errors import (
 from llm_code.api.provider import LLMProvider
 from llm_code.api.types import (
     ContentBlock,
-    ImageBlock,
     Message,
     MessageRequest,
     MessageResponse,
@@ -49,7 +48,6 @@ from llm_code.api.types import (
     ThinkingBlock,
     TokenUsage,
     ToolDefinition,
-    ToolResultBlock,
     ToolUseBlock,
 )
 

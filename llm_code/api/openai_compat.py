@@ -21,7 +21,6 @@ from llm_code.api.provider import LLMProvider
 from llm_code.api.sse import parse_sse_events
 from llm_code.api.types import (
     ContentBlock,
-    ImageBlock,
     Message,
     MessageRequest,
     MessageResponse,
@@ -35,7 +34,6 @@ from llm_code.api.types import (
     ThinkingBlock,
     TokenUsage,
     ToolDefinition,
-    ToolResultBlock,
     ToolUseBlock,
 )
 
@@ -65,7 +63,6 @@ _MAX_RETRY_AFTER_SECONDS = 60.0
 # asserting on log names see no behavioural change.
 from llm_code.api.conversion import (  # noqa: E402  re-export
     _strip_reasoning_keys,
-    _warn_thinking_dropped_once,
 )
 
 

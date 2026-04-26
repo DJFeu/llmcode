@@ -23,7 +23,6 @@ from __future__ import annotations
 import pytest
 
 from llm_code.view.stream_parser import (
-    _CONTROL_TOKEN_RE,
     StreamEventKind,
     StreamParser,
     _strip_control_tokens,
