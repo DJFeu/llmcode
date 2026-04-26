@@ -240,13 +240,20 @@ class AnthropicProvider(LLMProvider):
         return payload
 
     def _build_messages(self, messages: tuple[Message, ...]) -> list[dict]:
+        # v15 M3 — per-message conversion delegates to
+        # ``self._convert_message`` (a thin shim over
+        # ``llm_code.api.conversion``) so tests that monkey-patch
+        # ``_convert_message`` continue to work. The 49-scenario
+        # parity gate verifies byte-identical output against a corpus
+        # captured from v2.4.0.
         result: list[dict] = []
         for msg in messages:
             result.append(self._convert_message(msg))
+
         # Prompt caching: add cache_control breakpoint on the last
-        # content block of the last user message. This creates a cache
-        # boundary at the most recent turn so prefix tokens up to this
-        # point can be reused on the next request.
+        # content block of the last user message. This creates a
+        # cache boundary at the most recent turn so prefix tokens up
+        # to this point can be reused on the next request.
         for i in range(len(result) - 1, -1, -1):
             if result[i].get("role") == "user":
                 content = result[i].get("content")
@@ -256,87 +263,15 @@ class AnthropicProvider(LLMProvider):
         return result
 
     def _convert_message(self, msg: Message) -> dict:
-        # Tool result messages use Anthropic's format
-        if len(msg.content) == 1 and isinstance(msg.content[0], ToolResultBlock):
-            block = msg.content[0]
-            return {
-                "role": "user",
-                "content": [{
-                    "type": "tool_result",
-                    "tool_use_id": block.tool_use_id,
-                    "content": block.content,
-                    **({"is_error": True} if block.is_error else {}),
-                }],
-            }
+        """Single-message Anthropic conversion. Thin shim over
+        :func:`llm_code.api.conversion._anthropic_convert_message`.
 
-        # Multiple tool results in one message
-        if all(isinstance(b, ToolResultBlock) for b in msg.content):
-            return {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": b.tool_use_id,
-                        "content": b.content,
-                        **({"is_error": True} if b.is_error else {}),
-                    }
-                    for b in msg.content
-                    if isinstance(b, ToolResultBlock)
-                ],
-            }
-
-        # Build Anthropic content array
-        content: list[dict] = []
-        for block in msg.content:
-            if isinstance(block, ThinkingBlock):
-                # Round-trip signed thinking blocks verbatim
-                entry: dict = {
-                    "type": "thinking",
-                    "thinking": block.content,
-                }
-                if block.signature:
-                    entry["signature"] = block.signature
-                content.append(entry)
-            elif isinstance(block, TextBlock):
-                content.append({"type": "text", "text": block.text})
-            elif isinstance(block, ToolUseBlock):
-                content.append({
-                    "type": "tool_use",
-                    "id": block.id,
-                    "name": block.name,
-                    "input": block.input,
-                })
-            elif isinstance(block, ImageBlock):
-                content.append({
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": block.media_type,
-                        "data": block.data,
-                    },
-                })
-            elif isinstance(block, ServerToolUseBlock):
-                entry = {
-                    "type": "server_tool_use",
-                    "id": block.id,
-                    "name": block.name,
-                    "input": block.input,
-                }
-                if block.signature:
-                    entry["signature"] = block.signature
-                content.append(entry)
-            elif isinstance(block, ServerToolResultBlock):
-                entry = {
-                    "type": "server_tool_result",
-                    "tool_use_id": block.tool_use_id,
-                    "content": block.content,
-                }
-                if block.signature:
-                    entry["signature"] = block.signature
-                content.append(entry)
-
-        # Single text block — keep as content array (Anthropic wants it)
-        return {"role": msg.role, "content": content}
+        Kept for backward compat with tests that exercise the per-
+        message path directly; production callers go through
+        ``_build_messages``.
+        """
+        from llm_code.api.conversion import _anthropic_convert_message
+        return _anthropic_convert_message(msg)
 
     def _convert_tool(self, tool: ToolDefinition) -> dict:
         return {

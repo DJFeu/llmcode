@@ -1,5 +1,113 @@
 # Changelog
 
+## v2.5.0a3 — v15 M3 conversion-layer extraction
+
+Third alpha of the v15 borrow-audit adoption. Extracts cross-provider
+message-shape conversion, tool-result serialization, and reasoning-
+replay strategy into a single shared module, gated behind a 49-
+scenario byte-parity corpus to guarantee no behavioural drift.
+
+See `docs/superpowers/specs/2026-04-27-llm-code-v15-borrow-from-free-claude-code-design.md` §3.3.
+
+### Mechanism M3 — Anthropic↔OpenAI conversion layer
+
+New module `llm_code/api/conversion.py` exposes:
+
+- `serialize_messages(messages, ctx, *, system=None) -> list[dict]`
+  — single source of truth for `tuple[Message, ...]` → wire `dict[]`,
+  dispatching by `ctx.target_shape` (`"anthropic"` / `"openai"`).
+- `serialize_tool_result(content) -> str` — stable JSON encoding of
+  any tool_result payload (None, str, dict, list, mixed).
+- `deferred_post_tool_blocks(blocks) -> tuple[ContentBlock, ...]` —
+  reorder helper for the OpenAI-compat constraint that assistant
+  text after `tool_calls` must move to a separate post-tool message.
+- `ConversionContext(target_shape, reasoning_replay,
+  strip_prior_reasoning)` — frozen dataclass packaging per-call
+  options.
+- `ReasoningReplayMode` enum — DISABLED / THINK_TAGS /
+  REASONING_CONTENT / NATIVE_THINKING.
+
+### Provider slim-down
+
+`anthropic_provider._build_messages` and
+`openai_compat._build_messages` now delegate per-message conversion
+to thin `_convert_message` shims (which themselves call the new
+conversion module). The legacy ~120-line per-block conversion in
+each provider is gone.
+
+The v14 Mechanism B reasoning-content history filter is carried
+through via `ctx.strip_prior_reasoning`; GLM-5.1 / DeepSeek-R1
+profiles still get the filter when they opt in.
+
+### Parity gate
+
+`tests/fixtures/conversion_corpus.json` (committed in the M3 prep
+commit) holds 49 representative scenarios captured from the
+v2.4.0 codebase before the refactor:
+
+- Single-turn / multi-turn (5/8/10 messages)
+- Tool use single / sequence / parallel / multi-in-one-msg
+- Thinking blocks (signed / unsigned / back-to-back / paired
+  with tool_use)
+- Server-side tool blocks (Anthropic web_search round-trip)
+- Image blocks (user-only / mixed text+image / image in assistant)
+- Strip-prior-reasoning profile flag scenario
+- Edge cases: empty content, long content (10K chars), unicode,
+  emoji, none-valued tool args, special-char tool args, error
+  tool results
+
+`tests/test_api/parity/test_provider_conversion_parity_v15.py`
+parametrizes the corpus across both `target_shape="anthropic"` and
+`target_shape="openai"` — 98 byte-equality assertions all green.
+Any drift fails CI.
+
+### Backward-compat shims
+
+- `OpenAICompatProvider._convert_message` and
+  `AnthropicProvider._convert_message` retained as thin shims so
+  tests that monkey-patch them continue to work.
+- `_strip_reasoning_keys` and `_warn_thinking_dropped_once`
+  re-exported from `openai_compat` for the same reason.
+- The `_thinking_drop_warned` warn-once flag stays on
+  `openai_compat` so existing test fixtures resetting it still work;
+  `conversion._warn_thinking_dropped_once` reads / mutates the flag
+  through the module reference.
+
+### Tests
+
+31 new unit tests in `tests/test_api/test_conversion.py`:
+
+- `serialize_tool_result` — None / str / dict / list / nested /
+  unicode / fallback (8).
+- `deferred_post_tool_blocks` — anchor logic across edge cases (5).
+- `serialize_messages` Anthropic — text / thinking ± signature /
+  image / tool_result ± error / server tool block /
+  cache_control breakpoint placement (8).
+- `serialize_messages` OpenAI — text / system prepend / parts shape
+  with image / tool collapse / thinking drop / strip flag (6).
+- `ConversionContext` immutability + defaults + unknown shape (3).
+- `ReasoningReplayMode` enum surface (1).
+
+Plus 98 byte-parity tests (49 scenarios × 2 providers).
+
+Suite: 7776 → 7905 passed (+129).
+
+### Risks mitigated
+
+- Cross-provider regression — the parity gate is the primary
+  safeguard. Any future change to `conversion.py` runs the 49
+  scenarios automatically; behavioural drift fails CI.
+- v14 mechanism B continuity — strip_prior_reasoning logic flows
+  through `ConversionContext` and exercised by the captured
+  corpus's `strip_prior_reasoning_flag` scenario.
+
+### Sequel
+
+v2.5.0 GA folds Mechanisms M4 (control-token stripping) + M5
+(inline WebFetch/WebSearch parser variant) into one commit.
+
+---
+
 ## v2.5.0a2 — v15 M2 proactive rate limiter
 
 Second alpha of the v15 borrow-audit adoption. Adds Mechanism M2:

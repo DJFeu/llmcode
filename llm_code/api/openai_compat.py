@@ -44,23 +44,29 @@ from llm_code.api.types import (
 # proxy that returns "Retry-After: 86400" does not wedge the runtime
 # for a day. Real providers use small values (30s typical on 429).
 _logger = logging.getLogger(__name__)
+
+# v15 M3 — the warn-once flag stays on this module (instead of
+# moving to conversion.py) so existing test fixtures that reset it
+# via ``openai_compat._thinking_drop_warned = False`` between tests
+# keep working. ``conversion._warn_thinking_dropped_once`` reads /
+# mutates the flag through this module reference.
 _thinking_drop_warned = False
 
-
-def _warn_thinking_dropped_once(count: int) -> None:
-    global _thinking_drop_warned
-    if _thinking_drop_warned:
-        return
-    _thinking_drop_warned = True
-    _logger.debug(
-        "openai_compat: dropping %d thinking block(s) from outbound "
-        "assistant message — OpenAI-compat servers reject unknown "
-        "content types.",
-        count,
-    )
-
-
 _MAX_RETRY_AFTER_SECONDS = 60.0
+
+
+# v15 M3 — these helpers moved into ``llm_code.api.conversion``
+# (single source of truth for cross-provider message conversion).
+# Re-exported here as module-level names so existing imports
+# (``from llm_code.api.openai_compat import _strip_reasoning_keys``)
+# keep working — the actual implementation lives in conversion.py
+# and the OpenAI-compat-specific log lines fire under the
+# ``llm_code.api.openai_compat`` logger so log scrapers / tests
+# asserting on log names see no behavioural change.
+from llm_code.api.conversion import (  # noqa: E402  re-export
+    _strip_reasoning_keys,
+    _warn_thinking_dropped_once,
+)
 
 
 # Wave2-1a P2: provider reasoning fields we know how to extract.
@@ -68,32 +74,6 @@ _REASONING_FIELD_CANDIDATES: tuple[str, ...] = (
     "reasoning_content",  # DeepSeek-R1 / DeepSeek-reasoner / Qwen QwQ / vLLM
     "reasoning",          # OpenAI o-series (newer SDK)
 )
-
-
-def _strip_reasoning_keys(out: dict) -> int:
-    """v14 Mechanism B — drop reasoning channel keys from an outbound
-    message dict, returning the byte count of what was removed.
-
-    Today's OpenAI-compat path converts inbound ``reasoning_content``
-    to :class:`ThinkingBlock` and then drops ThinkingBlocks on the way
-    out, so reasoning never reaches the outbound dict in stock code.
-    The filter is defensive: any subclass / future change that lands a
-    raw ``reasoning_content`` or ``reasoning`` string on an outbound
-    message will have it stripped here when the active profile opts
-    in via ``profile.strip_prior_reasoning=True``. The byte count is
-    returned so the caller can aggregate a single per-call log entry
-    instead of one log per message.
-    """
-    removed_bytes = 0
-    for key in ("reasoning_content", "reasoning"):
-        value = out.pop(key, None)
-        if isinstance(value, str):
-            removed_bytes += len(value)
-        elif value is not None:
-            # Anything non-string (list, dict) — count its repr bytes
-            # to keep the metric meaningful.
-            removed_bytes += len(repr(value))
-    return removed_bytes
 
 
 def _parse_retry_after_header(raw: str | None) -> float | None:
@@ -272,18 +252,19 @@ class OpenAICompatProvider(LLMProvider):
         messages: tuple[Message, ...],
         system: str | None = None,
     ) -> list[dict]:
+        # v15 M3 — per-message conversion delegates to
+        # ``self._convert_message`` (which is itself a thin shim over
+        # ``llm_code.api.conversion``) so tests that monkey-patch
+        # ``_convert_message`` to inject synthetic state continue to
+        # work. The v14 Mechanism B reasoning-content history filter
+        # runs alongside the loop. The 49-scenario parity gate
+        # (``tests/test_api/parity/test_provider_conversion_parity_v15.py``)
+        # verifies byte-identical output against a corpus captured
+        # from v2.4.0.
         result: list[dict] = []
-
         if system:
             result.append({"role": "system", "content": system})
 
-        # v14 Mechanism B — reasoning-content history filter. Aggregate
-        # the number of assistant messages we strip + their byte
-        # weight into a single per-call INFO log so we don't spam one
-        # line per message. The filter is gated by
-        # ``profile.strip_prior_reasoning`` (default False); profiles
-        # that opt in (GLM-5.1, optionally DeepSeek-R1) trade
-        # multi-turn reasoning continuity for grounded responses.
         strip_reasoning = self._profile.strip_prior_reasoning
         reasoning_strip_count = 0
         reasoning_strip_bytes = 0
@@ -309,57 +290,15 @@ class OpenAICompatProvider(LLMProvider):
         return result
 
     def _convert_message(self, msg: Message) -> dict:
-        # Tool result messages use the "tool" role in OpenAI format
-        if msg.role == "tool" or (
-            len(msg.content) == 1 and isinstance(msg.content[0], ToolResultBlock)
-        ):
-            block = msg.content[0]
-            assert isinstance(block, ToolResultBlock)
-            return {
-                "role": "tool",
-                "tool_call_id": block.tool_use_id,
-                "content": block.content,
-            }
+        """Single-message OpenAI-compat conversion. Thin shim over
+        :func:`llm_code.api.conversion._openai_convert_message`.
 
-        # Check if content is mixed (has images or multiple block types)
-        has_image = any(isinstance(b, ImageBlock) for b in msg.content)
-        has_multiple = len(msg.content) > 1
-
-        if has_image or has_multiple:
-            parts: list[dict] = []
-            thinking_dropped = 0
-            for block in msg.content:
-                if isinstance(block, TextBlock):
-                    parts.append({"type": "text", "text": block.text})
-                elif isinstance(block, ImageBlock):
-                    parts.append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{block.media_type};base64,{block.data}"
-                        },
-                    })
-                elif isinstance(block, ThinkingBlock):
-                    # Wave2-1a P4: OpenAI-compat servers reject unknown
-                    # content types, so thinking blocks from prior
-                    # assistant turns are dropped on the way out. The
-                    # model generates fresh reasoning next turn. A
-                    # future native AnthropicProvider overrides
-                    # _convert_message to round-trip signed thinking
-                    # for signature verification.
-                    thinking_dropped += 1
-            if thinking_dropped:
-                _warn_thinking_dropped_once(thinking_dropped)
-            return {"role": msg.role, "content": parts}
-
-        # Single text block — use string content for simplicity
-        if len(msg.content) == 1 and isinstance(msg.content[0], TextBlock):
-            return {"role": msg.role, "content": msg.content[0].text}
-
-        # Fallback: concatenate text blocks
-        text = "".join(
-            b.text for b in msg.content if isinstance(b, TextBlock)
-        )
-        return {"role": msg.role, "content": text}
+        Kept for backward compat with tests that exercise the per-
+        message path directly; production callers go through
+        ``_build_messages``.
+        """
+        from llm_code.api.conversion import _openai_convert_message
+        return _openai_convert_message(msg)
 
     def _build_payload(self, request: MessageRequest, *, stream: bool) -> dict:
         payload: dict = {
