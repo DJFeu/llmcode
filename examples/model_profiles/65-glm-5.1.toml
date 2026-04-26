@@ -120,3 +120,13 @@ reminder_after_each_call = true
 # compat guarantee — any future change that round-trips reasoning
 # back to GLM will still be filtered for this profile.
 strip_prior_reasoning = true
+
+# Mechanism C — denial-pattern detection + forced retry. After the
+# turn's content streams, if a tool was called this turn AND the
+# content matches a denial pattern, re-invoke the provider once with
+# an injected <system-reminder>. Capped at 1 retry per turn.
+# Buffers streaming for retry-eligible turns (TTFT trade-off). Costs
+# +1 provider call per denial-matched turn (~30%+ on GLM-5.1
+# news/realtime queries — observe the
+# llmcode.tool_consumption.denial_retries_total counter).
+retry_on_denial = true

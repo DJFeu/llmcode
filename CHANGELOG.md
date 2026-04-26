@@ -1,5 +1,123 @@
 # Changelog
 
+## v2.4.0 — Tool-result consumption compat layer GA
+
+GA of the v14 tool-result consumption compatibility layer (see
+`docs/superpowers/specs/2026-04-27-llm-code-v14-tool-consumption-compat-design.md`).
+Three runtime mechanisms now compensate for a class of model-level
+instruction-following weaknesses where a model calls a tool, receives
+data, and then writes a `content` response that contradicts the tool
+result. After v14, "model X denies the tool it just used" is a
+runtime-handled compatibility concern instead of a per-model prompt-
+engineering treadmill.
+
+This release consolidates v2.4.0a1 (Mechanism A) and v2.4.0a2
+(Mechanism B), and adds Mechanism C (denial detection + forced retry).
+
+### Mechanism C — Denial-pattern detection + forced retry
+
+After a turn's `content` is fully streamed, scan it for denial
+keywords (English + Traditional/Simplified Chinese curated regex
+corpus). If a denial pattern matches AND a tool was called this
+turn, re-invoke the provider once with an injected continuation
+reminder. The retried response replaces the original for rendering.
+
+- **Cap:** 1 retry per turn. Persistent denials emit a structured
+  `denial_retry_failed pattern_persisted_after_retry` log; the
+  retried (still-denial) response renders to the user.
+- **Gate:** `has_recent_tool_call` — denial without a recent tool
+  call (e.g. user asked "are you online?") is a genuine answer and
+  bypasses the retry.
+- **Streaming UX:** When `retry_on_denial=True`, content is buffered
+  during streaming so the detector runs before the user sees a
+  denial that gets replaced. Profiles paying for retry pay for
+  buffered TTFT; profiles with the flag off keep the unbuffered
+  streaming UX.
+- **Cost:** Each retry doubles the provider-call count for that turn.
+  Both calls flow through the cost meter normally — there is no
+  special accounting. Observe via the
+  `llmcode.tool_consumption.denial_retries_total` counter (wired in
+  v12 M6 OTel pipeline).
+
+### Detector corpus
+
+`tests/fixtures/denial_corpus.json` — 60 labeled entries (30
+denials + 30 non-denial controls) across English, Traditional
+Chinese, Simplified Chinese. Required thresholds enforced in
+`tests/test_runtime/test_denial_detector.py::TestCorpusRegression`:
+**precision >= 0.95, recall >= 0.85**. Current corpus achieves
+**precision 1.000, recall 1.000**. New phrasings observed in
+production should be added to the corpus with the correct label;
+the regression test will fail until the regex is adjusted.
+
+### GLM-5.1 profile opt-in (all three mechanisms)
+
+`examples/model_profiles/65-glm-5.1.toml` enables A + B + C:
+
+```toml
+[tool_consumption]
+reminder_after_each_call = true
+strip_prior_reasoning = true
+retry_on_denial = true
+```
+
+Copy this file to `~/.llmcode/model_profiles/glm-5.1.toml` to
+activate against a self-hosted GLM-5.1 endpoint.
+
+### Manual smoke recommendation
+
+Before tagging, run `顯示今日熱門新聞三則` against GLM-5.1 in the
+interactive REPL with the GLM-5.1 profile installed. Expected log
+sequence:
+
+1. `INFO tool_consumption: reminder_injected tool=web_search`
+2. (possibly) `INFO tool_consumption: reasoning_stripped` (multi-turn)
+3. (possibly) `WARNING tool_consumption: denial_detected_retry pattern=...`
+
+**Acceptance:** rendered content contains 3 headlines + URLs from
+the search results, NO denial keyword. Document the outcome in the
+release notes (`Mechanism C alone fixed / did not fix` flagging is
+the most useful field follow-up if a fourth mechanism is needed in
+v15).
+
+If even the retry produces denial, the GLM-5.1 chat template is more
+broken than the runtime can compensate for; the `denial_retry_failed`
+log + the cost-doubled retry are the diagnostic signals. Recommend
+Zhipu cloud API as an alternative path.
+
+### Tests
+
+- 8 new tests in `tests/test_runtime/test_denial_retry_loop.py`
+  covering the retry path, the cap, the gate, the streaming UX
+  trade-off, and session history shape.
+- 38 tests + 59 corpus per-entry tests in
+  `tests/test_runtime/test_denial_detector.py` covering the gate,
+  per-language patterns, edge cases, and the precision/recall
+  regression contract.
+- Full suite: 7722 passed, 34 skipped (was 7575 baseline in v2.3.2).
+- Grep guard (`tests/test_no_model_branch_in_core.py`) stays green.
+
+### Cumulative v14 summary (a1 + a2 + GA)
+
+- Mechanism A — post-tool `<system-reminder>` injection. Default ON
+  globally; ~40 tokens per tool call. Shipped in v2.4.0a1.
+- Mechanism B — strip `reasoning_content` / `reasoning` keys from
+  prior assistant messages on outbound. Default OFF; opt-in via
+  profile. Forward-compatibility filter — stock openai_compat
+  already filters reasoning via the `ThinkingBlock` drop. Shipped in
+  v2.4.0a2.
+- Mechanism C — denial-pattern detection + forced retry. Default
+  OFF; opt-in via profile (GLM-5.1 only by default). Shipped in
+  v2.4.0.
+- Profile schema additions: `reminder_after_each_call`,
+  `strip_prior_reasoning`, `retry_on_denial` under
+  `[tool_consumption]`.
+- Grep guard remains green throughout — zero per-model `if "x" in
+  m:` branches in any protected path.
+- Profiles with all three flags off produce byte-identical message
+  history to v2.3.2 (parity verified by tests covering each flag's
+  off path).
+
 ## v2.4.0a2 — v14 Mechanism B: reasoning-content history filter
 
 Second alpha of v14's tool-result consumption compatibility layer.

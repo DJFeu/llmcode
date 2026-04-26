@@ -40,6 +40,7 @@ from llm_code.runtime._retry_tracker import RecentToolCallTracker
 from llm_code.runtime.streaming_executor import StreamingToolExecutor
 from llm_code.runtime.telemetry import Telemetry, _truncate_for_attribute, get_noop_telemetry
 from llm_code.runtime.tool_consumption import build_post_tool_reminder
+from llm_code.runtime.denial_detector import detect_denial
 from llm_code.tools.base import ToolResult
 from llm_code.tools.parsing import ParsedToolCall, parse_tool_calls
 
@@ -979,6 +980,15 @@ class ConversationRuntime:
         _retry_tracker = RecentToolCallTracker()
         _force_text_next_iteration = False
 
+        # v14 Mechanism C — denial-detection retry state. Tracked
+        # across iterations of this single turn so the
+        # ``has_recent_tool_call`` gate fires correctly (a denial in
+        # the model's text after at least one tool call this turn is
+        # the retryable failure mode) and the 1-retry cap holds even
+        # if the model digs in on a denial pattern.
+        _tool_called_this_turn = False
+        _denial_retry_count = 0
+
         # Fresh iteration budget for this turn — exposes an observable
         # ``used`` / ``exceeded`` counter and produces the max-steps
         # reminder text when the turn has burned its budget.
@@ -1464,6 +1474,12 @@ class ConversationRuntime:
             native_tool_calls: dict[str, dict] = {}  # id -> {id, name, json_parts}
             native_tool_list: list[dict] = []
             stop_event: StreamMessageStop | None = None
+            # v14 Mechanism C — buffer text deltas when retry_on_denial
+            # is active so the detector can decide whether to retry
+            # before the user sees a denial that gets replaced. Non-
+            # text events (tool start, message stop) stream normally
+            # — only StreamTextDelta is held back.
+            _buffered_text_events: list[StreamTextDelta] = []
 
             # StreamingToolExecutor: starts read-only tools in background while streaming
             _streaming_executor = StreamingToolExecutor(self._tool_registry, self._permissions)
@@ -1471,8 +1487,17 @@ class ConversationRuntime:
 
             try:
                 async for event in stream:
-                    # Yield streaming events to caller
-                    yield event
+                    # Yield streaming events to caller — except text
+                    # deltas when retry_on_denial is active. Buffered
+                    # text gets flushed at the end of the iteration
+                    # (turn ends without retry) or discarded on retry.
+                    if (
+                        self._model_profile.retry_on_denial
+                        and isinstance(event, StreamTextDelta)
+                    ):
+                        _buffered_text_events.append(event)
+                    else:
+                        yield event
 
                     if isinstance(event, StreamTextDelta):
                         text_parts.append(event.text)
@@ -1831,8 +1856,96 @@ class ConversationRuntime:
                 # Reset counter when model is actively using tools
                 _continuation_count = 0
 
-            # 9. If no tool calls → end turn
+            # 9. If no tool calls → end turn (or trigger denial retry)
             if not parsed_calls:
+                # v14 Mechanism C — denial-pattern detection + forced
+                # retry. Fires only when the active profile opts in
+                # AND a tool was called earlier this turn. The
+                # ``has_recent_tool_call`` gate is essential: a denial
+                # without a recent tool call is a genuine answer
+                # (e.g. user asked "are you connected to the internet?")
+                # and bypassing the gate would force a retry that
+                # ignores the user's actual question.
+                if (
+                    self._model_profile.retry_on_denial
+                    and _tool_called_this_turn
+                    and _denial_retry_count < 1
+                ):
+                    _denial_match = detect_denial(
+                        response_text, has_recent_tool_call=True,
+                    )
+                    if _denial_match is not None:
+                        logger.warning(
+                            "tool_consumption: denial_detected_retry "
+                            "pattern=%r matched=%r",
+                            _denial_match.pattern,
+                            _denial_match.matched_text,
+                        )
+                        # Discard the buffered text — we won't render
+                        # the denial to the user. The denial assistant
+                        # message stays in session history (already
+                        # appended above) so the model sees its own
+                        # prior response when it retries; the injected
+                        # ``<system-reminder>`` below tells the model
+                        # to do better this time.
+                        _buffered_text_events.clear()
+                        _retry_reminder = Message(
+                            role="user",
+                            content=(TextBlock(text=(
+                                "<system-reminder>\n"
+                                "Your previous response denied a "
+                                "capability you just used. The tool "
+                                "result above contains the data the "
+                                "user asked for. Please answer the "
+                                "user's question by summarising the "
+                                "result above — do not write a "
+                                "denial.\n"
+                                "</system-reminder>"
+                            )),),
+                        )
+                        self.session = self.session.add_message(
+                            _retry_reminder,
+                        )
+                        _denial_retry_count += 1
+                        # Skip the break — re-enter the iteration loop
+                        # so the provider sees the injected reminder.
+                        continue
+
+                # Persistent-denial diagnostic. We ALREADY retried once
+                # this turn (cap reached); if the retried response
+                # still matches a denial pattern, log a structured
+                # warning and fall through to render whichever
+                # response we have. Spec calls this the "C+B+A
+                # together insufficient → recommend cloud API"
+                # outcome.
+                if (
+                    self._model_profile.retry_on_denial
+                    and _tool_called_this_turn
+                    and _denial_retry_count >= 1
+                ):
+                    _persisted_match = detect_denial(
+                        response_text, has_recent_tool_call=True,
+                    )
+                    if _persisted_match is not None:
+                        logger.warning(
+                            "tool_consumption: denial_retry_failed "
+                            "pattern_persisted_after_retry pattern=%r",
+                            _persisted_match.pattern,
+                        )
+
+                # Flush the buffered text events as one ``Stream
+                # TextDelta`` — turn is ending normally (or after a
+                # retry that succeeded). Plan §3.4 calls this the
+                # "render in one shot (not a token stream)" UX
+                # trade-off; profiles that don't opt in to retry
+                # never pay this cost.
+                if _buffered_text_events:
+                    _combined = "".join(
+                        e.text for e in _buffered_text_events
+                    )
+                    if _combined:
+                        yield StreamTextDelta(text=_combined)
+                    _buffered_text_events.clear()
                 break
 
             # 9. Execute tools via the validate→safety→permission→progress pipeline
@@ -1946,6 +2059,13 @@ class ConversationRuntime:
 
             # Add tool results as user message
             if tool_result_blocks:
+                # v14 Mechanism C — record that at least one tool was
+                # called in this turn so the denial detector's
+                # has_recent_tool_call gate fires correctly when the
+                # next iteration's content streams. Stays True for
+                # the rest of the turn even if subsequent iterations
+                # don't call tools.
+                _tool_called_this_turn = True
                 tool_result_msg = Message(
                     role="user",
                     content=tuple(tool_result_blocks),

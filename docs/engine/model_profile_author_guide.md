@@ -135,6 +135,34 @@ See ``docs/superpowers/specs/2026-04-27-llm-code-v14-tool-consumption-compat-des
 for the design rationale (why prompt-level fixes alone are insufficient
 against models like GLM-5.1) and per-mechanism trade-offs.
 
+#### When to enable ``retry_on_denial``
+
+The denial-detection retry is the most invasive of the three v14
+mechanisms — it costs an extra provider call when triggered, buffers
+streaming output (sacrificing time-to-first-token), and can produce
+a ``denial_retry_failed`` warning if the model digs in on a denial
+pattern across both calls. Enable when:
+
+- **Symptom present.** The model calls a tool, receives data, and
+  writes a denial in ``content`` ("I don't have access to news APIs"
+  after just calling ``web_search``). Run the model against a
+  realtime query (e.g. ``顯示今日熱門新聞三則``) and inspect the
+  rendered output — if it contains a denial keyword instead of the
+  tool result, this profile is a candidate.
+- **Cost.** +1 provider call per denial-matched turn. Observed rate
+  on GLM-5.1 news/realtime queries: ~30%+. Frontier hosted models
+  (Claude, GPT-4o, Gemini Pro) typically observe <1% — leave them
+  with the flag off.
+- **UX.** Streaming becomes buffered for retry-eligible turns. The
+  user sees the response in one shot instead of token-by-token.
+  Acceptable for back-end / batch usage; potentially jarring for
+  interactive REPL users. Streaming purists turn the flag off.
+- **Recommendation.** Enable for self-hosted local models known to
+  have weak tool-result consumption (GLM-5.1, possibly Llama-3.3
+  fine-tunes). Leave disabled for hosted frontier models. Enable
+  Mechanism A (default ON) and B (opt-in) first; only enable C if
+  A+B alone don't fix the failure mode.
+
 ## 4. The new ``[prompt]`` section (v13)
 
 The ``[prompt]`` section is how a profile attaches itself to a set of
