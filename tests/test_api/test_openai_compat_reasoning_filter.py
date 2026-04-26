@@ -32,7 +32,6 @@ from llm_code.api.types import (
     TextBlock,
     ThinkingBlock,
     ToolResultBlock,
-    ToolUseBlock,
 )
 from llm_code.runtime.model_profile import ModelProfile
 

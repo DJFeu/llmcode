@@ -12,7 +12,6 @@ the flag is off), the substantive content must reach the caller.
 """
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -27,8 +26,6 @@ from llm_code.api.types import (
     StreamToolUseStart,
     TextBlock,
     TokenUsage,
-    ToolResultBlock,
-    ToolUseBlock,
 )
 from llm_code.runtime.context import ProjectContext
 from llm_code.runtime.conversation import ConversationRuntime
