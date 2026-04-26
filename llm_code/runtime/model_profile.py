@@ -108,6 +108,42 @@ class ModelProfile:
     custom_close_tags: tuple[str, ...] = ()
     call_separator_chars: str = ""
 
+    # ── v14 — tool consumption compat layer ──────────────────────────
+    # Three optional mechanisms that paper over a class of model-level
+    # instruction-following weaknesses where a model calls a tool,
+    # receives data, and then writes a `content` response that
+    # contradicts the tool result (canonical "I don't have access to X
+    # after just calling X" failure mode). Each mechanism is gated
+    # independently so adopters opt in per profile.
+    #
+    # TOML authoring (matches the existing flat-section convention):
+    #
+    #     [tool_consumption]
+    #     reminder_after_each_call = true   # Mechanism A — default on
+    #     strip_prior_reasoning = false     # Mechanism B — default off
+    #     retry_on_denial = false           # Mechanism C — default off
+    #
+    # ``reminder_after_each_call`` — append a synthetic
+    #   ``<system-reminder>`` user message immediately after each tool
+    #   result, naming the tool just used. Cheapest of the three;
+    #   ~40 tokens per tool call. Default ON so every model gets the
+    #   protection unless the profile explicitly opts out.
+    # ``strip_prior_reasoning`` — drop ``reasoning_content`` /
+    #   ``reasoning`` keys from prior assistant messages on the
+    #   outbound request. Trades multi-turn reasoning continuity for
+    #   grounded single-turn responses. Recommended for separate-
+    #   reasoning-channel models that bleed denials across turns
+    #   (GLM-5.1, DeepSeek-R1).
+    # ``retry_on_denial`` — after a turn's content streams, scan for
+    #   denial keywords; if a tool was called this turn AND a denial
+    #   pattern matches, re-invoke the provider once with an injected
+    #   continuation reminder. Capped at 1 retry. Buffers streaming
+    #   for retry-eligible turns (TTFT trade-off). Costs +1 provider
+    #   call per denial-matched turn. Adopter-only opt-in.
+    reminder_after_each_call: bool = True
+    strip_prior_reasoning: bool = False
+    retry_on_denial: bool = False
+
 
 # ── Built-in profiles ─────────────────────────────────────────────────
 
@@ -512,6 +548,12 @@ def _profile_from_dict(data: dict[str, Any], base: ModelProfile | None = None) -
         "prompt": ("prompt_template", "prompt_match"),
         "parser": ("parser_variants",),
         "parser_hints": ("custom_close_tags", "call_separator_chars"),
+        # v14 — tool consumption compat layer.
+        "tool_consumption": (
+            "reminder_after_each_call",
+            "strip_prior_reasoning",
+            "retry_on_denial",
+        ),
     }
     for key, value in data.items():
         if isinstance(value, dict):

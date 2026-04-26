@@ -39,6 +39,7 @@ from llm_code.runtime.cost_tracker import BudgetExceededError
 from llm_code.runtime._retry_tracker import RecentToolCallTracker
 from llm_code.runtime.streaming_executor import StreamingToolExecutor
 from llm_code.runtime.telemetry import Telemetry, _truncate_for_attribute, get_noop_telemetry
+from llm_code.runtime.tool_consumption import build_post_tool_reminder
 from llm_code.tools.base import ToolResult
 from llm_code.tools.parsing import ParsedToolCall, parse_tool_calls
 
@@ -1950,6 +1951,25 @@ class ConversationRuntime:
                     content=tuple(tool_result_blocks),
                 )
                 self.session = self.session.add_message(tool_result_msg)
+
+                # v14 Mechanism A — post-tool reminder injection.
+                # Append a synthetic ``<system-reminder>`` user message
+                # for each tool result, naming the tool just used. Keeps
+                # the correction turn-proximate (last ~50 tokens) so
+                # models that drift from system-prompt anti-contradiction
+                # rules after a tool round-trip get a fresh nudge.
+                # Gated by ``profile.reminder_after_each_call`` (default
+                # True). Profiles with the flag off get byte-parity
+                # behaviour vs v2.3.2 — no reminder messages are added.
+                if self._model_profile.reminder_after_each_call:
+                    name_by_id = {c.id: c.name for c in parsed_calls}
+                    for block in tool_result_blocks:
+                        rem_tool_name = name_by_id.get(block.tool_use_id, "")
+                        reminder = build_post_tool_reminder(
+                            rem_tool_name, self._model_profile,
+                        )
+                        if reminder is not None:
+                            self.session = self.session.add_message(reminder)
 
                 # Local model forced-text mode: after receiving tool
                 # results, some quantized models (Qwen INT4, DeepSeek)

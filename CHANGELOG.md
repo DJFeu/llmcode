@@ -1,5 +1,82 @@
 # Changelog
 
+## v2.4.0a1 — v14 Mechanism A: post-tool reminder injection
+
+First alpha of v14's tool-result consumption compatibility layer (see
+`docs/superpowers/specs/2026-04-27-llm-code-v14-tool-consumption-compat-design.md`).
+v2.3.2 demonstrated that prompt-level anti-contradiction text alone
+cannot stop models like GLM-5.1 from denying a tool they just used.
+v14 moves the correction from the session-frozen system prompt to
+turn-proximate runtime hooks. This alpha ships the cheapest of the
+three planned mechanisms.
+
+### Mechanism A — Post-tool reminder injection
+
+After every successful tool execution, the runtime appends a
+synthetic `user` role message containing a short `<system-reminder>`
+block that names the tool just used and instructs the model to
+consume the tool result rather than deny the capability:
+
+```
+<system-reminder>
+You just called {tool_name} and received the result above. That data
+is your ground truth for this turn — consume it in your `content`
+response. Do NOT deny the tool or capability you just used. If the
+result is empty or an error, say so plainly and proceed.
+</system-reminder>
+```
+
+The reminder rides in the same provider call as the tool result, so
+the model sees the correction in the most recent ~50 tokens of
+context — turn-proximate, where behavioural anti-patterns surface —
+instead of relying on system-prompt text that drifts hundreds of
+tokens away after a tool round-trip.
+
+Cost: ~40 tokens per tool call. Typical 1–4 tool calls per user query
+adds 40–160 tokens to the next provider call. Acceptable.
+
+### New profile fields (v14 schema)
+
+`ModelProfile` gains three new fields under a new `[tool_consumption]`
+TOML section. All three are declared up front so subsequent v14 alphas
+can wire mechanisms B and C without a second schema bump:
+
+- `reminder_after_each_call: bool = True` — Mechanism A toggle.
+  **Default ON.** Profiles for models that already consume tool
+  results reliably can opt out (`reminder_after_each_call = false`).
+- `strip_prior_reasoning: bool = False` — declared; wired in v2.4.0a2.
+- `retry_on_denial: bool = False` — declared; wired in v2.4.0.
+
+### Config / observability
+
+- New module `llm_code.runtime.tool_consumption` exposing
+  `build_post_tool_reminder(tool_name, profile) -> Message | None`.
+- Structured INFO log on each injection:
+  `tool_consumption: reminder_injected tool=<name> bytes=<n>`.
+- Wired into the conversation turn loop immediately after the tool
+  result message is added to session history. One reminder message
+  per tool call (multi-tool turns produce multiple reminder messages
+  named for each tool).
+
+### Compatibility
+
+- All built-in profiles inherit `reminder_after_each_call=True` from
+  the dataclass default — no per-profile TOML edits required.
+- Profiles with `reminder_after_each_call = false` produce
+  byte-identical message history to v2.3.2.
+- Grep guard (`tests/test_no_model_branch_in_core.py`) stays green —
+  zero per-model branches added.
+- Default profile resolution (`get_profile`, `ProfileRegistry`)
+  unchanged. Existing 67 profile-system tests continue to pass.
+
+### Tests
+
+- 23 new tests in `tests/test_runtime/test_tool_consumption.py`
+  covering the helper (defaults, opt-out, defensive empty input,
+  log emission, message shape) and the conversation runtime wiring
+  (single-tool, multi-tool, flag-on, flag-off).
+- Full suite: 7598 passed, 34 skipped (was 7575 + 34 in v2.3.2).
+
 ## v2.3.2 — Tool-result consumption discipline (anti-contradiction)
 
 Observed in a GLM-5.1 session: model calls `web_search`, receives valid

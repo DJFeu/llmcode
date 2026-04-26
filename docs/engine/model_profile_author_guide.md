@@ -98,6 +98,43 @@ context_window = 200000
 is_local = true              # enables unlimited token upgrades
 ```
 
+### Tool consumption (v14)
+
+The ``[tool_consumption]`` section gates three optional runtime
+mechanisms that paper over a class of model-level
+instruction-following weaknesses where a model calls a tool, receives
+data, and then writes a ``content`` response that contradicts the
+tool result. Each mechanism is independently enabled per profile.
+
+```toml
+[tool_consumption]
+# Mechanism A — append a synthetic <system-reminder> user message
+# after each tool result, naming the tool just used. Cheapest of the
+# three; ~40 tokens per tool call. Default ON so every model gets the
+# protection unless the profile explicitly opts out.
+reminder_after_each_call = true
+
+# Mechanism B — drop reasoning_content / reasoning fields from prior
+# assistant messages on the outbound request. Trades multi-turn
+# reasoning continuity for grounded single-turn responses. Recommended
+# for separate-reasoning-channel models that bleed denials across
+# turns (GLM-5.1, DeepSeek-R1).
+strip_prior_reasoning = false
+
+# Mechanism C — after a turn's content streams, scan for denial
+# keywords; if a tool was called this turn AND a denial pattern
+# matches, re-invoke the provider once with an injected continuation
+# reminder. Capped at 1 retry. Buffers streaming for retry-eligible
+# turns (TTFT trade-off). Costs +1 provider call per denial-matched
+# turn. Adopter-only opt-in for self-hosted local models known to
+# have weak tool-result consumption.
+retry_on_denial = false
+```
+
+See ``docs/superpowers/specs/2026-04-27-llm-code-v14-tool-consumption-compat-design.md``
+for the design rationale (why prompt-level fixes alone are insufficient
+against models like GLM-5.1) and per-mechanism trade-offs.
+
 ## 4. The new ``[prompt]`` section (v13)
 
 The ``[prompt]`` section is how a profile attaches itself to a set of
