@@ -70,6 +70,32 @@ _REASONING_FIELD_CANDIDATES: tuple[str, ...] = (
 )
 
 
+def _strip_reasoning_keys(out: dict) -> int:
+    """v14 Mechanism B — drop reasoning channel keys from an outbound
+    message dict, returning the byte count of what was removed.
+
+    Today's OpenAI-compat path converts inbound ``reasoning_content``
+    to :class:`ThinkingBlock` and then drops ThinkingBlocks on the way
+    out, so reasoning never reaches the outbound dict in stock code.
+    The filter is defensive: any subclass / future change that lands a
+    raw ``reasoning_content`` or ``reasoning`` string on an outbound
+    message will have it stripped here when the active profile opts
+    in via ``profile.strip_prior_reasoning=True``. The byte count is
+    returned so the caller can aggregate a single per-call log entry
+    instead of one log per message.
+    """
+    removed_bytes = 0
+    for key in ("reasoning_content", "reasoning"):
+        value = out.pop(key, None)
+        if isinstance(value, str):
+            removed_bytes += len(value)
+        elif value is not None:
+            # Anything non-string (list, dict) — count its repr bytes
+            # to keep the metric meaningful.
+            removed_bytes += len(repr(value))
+    return removed_bytes
+
+
 def _parse_retry_after_header(raw: str | None) -> float | None:
     """Parse an HTTP Retry-After value into a seconds float (wave2-1b)."""
     if not raw:
@@ -213,8 +239,34 @@ class OpenAICompatProvider(LLMProvider):
         if system:
             result.append({"role": "system", "content": system})
 
+        # v14 Mechanism B — reasoning-content history filter. Aggregate
+        # the number of assistant messages we strip + their byte
+        # weight into a single per-call INFO log so we don't spam one
+        # line per message. The filter is gated by
+        # ``profile.strip_prior_reasoning`` (default False); profiles
+        # that opt in (GLM-5.1, optionally DeepSeek-R1) trade
+        # multi-turn reasoning continuity for grounded responses.
+        strip_reasoning = self._profile.strip_prior_reasoning
+        reasoning_strip_count = 0
+        reasoning_strip_bytes = 0
+
         for msg in messages:
-            result.append(self._convert_message(msg))
+            converted = self._convert_message(msg)
+            if (
+                strip_reasoning
+                and converted.get("role") == "assistant"
+            ):
+                removed = _strip_reasoning_keys(converted)
+                if removed:
+                    reasoning_strip_count += 1
+                    reasoning_strip_bytes += removed
+            result.append(converted)
+
+        if reasoning_strip_count:
+            _logger.info(
+                "tool_consumption: reasoning_stripped turns=%d total_bytes=%d",
+                reasoning_strip_count, reasoning_strip_bytes,
+            )
 
         return result
 

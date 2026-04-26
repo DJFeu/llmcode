@@ -1,5 +1,79 @@
 # Changelog
 
+## v2.4.0a2 — v14 Mechanism B: reasoning-content history filter
+
+Second alpha of v14's tool-result consumption compatibility layer.
+Wires through the `strip_prior_reasoning` flag declared by v2.4.0a1
+and adds a defensive filter pass to `OpenAICompatProvider._build_messages`.
+
+### Mechanism B — Reasoning-content history filter
+
+When the active profile sets `strip_prior_reasoning=True`, the
+provider's outbound message conversion drops `reasoning_content` and
+`reasoning` keys from prior assistant message dicts. Each per-call
+strip aggregates one INFO log:
+
+```
+tool_consumption: reasoning_stripped turns=<n> total_bytes=<m>
+```
+
+### Step B.1 finding
+
+The plan's Step B.1 required us to verify whether the round-trip
+actually happens before writing the filter. Verification result:
+**`reasoning_content` does NOT round-trip in current openai_compat
+code.** Inbound `reasoning_content` strings are converted to
+`ThinkingBlock` (Wave2-1a P2, line 472 of `openai_compat.py`), and
+ThinkingBlocks are dropped on the way out (Wave2-1a P4, line 285).
+There is no path in stock code where reasoning leaks back into the
+outbound dict.
+
+The filter is therefore a **forward-compatibility defensive pass**.
+It guarantees that any future change which lands a raw
+`reasoning_content` string on an outbound assistant message dict
+(e.g. an experimental subclass that round-trips signed reasoning,
+or a third-party provider plugin) will have it stripped for
+opt-in profiles. Tests cover both stock-code no-op behaviour and
+synthetic forward-compat scenarios.
+
+### Profile opt-ins
+
+- `examples/model_profiles/65-glm-5.1.toml` — adds a `[tool_consumption]`
+  section with `reminder_after_each_call = true`,
+  `strip_prior_reasoning = true`. End users copy this file to
+  `~/.llmcode/model_profiles/glm-5.1.toml` to activate.
+- DeepSeek-R1 not opted in by default — recommended in the author
+  guide (`docs/engine/model_profile_author_guide.md`) for the same
+  separate-reasoning-channel pattern, but Adam can opt in after
+  observing GLM-5.1 metrics.
+
+### Anthropic provider unaffected
+
+The Anthropic provider (`api/anthropic_provider.py`) round-trips
+ThinkingBlocks via the structured `{"type": "thinking", ...}` format
+with signatures — that path is required for signed extended thinking
+to validate and is not touched by Mechanism B. Filter applies only to
+`openai_compat.py::_build_messages`.
+
+### Tests
+
+- 19 new tests in `tests/test_api/test_openai_compat_reasoning_filter.py`:
+  helper unit tests (5), filter flag-off path (2), filter flag-on
+  forward-compat scenarios (5), one-log-per-call aggregation (3),
+  GLM-5.1 TOML opt-in fixture verification (1). All scenarios pass
+  with both stock code and synthetic forward-compat injection.
+- Full suite: 7617 passed, 34 skipped (was 7598 in v2.4.0a1).
+- Grep guard (`tests/test_no_model_branch_in_core.py`) stays green.
+
+### Compatibility
+
+- Profiles with `strip_prior_reasoning = false` (every profile except
+  the opted-in GLM-5.1 example) produce byte-identical outbound
+  messages to v2.4.0a1.
+- Profiles with `reminder_after_each_call = false` AND
+  `strip_prior_reasoning = false` produce byte-identical outbound
+  messages to v2.3.2.
+
 ## v2.4.0a1 — v14 Mechanism A: post-tool reminder injection
 
 First alpha of v14's tool-result consumption compatibility layer (see

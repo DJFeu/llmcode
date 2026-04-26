@@ -98,3 +98,25 @@ variants = [
 # after each custom close.
 custom_close_tags = ["</arg_value>"]
 call_separator_chars = "\u2192 \t\r\n"
+
+# v14 — tool consumption compat layer. GLM-5.1 reproducibly fails the
+# call-tool → receive-result → consume-result pattern: the model
+# writes a denial in `content` ("I don't have internet access") even
+# after a successful tool round-trip. v14 introduces three runtime
+# mechanisms (see docs/superpowers/specs/2026-04-27-llm-code-v14-...)
+# to compensate for this class of model-level instruction-following
+# weakness. GLM-5.1 opts in to all three.
+[tool_consumption]
+# Mechanism A — post-tool <system-reminder> injection. Default ON
+# globally (set explicitly here for documentation clarity).
+reminder_after_each_call = true
+
+# Mechanism B — drop reasoning_content / reasoning fields from prior
+# assistant messages on the outbound request. GLM-5.1's reasoning
+# channel runs ahead of content; without this flag, a prior turn's
+# denial reasoning could bleed into the next turn's reasoning even
+# after a tool succeeded. Today's openai_compat path already filters
+# reasoning via the ThinkingBlock drop, so the flag is a forward-
+# compat guarantee — any future change that round-trips reasoning
+# back to GLM will still be filtered for this profile.
+strip_prior_reasoning = true
