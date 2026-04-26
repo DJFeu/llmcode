@@ -101,6 +101,19 @@ class AnthropicProvider(LLMProvider):
         from llm_code.runtime.model_profile import get_profile
         self._profile = get_profile(model_name)
 
+        # v15 M2 — proactive sliding-window rate limiter. Disabled by
+        # default (limit=0); profiles for free-tier endpoints opt in
+        # via ``proactive_rate_limit_per_minute > 0``.
+        from llm_code.api.rate_limiter import SlidingWindowLimiter
+        if self._profile.proactive_rate_limit_per_minute > 0:
+            self._limiter: SlidingWindowLimiter | None = SlidingWindowLimiter(
+                max_requests=self._profile.proactive_rate_limit_per_minute,
+                window_seconds=60.0,
+                concurrency=self._profile.proactive_rate_limit_concurrency or None,
+            )
+        else:
+            self._limiter = None
+
         self._client = httpx.AsyncClient(
             headers={
                 "x-api-key": api_key,
@@ -143,7 +156,15 @@ class AnthropicProvider(LLMProvider):
             if hit is not None:
                 return _synthesize_stream_events(hit.response)
         payload = self._build_payload(request, stream=True)
-        return _AnthropicLiveStreamIterator(self._client, self._base_url, payload, self._max_retries)
+        # v15 M2 — pass the limiter to the streaming iterator so each
+        # new stream connection takes a slot in the per-minute window.
+        # The limiter is held only during connection setup; once the
+        # SSE byte stream starts, the slot is released so other
+        # requests can proceed in parallel within the cap.
+        return _AnthropicLiveStreamIterator(
+            self._client, self._base_url, payload, self._max_retries,
+            limiter=self._limiter,
+        )
 
     def supports_native_tools(self) -> bool:
         return True
@@ -341,7 +362,7 @@ class AnthropicProvider(LLMProvider):
 
         while attempt <= self._max_retries:
             try:
-                response = await self._client.post(url, json=payload)
+                response = await self._post_with_proactive_limit(url, payload)
                 self._raise_for_status(response)
                 return response
             except ProviderOverloadError as exc:
@@ -397,7 +418,7 @@ class AnthropicProvider(LLMProvider):
         url = f"{self._base_url}/v1/messages"
 
         async def attempt() -> httpx.Response:
-            response = await self._client.post(url, json=payload)
+            response = await self._post_with_proactive_limit(url, payload)
             self._raise_for_status(response)
             return response
 
@@ -406,6 +427,18 @@ class AnthropicProvider(LLMProvider):
             self._rate_handler,
             taxonomy=provider_taxonomy_anthropic(),
         )
+
+    async def _post_with_proactive_limit(
+        self, url: str, payload: dict,
+    ) -> httpx.Response:
+        """Wrap the HTTP POST in the v15 M2 sliding-window limiter
+        when the profile opts in. Centralises the gate so both retry
+        paths share one implementation.
+        """
+        if self._limiter is not None:
+            async with self._limiter:
+                return await self._client.post(url, json=payload)
+        return await self._client.post(url, json=payload)
 
     def _raise_for_status(self, response: httpx.Response) -> None:
         if response.status_code == 200:
@@ -701,11 +734,16 @@ class _AnthropicLiveStreamIterator:
         base_url: str,
         payload: dict,
         max_retries: int,
+        *,
+        limiter: Any | None = None,
     ) -> None:
         self._client = client
         self._url = f"{base_url}/v1/messages"
         self._payload = payload
         self._max_retries = max_retries
+        # v15 M2 — optional sliding-window limiter; held during stream
+        # setup, released once the SSE byte stream begins.
+        self._limiter = limiter
         # SSE parser state
         self._block_types: dict[int, str] = {}
         self._block_ids: dict[int, str] = {}
@@ -725,13 +763,30 @@ class _AnthropicLiveStreamIterator:
         return self
 
     async def _ensure_stream(self) -> None:
-        """Open the streaming HTTP connection on first iteration."""
+        """Open the streaming HTTP connection on first iteration.
+
+        When a v15 M2 sliding-window limiter is wired in, it gates the
+        connection-setup call. The slot is released the moment we
+        finish opening the stream so subsequent requests can proceed
+        in parallel — the limiter caps *connection rate*, not byte
+        rate within an active stream.
+        """
         if self._response is not None:
             return
-        self._stream_ctx = self._client.stream(
-            "POST", self._url, json=self._payload,
-        )
-        self._response = await self._stream_ctx.__aenter__()
+        if self._limiter is not None:
+            await self._limiter.acquire()
+            try:
+                self._stream_ctx = self._client.stream(
+                    "POST", self._url, json=self._payload,
+                )
+                self._response = await self._stream_ctx.__aenter__()
+            finally:
+                self._limiter.release()
+        else:
+            self._stream_ctx = self._client.stream(
+                "POST", self._url, json=self._payload,
+            )
+            self._response = await self._stream_ctx.__aenter__()
         # Check for HTTP errors before consuming the stream
         status = self._response.status_code
         if status != 200:

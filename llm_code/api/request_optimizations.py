@@ -41,12 +41,10 @@ from __future__ import annotations
 import logging
 import re
 import shlex
-import uuid
 from dataclasses import dataclass
 from typing import AsyncIterator, Callable
 
 from llm_code.api.types import (
-    Message,
     MessageRequest,
     MessageResponse,
     StreamEvent,
@@ -55,7 +53,6 @@ from llm_code.api.types import (
     StreamTextDelta,
     TextBlock,
     TokenUsage,
-    ToolResultBlock,
 )
 
 _logger = logging.getLogger(__name__)

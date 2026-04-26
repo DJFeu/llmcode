@@ -1,4 +1,14 @@
-"""Shared rate-limit retry policy (C3 — Sprint 2).
+"""Shared rate-limit retry policy (C3 — Sprint 2) + proactive limiter (v15 M2).
+
+This module hosts two complementary primitives:
+
+1. :class:`RateLimitHandler` — *reactive* retry policy that classifies
+   429/529/connection/timeout/permanent errors and decides whether/how
+   to back off. Used by ``run_with_rate_limit``.
+2. :class:`SlidingWindowLimiter` — *proactive* sliding-window async
+   limiter (v15 M2). Avoids 429 round-trips on free-tier endpoints
+   with hard per-minute caps (e.g. NVIDIA NIM 40/min). Used as an
+   ``async with`` context wrapping the actual HTTP call.
 
 The existing provider code (``openai_compat.py`` / ``anthropic_provider.py``)
 owns its own ``_post_with_retry`` loop. This module factors out the
@@ -32,10 +42,14 @@ screen instead of going silent for minutes.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Awaitable, Callable, Sequence, TypeVar
+
+_logger = logging.getLogger(__name__)
 
 
 # ── Enumerations ──────────────────────────────────────────────────────
@@ -514,3 +528,157 @@ async def run_with_rate_limit(
             continue
         handler.record_success()
         return value
+
+
+# ── v15 M2: proactive sliding-window limiter ──────────────────────────
+
+
+class SlidingWindowLimiter:
+    """Async-safe N-per-window rate limiter (v15 M2).
+
+    Maintains a deque of acquisition timestamps. ``acquire()`` blocks
+    until the window has room — i.e. until the oldest timestamp falls
+    outside ``window_seconds``. Optional ``concurrency`` cap limits
+    simultaneous in-flight acquisitions independently of the per-window
+    gate.
+
+    Use as an async context manager::
+
+        limiter = SlidingWindowLimiter(max_requests=40, window_seconds=60)
+        async with limiter:
+            response = await client.post(url, json=payload)
+
+    A new timestamp is recorded on entry; on exit only the concurrency
+    semaphore (if any) is released — the window timestamps live on so
+    the rate cap holds across the whole lifetime of the limiter.
+
+    Architecture borrowed from
+    ``Alishahryar1/free-claude-code/core/rate_limit.py::StrictSlidingWindowLimiter``.
+    Re-implemented with our own field names + docstrings; the
+    deque-based algorithm is the structural borrow.
+
+    Two sources of contention:
+
+    * **Window full** — ``acquire`` computes the wait by subtracting
+      the oldest timestamp's age from the window length, releases the
+      lock, sleeps, and re-tries the loop. Holding the lock during the
+      sleep would serialise all waiters; releasing before sleep lets
+      multiple waiters share the wait time.
+    * **Concurrency cap** — a separate :class:`asyncio.Semaphore` taken
+      *before* the lock. The semaphore is released in ``__aexit__`` so
+      a panicked task still frees its slot. The window deque, by
+      contrast, only grows and rolls off naturally on age — there's
+      nothing to release on exit.
+    """
+
+    def __init__(
+        self,
+        max_requests: int,
+        window_seconds: float = 60.0,
+        *,
+        concurrency: int | None = None,
+    ) -> None:
+        if max_requests <= 0:
+            raise ValueError("max_requests must be > 0")
+        if window_seconds <= 0:
+            raise ValueError("window_seconds must be > 0")
+        self._max = int(max_requests)
+        self._window = float(window_seconds)
+        self._timestamps: deque[float] = deque()
+        self._lock = asyncio.Lock()
+        self._semaphore: asyncio.Semaphore | None = (
+            asyncio.Semaphore(concurrency) if concurrency else None
+        )
+        # Telemetry: number of times a caller had to await (wait > 0).
+        # Tests assert against this; callers can read it for metrics
+        # exposition.
+        self._wait_count: int = 0
+
+    @property
+    def wait_count(self) -> int:
+        """Number of acquisitions that had to await for the window."""
+        return self._wait_count
+
+    @property
+    def in_flight_capacity(self) -> int | None:
+        """Concurrency cap if configured, else None."""
+        if self._semaphore is None:
+            return None
+        # The asyncio.Semaphore exposes ``_value`` as a public-ish
+        # attribute in CPython; use the difference between the
+        # initial value and the current to derive in-flight count.
+        # Tests use this to verify the cap is honoured.
+        return self._semaphore._value  # type: ignore[attr-defined]
+
+    async def acquire(self) -> None:
+        """Block asynchronously until a slot in the current window opens.
+
+        Loops:
+
+        1. (Optional) acquire the concurrency semaphore. Released in
+           ``__aexit__`` whether the body succeeded or raised.
+        2. Take the lock and roll old timestamps out of the deque.
+        3. If the deque is below ``max``, append now-timestamp and
+           return.
+        4. Otherwise compute the wait until the oldest timestamp ages
+           out, release the lock, ``asyncio.sleep`` for that long, and
+           loop.
+
+        ``time.monotonic`` is used (not wall clock) so a system clock
+        adjustment doesn't corrupt the window.
+        """
+        if self._semaphore is not None:
+            await self._semaphore.acquire()
+
+        try:
+            while True:
+                wait_time = 0.0
+                async with self._lock:
+                    now = time.monotonic()
+                    cutoff = now - self._window
+                    while self._timestamps and self._timestamps[0] <= cutoff:
+                        self._timestamps.popleft()
+
+                    if len(self._timestamps) < self._max:
+                        self._timestamps.append(now)
+                        return
+
+                    oldest = self._timestamps[0]
+                    wait_time = max(0.0, (oldest + self._window) - now)
+
+                if wait_time > 0:
+                    self._wait_count += 1
+                    _logger.info(
+                        "rate_limiter: proactive_wait wait_seconds=%.2f "
+                        "max=%d window=%.1fs",
+                        wait_time, self._max, self._window,
+                    )
+                    await asyncio.sleep(wait_time)
+                else:
+                    # Yield to scheduler so other waiters get a turn.
+                    await asyncio.sleep(0)
+        except BaseException:
+            # If acquire fails (e.g. CancelledError) we must release
+            # the semaphore we took — otherwise the slot leaks.
+            if self._semaphore is not None:
+                self._semaphore.release()
+            raise
+
+    def release(self) -> None:
+        """Release the concurrency semaphore (if any).
+
+        Idempotent on the timestamp deque — the window is wall-clock-
+        based, not request-balance-based, so there's nothing to undo
+        there. Only the concurrency cap needs an explicit release.
+        """
+        if self._semaphore is not None:
+            self._semaphore.release()
+
+    async def __aenter__(self) -> "SlidingWindowLimiter":
+        await self.acquire()
+        return self
+
+    async def __aexit__(
+        self, exc_type: object, exc: object, tb: object,
+    ) -> None:
+        self.release()

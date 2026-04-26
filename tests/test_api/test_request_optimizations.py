@@ -433,7 +433,6 @@ class TestProviderIntegrationOpenAICompat:
     @pytest.mark.asyncio
     async def test_non_optimizable_request_hits_http(self) -> None:
         """A normal question routes through the real HTTP path."""
-        from llm_code.api.errors import ProviderConnectionError
 
         provider = OpenAICompatProvider(
             base_url="http://example.com",

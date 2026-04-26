@@ -190,6 +190,23 @@ class OpenAICompatProvider(LLMProvider):
         from llm_code.runtime.model_profile import get_profile
         self._profile = get_profile(model_name)
 
+        # v15 M2 — proactive sliding-window rate limiter. Profile opts
+        # in via ``proactive_rate_limit_per_minute > 0`` (default 0
+        # disables the gate, preserving current behaviour). Optional
+        # concurrency cap via ``proactive_rate_limit_concurrency``
+        # serialises in-flight requests independently of the rate
+        # window — useful when a free-tier endpoint also caps parallel
+        # streams.
+        from llm_code.api.rate_limiter import SlidingWindowLimiter
+        if self._profile.proactive_rate_limit_per_minute > 0:
+            self._limiter: SlidingWindowLimiter | None = SlidingWindowLimiter(
+                max_requests=self._profile.proactive_rate_limit_per_minute,
+                window_seconds=60.0,
+                concurrency=self._profile.proactive_rate_limit_concurrency or None,
+            )
+        else:
+            self._limiter = None
+
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
@@ -394,7 +411,7 @@ class OpenAICompatProvider(LLMProvider):
 
         while attempt <= self._max_retries:
             try:
-                response = await self._client.post(url, json=payload)
+                response = await self._post_with_proactive_limit(url, payload)
                 self._raise_for_status(response)
                 return response
             except ProviderOverloadError as exc:
@@ -466,7 +483,7 @@ class OpenAICompatProvider(LLMProvider):
         url = f"{self._base_url}/chat/completions"
 
         async def attempt() -> httpx.Response:
-            response = await self._client.post(url, json=payload)
+            response = await self._post_with_proactive_limit(url, payload)
             self._raise_for_status(response)
             return response
 
@@ -475,6 +492,23 @@ class OpenAICompatProvider(LLMProvider):
             self._rate_handler,
             taxonomy=provider_taxonomy_openai_compat(),
         )
+
+    async def _post_with_proactive_limit(
+        self, url: str, payload: dict,
+    ) -> httpx.Response:
+        """Wrap the actual HTTP POST in the proactive sliding-window
+        limiter (v15 M2) when the profile opts in.
+
+        Centralises the gate so both the legacy retry loop and the
+        shared ``_post_via_rate_handler`` path see identical
+        proactive-throttle behaviour. Profiles without
+        ``proactive_rate_limit_per_minute > 0`` go straight to the
+        post — zero overhead.
+        """
+        if self._limiter is not None:
+            async with self._limiter:
+                return await self._client.post(url, json=payload)
+        return await self._client.post(url, json=payload)
 
     def _raise_for_status(self, response: httpx.Response) -> None:
         if response.status_code == 200:

@@ -1,5 +1,78 @@
 # Changelog
 
+## v2.5.0a2 — v15 M2 proactive rate limiter
+
+Second alpha of the v15 borrow-audit adoption. Adds Mechanism M2:
+proactive sliding-window rate limiter on the provider HTTP layer.
+See `docs/superpowers/specs/2026-04-27-llm-code-v15-borrow-from-free-claude-code-design.md`
+§3.2.
+
+### Mechanism M2 — Proactive sliding-window rate limit
+
+`SlidingWindowLimiter` class (`llm_code/api/rate_limiter.py`) caps
+the rate of HTTP POSTs to a provider to N per window (default
+60s). Implemented as an async context manager backed by a
+deque-of-timestamps. Optional concurrency cap limits in-flight
+calls independently of the rate window.
+
+Algorithm: on `acquire`, drop expired timestamps, append now if
+under cap, else compute the wait until the oldest rolls off and
+`asyncio.sleep`. The lock is released across the sleep so multiple
+waiters share the wait time.
+
+### Wire-up
+
+Both providers gate `client.post` (and the Anthropic streaming
+connection setup) through a `_post_with_proactive_limit` helper.
+The limiter is held only while the connection is being established;
+once SSE bytes start flowing, the slot is released so subsequent
+requests can proceed in parallel within the cap.
+
+### Profile schema
+
+Two new flat fields (declared in M1, wired in M2):
+
+```toml
+[provider]
+proactive_rate_limit_per_minute = 40    # 0 = disabled (default)
+proactive_rate_limit_concurrency = 4    # 0 = no concurrency cap
+```
+
+Profiles without these keys keep their current behaviour — the
+limiter is `None` and the HTTP path is unchanged.
+
+### Telemetry
+
+`SlidingWindowLimiter.wait_count` exposes the number of awaited
+acquires (number of times the window was full when a call arrived).
+`INFO rate_limiter: proactive_wait wait_seconds=N.NN max=M
+window=Ws` log fires per wait.
+
+### Tests
+
+18 new tests in `tests/test_api/test_sliding_window_limiter.py`:
+
+* Constructor validation (4).
+* Within-window no-wait (1).
+* Window full → wait (1) + window rolloff allows new calls (1).
+* Concurrency cap (2).
+* Combined gates (1).
+* Telemetry counter (1).
+* Re-entry / cancellation (2).
+* Provider integration (4) — both providers, both off+on states.
+* End-to-end timing — 11 POSTs at 10/0.4s window forces ≥ 0.35s
+  wall-clock for the 11th call (1).
+
+Suite: 7758 → 7776 passed (+18).
+
+### Sequel
+
+v2.5.0a3 lands M3 (cross-provider conversion layer extraction with
+parity gate); M4 (control-token stripping) and M5 (inline WebFetch
+parser variant) fold into v2.5.0 GA.
+
+---
+
 ## v2.5.0a1 — v15 M1 request optimizations
 
 First alpha of the v15 borrow-audit adoption (5 features ported from
