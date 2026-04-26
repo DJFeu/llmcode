@@ -204,11 +204,32 @@ class OpenAICompatProvider(LLMProvider):
     # ------------------------------------------------------------------
 
     async def send_message(self, request: MessageRequest) -> MessageResponse:
+        # v15 M1 — short-circuit trivial calls (quota probe, title
+        # generation, prefix detection, suggestion mode, filepath
+        # extraction) with a synthetic response. Saves an HTTP
+        # round-trip + 50-500 tokens for patterns whose answer is
+        # deterministic.
+        if self._profile.enable_request_optimizations:
+            from llm_code.api.request_optimizations import try_optimize
+            hit = try_optimize(request)
+            if hit is not None:
+                return hit.response
         payload = self._build_payload(request, stream=False)
         response = await self._post_with_retry(payload)
         return self._parse_response(response)
 
     async def stream_message(self, request: MessageRequest) -> AsyncIterator[StreamEvent]:
+        # v15 M1 — same short-circuit on the streaming path. Synthesise
+        # a one-shot StreamMessageStart → text deltas → StreamMessageStop
+        # sequence so downstream renderers see a normal stream shape.
+        if self._profile.enable_request_optimizations:
+            from llm_code.api.request_optimizations import (
+                _synthesize_stream_events,
+                try_optimize,
+            )
+            hit = try_optimize(request)
+            if hit is not None:
+                return _synthesize_stream_events(hit.response)
         payload = self._build_payload(request, stream=True)
         response = await self._post_with_retry(payload)
         return self._iter_stream_events(response.text)

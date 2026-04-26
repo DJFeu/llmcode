@@ -1,5 +1,74 @@
 # Changelog
 
+## v2.5.0a1 — v15 M1 request optimizations
+
+First alpha of the v15 borrow-audit adoption (5 features ported from
+`Alishahryar1/free-claude-code`, the Claude Code → any-LLM proxy).
+This alpha lands Mechanism M1: trivial-call interception. See
+`docs/superpowers/specs/2026-04-27-llm-code-v15-borrow-from-free-claude-code-design.md`
+§3.1 for the full design.
+
+### Mechanism M1 — Request optimizations (trivial-call interception)
+
+Five detector predicates run before any HTTP call. When one matches,
+a synthetic `MessageResponse` short-circuits the request — saving an
+HTTP round-trip and ~50–500 tokens per hit.
+
+| Detector | Trigger pattern | Synthetic body |
+|---|---|---|
+| `quota_mock` | `max_tokens=1` AND `"quota"` substring in single user message | `"Quota check passed."` |
+| `prefix_detection` | `<policy_spec>` + `Command:` in single user message | shell prefix extracted via `shlex` (handles two-word commands like `git commit`, env-var prefixes; refuses backticks / `$(...)` injection) |
+| `title_skip` | system prompt asks for "sentence-case title" OR (`return json` + `field` + `coding session`/`this session`) | `"Conversation"` |
+| `suggestion_skip` | `[SUGGESTION MODE:` substring in any user message | empty content |
+| `filepath_mock` | single user message + `Command:` + `Output:` + `filepaths` keyword (or `extract any file paths` in system prompt) | `<filepaths>...</filepaths>` block parsed locally from output |
+
+Module: `llm_code/api/request_optimizations.py` (~430 LOC).
+
+### Toggle
+
+`profile.enable_request_optimizations: bool = True` — on by default
+across every profile. Profiles that want every call to hit the model
+(testing, baseline benchmarks) opt out:
+
+```toml
+[runtime]
+enable_request_optimizations = false
+```
+
+### Wire-up
+
+Both providers (`anthropic_provider.py`, `openai_compat.py`) call
+`try_optimize` first in `send_message` and `stream_message`. On hit:
+
+* `send_message` returns the synthetic `MessageResponse` directly.
+* `stream_message` returns a one-shot `AsyncIterator[StreamEvent]`
+  (`StreamMessageStart` → text deltas → `StreamMessageStop`) via the
+  new `_synthesize_stream_events` helper. Downstream renderers see a
+  normal stream shape.
+
+### Tests
+
+36 new tests in `tests/test_api/test_request_optimizations.py`:
+
+* Per-detector positive (5) + negative (5) cases.
+* Co-occurring signals — first matching detector wins (registry order
+  asserted explicitly).
+* `_synthesize_stream_events` event sequence (3 cases).
+* Provider integration — optimizable request triggers 0 HTTP calls;
+  non-optimizable triggers 1; profile flag OFF disables interception
+  for both providers.
+
+Suite: 7722 → 7758 passed (+36).
+
+### Sequel
+
+v2.5.0a2 wires Mechanism M2 (proactive sliding-window rate limiter)
+through the same profile schema; M3 (cross-provider conversion
+layer), M4 (control-token stripping), M5 (inline `WebFetch` parser
+variant) follow before v2.5.0 GA.
+
+---
+
 ## v2.4.0 — Tool-result consumption compat layer GA
 
 GA of the v14 tool-result consumption compatibility layer (see

@@ -94,6 +94,13 @@ class AnthropicProvider(LLMProvider):
         # legacy path below.
         self._rate_handler = rate_handler
 
+        # v15 — resolve the model profile so request optimizations
+        # (M1) and the proactive sliding-window rate limiter (M2) can
+        # consult per-profile flags. The OpenAI-compat provider has
+        # always done this; the Anthropic side gains it in v15.
+        from llm_code.runtime.model_profile import get_profile
+        self._profile = get_profile(model_name)
+
         self._client = httpx.AsyncClient(
             headers={
                 "x-api-key": api_key,
@@ -109,11 +116,32 @@ class AnthropicProvider(LLMProvider):
     # ------------------------------------------------------------------
 
     async def send_message(self, request: MessageRequest) -> MessageResponse:
+        # v15 M1 — short-circuit trivial calls (quota probe, title
+        # generation, prefix detection, etc.) with a synthetic
+        # response. Saves an HTTP round-trip + 50-500 tokens for
+        # patterns whose answer is deterministic.
+        if self._profile.enable_request_optimizations:
+            from llm_code.api.request_optimizations import try_optimize
+            hit = try_optimize(request)
+            if hit is not None:
+                return hit.response
         payload = self._build_payload(request, stream=False)
         response = await self._post_with_retry(payload)
         return self._parse_response(response)
 
     async def stream_message(self, request: MessageRequest) -> AsyncIterator[StreamEvent]:
+        # v15 M1 — same short-circuit on the streaming path. Wraps the
+        # synthetic response in a one-shot async iterator so callers
+        # see the standard StreamMessageStart → text deltas →
+        # StreamMessageStop sequence.
+        if self._profile.enable_request_optimizations:
+            from llm_code.api.request_optimizations import (
+                _synthesize_stream_events,
+                try_optimize,
+            )
+            hit = try_optimize(request)
+            if hit is not None:
+                return _synthesize_stream_events(hit.response)
         payload = self._build_payload(request, stream=True)
         return _AnthropicLiveStreamIterator(self._client, self._base_url, payload, self._max_retries)
 

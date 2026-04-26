@@ -144,6 +144,39 @@ class ModelProfile:
     strip_prior_reasoning: bool = False
     retry_on_denial: bool = False
 
+    # ── v15 — borrow from free-claude-code ───────────────────────────
+    # Three optional capability flags ported from
+    # ``Alishahryar1/free-claude-code`` (the Claude Code → any-LLM proxy
+    # at ``/Users/adamhong/Work/qwen/reference/free-claude-code``):
+    #
+    # * **Request optimizations** — intercept five trivial-call patterns
+    #   (quota probe, prefix detection, title generation, suggestion
+    #   mode, filepath extraction) at the provider entry point and
+    #   short-circuit with a synthetic response. Saves quota + latency
+    #   on Claude-Code-style traffic where these patterns recur. On by
+    #   default; profiles that want every call to hit the model (e.g.
+    #   testing) opt out.
+    # * **Proactive rate limiter** — sliding-window async limiter on
+    #   the provider HTTP layer. Avoids 429 round-trips on free-tier
+    #   endpoints with hard per-minute caps (e.g. NVIDIA NIM 40/min).
+    #   Disabled when ``proactive_rate_limit_per_minute == 0``
+    #   (default — preserves current behaviour for unconfigured
+    #   profiles). Optional ``proactive_rate_limit_concurrency`` caps
+    #   simultaneous in-flight calls independently of the per-minute
+    #   gate.
+    #
+    # TOML authoring (matches the existing flat-section convention):
+    #
+    #     [runtime]
+    #     enable_request_optimizations = true
+    #
+    #     [provider]
+    #     proactive_rate_limit_per_minute = 40
+    #     proactive_rate_limit_concurrency = 4
+    enable_request_optimizations: bool = True
+    proactive_rate_limit_per_minute: int = 0
+    proactive_rate_limit_concurrency: int = 0
+
 
 # ── Built-in profiles ─────────────────────────────────────────────────
 
@@ -535,6 +568,11 @@ def _profile_from_dict(data: dict[str, Any], base: ModelProfile | None = None) -
     valid_fields = {f.name for f in fields(ModelProfile)}
     # Flatten nested sections (e.g. [provider] type → provider_type)
     flat: dict[str, Any] = {}
+    # Section map: TOML section name → either a single flat field name
+    # (string) or a tuple of flat field names. The ``[provider]`` entry
+    # is special — its bare ``type`` key maps to ``provider_type`` for
+    # backward compatibility, and additional v15 keys (proactive rate
+    # limit) are recognised in the same section.
     section_map = {
         "provider": "provider_type",
         "streaming": ("implicit_thinking", "reasoning_field"),
@@ -554,6 +592,8 @@ def _profile_from_dict(data: dict[str, Any], base: ModelProfile | None = None) -
             "strip_prior_reasoning",
             "retry_on_denial",
         ),
+        # v15 — borrow from free-claude-code.
+        "runtime": ("enable_request_optimizations",),
     }
     for key, value in data.items():
         if isinstance(value, dict):
@@ -565,7 +605,10 @@ def _profile_from_dict(data: dict[str, Any], base: ModelProfile | None = None) -
                     if subkey in valid_fields:
                         flat[subkey] = subval
             elif isinstance(mapping, str):
-                # Single-field section (e.g. [provider] type → provider_type)
+                # Single-field section (e.g. [provider] type → provider_type).
+                # The ``[provider]`` section also accepts named keys
+                # (e.g. ``proactive_rate_limit_per_minute``) which map
+                # directly onto flat fields.
                 if "type" in value:
                     flat[mapping] = value["type"]
                 for subkey, subval in value.items():
