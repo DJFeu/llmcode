@@ -1,5 +1,190 @@
 # Changelog
 
+## v2.5.0 — Borrow audit adoption GA (M1–M5)
+
+GA of the v15 borrow-audit adoption: five mechanisms ported / adapted
+from `Alishahryar1/free-claude-code` (the Claude Code → any-LLM proxy
+at `/Users/adamhong/Work/qwen/reference/free-claude-code`). Each
+mechanism preserves llmcode's standalone-CLI identity — none of them
+turns the runtime into a Claude Code proxy.
+
+This release consolidates v2.5.0a1 (M1), v2.5.0a2 (M2), v2.5.0a3
+(M3), and adds Mechanisms M4 (control-token stripping) + M5 (inline
+WebFetch / WebSearch parser variant).
+
+See `docs/superpowers/specs/2026-04-27-llm-code-v15-borrow-from-free-claude-code-design.md`
+for the full design.
+
+### Mechanism M1 — Request optimizations (a1)
+
+Five detectors at the provider entry point intercept patterns whose
+answer is deterministic and short-circuit with a synthetic response:
+
+| Detector | Trigger | Synthetic body |
+|---|---|---|
+| `quota_mock` | `max_tokens=1` + `quota` substring | `Quota check passed.` |
+| `prefix_detection` | `<policy_spec>` + `Command:` | shlex-derived prefix |
+| `title_skip` | system asks for sentence-case title | `Conversation` |
+| `suggestion_skip` | `[SUGGESTION MODE:` | empty |
+| `filepath_mock` | `Command:` + `Output:` + `filepaths` | `<filepaths>...</filepaths>` |
+
+Profile-gated via `enable_request_optimizations: bool = True`
+(default ON). Both `send_message` and `stream_message` are wired —
+the streaming path wraps the synthetic response in a one-shot event
+sequence so downstream renderers see a normal stream.
+
+Module: `llm_code/api/request_optimizations.py`. Reference:
+`/Users/adamhong/Work/qwen/reference/free-claude-code/api/optimization_handlers.py`.
+
+### Mechanism M2 — Proactive sliding-window rate limiter (a2)
+
+`SlidingWindowLimiter` in `llm_code/api/rate_limiter.py` caps the
+rate of HTTP POSTs to a provider to N per window (default 60s).
+Implemented as an async context manager backed by a deque of
+timestamps. Optional concurrency cap limits in-flight calls
+independently of the rate window. Both providers gate
+`client.post` (and the Anthropic streaming connection setup)
+through a `_post_with_proactive_limit` helper.
+
+Profile schema:
+
+```toml
+[provider]
+proactive_rate_limit_per_minute = 40    # 0 = disabled (default)
+proactive_rate_limit_concurrency = 4    # 0 = no concurrency cap
+```
+
+Reference: `/Users/adamhong/Work/qwen/reference/free-claude-code/core/rate_limit.py::StrictSlidingWindowLimiter`.
+
+### Mechanism M3 — Conversion-layer extraction (a3)
+
+New module `llm_code/api/conversion.py` is the single source of
+truth for cross-provider message conversion. Both providers shrink
+to thin `_convert_message` shims; the legacy ~120-line per-block
+conversion in each provider is gone.
+
+Public surface:
+
+- `serialize_messages(messages, ctx, *, system=None) -> list[dict]`
+- `serialize_tool_result(content) -> str` — stable JSON for any
+  payload (None, str, dict, list)
+- `deferred_post_tool_blocks(blocks)` — OpenAI-compat reorder helper
+- `ConversionContext(target_shape, reasoning_replay,
+  strip_prior_reasoning)` — frozen dataclass
+- `ReasoningReplayMode` enum — DISABLED / THINK_TAGS /
+  REASONING_CONTENT / NATIVE_THINKING
+
+Byte-parity gate
+(`tests/test_api/parity/test_provider_conversion_parity_v15.py`)
+asserts that all 49 corpus scenarios produce identical output
+across both target shapes — 98 byte-equality assertions all green.
+Any drift fails CI.
+
+Reference: `/Users/adamhong/Work/qwen/reference/free-claude-code/core/anthropic/conversion.py`.
+
+### Mechanism M4 — Control-token stripping (GA)
+
+Some models (Qwen, Llama, GLM under certain chat templates)
+occasionally emit raw control tokens (`<|im_end|>`,
+`<|endoftext|>`, `<|start_header_id|>`, `<|eot_id|>`,
+`<|file_separator|>`) into their content stream. M4 adds a
+`_CONTROL_TOKEN_RE` regex to `llm_code/view/stream_parser.py` and
+strips matches on every text-emission site (`_step` and `flush`).
+
+Pattern: `<\|[^|>\s]{1,80}\|>` — bounded by an 80-char cap to
+prevent catastrophic backtracking; whitespace excluded so
+`<| not_a_token |>` shapes don't match.
+
+Tool-call XML wrappers are unaffected (`<tool_call>...</tool_call>`
+doesn't match the regex). User input bypass is by architecture —
+the parser only sees model output, never user-typed text.
+
+Reference: `/Users/adamhong/Work/qwen/reference/free-claude-code/core/anthropic/tools.py::_CONTROL_TOKEN_RE`.
+
+### Mechanism M5 — Inline WebFetch / WebSearch parser variant (GA)
+
+Models trained on Claude-Code transcripts occasionally emit:
+
+```
+WebFetch{"url": "https://example.com", "prompt": "..."}
+WebSearch{"query": "x"}
+web_fetch{"url": "..."}
+```
+
+…as plain text inside an assistant message — no `<tool_call>`
+wrapper, no XML tag. The 6 v13 parser variants don't catch this
+exact shape. M5 adds `webfetch_inline` as the 7th variant,
+appended to `DEFAULT_VARIANT_ORDER` after `bare_name_tag` (lowest
+priority — only fires when no earlier wrapper-based variant
+matched).
+
+Match regex:
+
+```
+\b(WebFetch|WebSearch|web_fetch|web_search)\s*(\{(?:[^{}]|\{[^{}]*\})*\})
+```
+
+Registry-gated via `known_tool_names`: only fires when the matched
+name (after PascalCase → snake_case normalisation) is in the
+registry for the current turn. Production guard against
+false-positive matches on code blocks containing literal
+`WebFetch{…}` text. Edge case: if the user registers a literal
+PascalCase name (`WebFetch`), it's honoured verbatim.
+
+Reference: `/Users/adamhong/Work/qwen/reference/free-claude-code/core/anthropic/tools.py::_WEB_TOOL_JSON_PATTERN`.
+
+### Profile schema (v15 additions)
+
+Three new flat fields on `ModelProfile` (per v13/v14 convention):
+
+```python
+enable_request_optimizations: bool = True       # M1
+proactive_rate_limit_per_minute: int = 0        # M2
+proactive_rate_limit_concurrency: int = 0       # M2
+```
+
+TOML section_map extended:
+- `[runtime]` → `enable_request_optimizations`
+- `[provider]` → also recognises the two M2 keys
+
+### Tests
+
+- M1: 36 tests (`tests/test_api/test_request_optimizations.py`)
+- M2: 18 tests (`tests/test_api/test_sliding_window_limiter.py`)
+- M3: 31 unit tests (`tests/test_api/test_conversion.py`) +
+  98 parity tests
+  (`tests/test_api/parity/test_provider_conversion_parity_v15.py`)
+- M4: 21 tests
+  (`tests/test_streaming/test_control_token_stripping.py`)
+- M5: 22 tests
+  (`tests/test_tools/test_parser_variant_webfetch_inline.py`)
+- Modified: 2 existing tests in
+  `tests/test_tools/test_parser_variant_registry.py` (variant
+  count from 6 → 7).
+
+Suite: 7722 baseline → 7949 passed (+227 tests overall, all green).
+Grep guard (`tests/test_no_model_branch_in_core.py`) green.
+
+### Acceptance criteria met
+
+- [x] v13 grep guard green
+- [x] v14 byte-parity (no fixtures exist post-Phase C; reasoning
+      filter / outbound thinking suite green proves M3 didn't
+      regress v14 behaviour)
+- [x] M3 parity gate green — 49/49 scenarios × 2 providers = 98
+      byte-equality assertions all pass
+- [x] All 5 mechanisms have unit + integration coverage
+- [x] CHANGELOG entry consolidating M1–M5 (this section)
+
+Manual smoke recommended before tagging:
+- GLM-5.1: `顯示今日熱門新聞三則` should still produce 3 headlines
+  + URLs (regression check after M3 conversion-layer refactor).
+- NVIDIA NIM (or any free-tier endpoint with hard 40 req/min cap):
+  fire 50 burst calls with `proactive_rate_limit_per_minute = 40`,
+  expect 0× 429 responses (vs ~10× without M2).
+
+---
+
 ## v2.5.0a3 — v15 M3 conversion-layer extraction
 
 Third alpha of the v15 borrow-audit adoption. Extracts cross-provider
