@@ -493,3 +493,151 @@ class TestSplitBundledToolResults:
         # Anthropic-shaped tool_result blocks live in the content list.
         block_types = [b.get("type") for b in out[0]["content"]]
         assert block_types == ["tool_result", "tool_result"]
+
+
+class TestAssistantToolUseBlockOpenAI:
+    """v2.5.2 — Assistant messages with ToolUseBlock must serialize to
+    OpenAI ``tool_calls`` array. Pre-v2.5.2 the parts-array branch
+    silently dropped these blocks, leaving outbound assistant messages
+    with no ``tool_calls`` field — a server-side mismatch with the
+    role:tool messages that follow."""
+
+    def test_single_tool_use_block_emits_tool_calls(self) -> None:
+        from llm_code.api.conversion import (
+            ConversionContext, ReasoningReplayMode, serialize_messages,
+        )
+
+        msg = Message(
+            role="assistant",
+            content=(
+                ToolUseBlock(id="call_a", name="web_search", input={"query": "x"}),
+            ),
+        )
+        ctx = ConversionContext(
+            target_shape="openai",
+            reasoning_replay=ReasoningReplayMode.DISABLED,
+            strip_prior_reasoning=False,
+        )
+        out = serialize_messages((msg,), ctx)
+
+        assert len(out) == 1
+        assert out[0]["role"] == "assistant"
+        assert out[0]["content"] is None
+        assert out[0]["tool_calls"] == [{
+            "id": "call_a",
+            "type": "function",
+            "function": {"name": "web_search", "arguments": '{"query": "x"}'},
+        }]
+
+    def test_multiple_tool_use_blocks_emit_tool_calls_array(self) -> None:
+        from llm_code.api.conversion import (
+            ConversionContext, ReasoningReplayMode, serialize_messages,
+        )
+
+        msg = Message(
+            role="assistant",
+            content=(
+                ToolUseBlock(id="call_a", name="web_search", input={"q": "a"}),
+                ToolUseBlock(id="call_b", name="web_search", input={"q": "b"}),
+            ),
+        )
+        ctx = ConversionContext(
+            target_shape="openai",
+            reasoning_replay=ReasoningReplayMode.DISABLED,
+            strip_prior_reasoning=False,
+        )
+        out = serialize_messages((msg,), ctx)
+
+        assert len(out) == 1
+        assert out[0]["role"] == "assistant"
+        assert len(out[0]["tool_calls"]) == 2
+        assert [tc["id"] for tc in out[0]["tool_calls"]] == ["call_a", "call_b"]
+
+    def test_text_plus_tool_use_emits_content_and_tool_calls(self) -> None:
+        from llm_code.api.conversion import (
+            ConversionContext, ReasoningReplayMode, serialize_messages,
+        )
+
+        msg = Message(
+            role="assistant",
+            content=(
+                TextBlock(text="Let me search."),
+                ToolUseBlock(id="call_a", name="web_search", input={"q": "x"}),
+            ),
+        )
+        ctx = ConversionContext(
+            target_shape="openai",
+            reasoning_replay=ReasoningReplayMode.DISABLED,
+            strip_prior_reasoning=False,
+        )
+        out = serialize_messages((msg,), ctx)
+
+        assert out[0]["content"] == "Let me search."
+        assert len(out[0]["tool_calls"]) == 1
+
+    def test_thinking_block_dropped_silently(self) -> None:
+        from llm_code.api.conversion import (
+            ConversionContext, ReasoningReplayMode, serialize_messages,
+        )
+
+        msg = Message(
+            role="assistant",
+            content=(
+                ThinkingBlock(content="reasoning"),
+                ToolUseBlock(id="call_a", name="x", input={}),
+            ),
+        )
+        ctx = ConversionContext(
+            target_shape="openai",
+            reasoning_replay=ReasoningReplayMode.DISABLED,
+            strip_prior_reasoning=False,
+        )
+        out = serialize_messages((msg,), ctx)
+
+        assert "thinking" not in (out[0].get("content") or "")
+        assert len(out[0]["tool_calls"]) == 1
+
+    def test_full_round_trip_assistant_then_tool_results(self) -> None:
+        """End-to-end: assistant emits 2 tool_calls, then bundled
+        ToolResultBlocks split into matching role:tool messages.
+        Verifies the wire is OpenAI-spec consistent (every tool_call_id
+        on a role:tool entry corresponds to an id in the prior
+        assistant's tool_calls array)."""
+        from llm_code.api.conversion import (
+            ConversionContext, ReasoningReplayMode, serialize_messages,
+        )
+
+        messages = (
+            Message(role="user", content=(TextBlock(text="search news"),)),
+            Message(
+                role="assistant",
+                content=(
+                    ToolUseBlock(id="call_a", name="web_search", input={"q": "a"}),
+                    ToolUseBlock(id="call_b", name="web_search", input={"q": "b"}),
+                ),
+            ),
+            Message(
+                role="user",
+                content=(
+                    ToolResultBlock(tool_use_id="call_a", content="result A"),
+                    ToolResultBlock(tool_use_id="call_b", content="result B"),
+                ),
+            ),
+        )
+        ctx = ConversionContext(
+            target_shape="openai",
+            reasoning_replay=ReasoningReplayMode.DISABLED,
+            strip_prior_reasoning=False,
+        )
+        out = serialize_messages(messages, ctx)
+
+        # 1 user + 1 assistant + 2 split tool result messages = 4
+        assert len(out) == 4
+        assert out[0]["role"] == "user"
+        assert out[1]["role"] == "assistant"
+        assistant_ids = {tc["id"] for tc in out[1]["tool_calls"]}
+        assert assistant_ids == {"call_a", "call_b"}
+        # Every role:tool entry must reference an id in the prior
+        # assistant's tool_calls.
+        tool_msg_ids = {m["tool_call_id"] for m in out[2:]}
+        assert tool_msg_ids == assistant_ids

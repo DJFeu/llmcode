@@ -312,6 +312,45 @@ def _openai_convert_message(msg: Message) -> dict[str, Any]:
             "content": block.content,
         }
 
+    # v2.5.2 — Assistant messages carrying ToolUseBlocks must serialize
+    # to OpenAI's ``tool_calls`` array, not the parts-array branch
+    # (which has no place for ToolUseBlocks and drops them silently).
+    # Without this, a native-tool-calling model's prior turn loses its
+    # caller IDs on the next request, breaking the assistant↔tool
+    # pairing that role:tool messages depend on. Codex stop-time
+    # review caught this gap in v2.5.1; the user-side
+    # _split_bundled_tool_results fix surfaced it by making the
+    # downstream role:tool messages no longer get silently dropped.
+    if msg.role == "assistant" and any(
+        isinstance(b, ToolUseBlock) for b in msg.content
+    ):
+        tool_calls_arr: list[dict[str, Any]] = []
+        text_parts: list[str] = []
+        thinking_dropped = 0
+        for block in msg.content:
+            if isinstance(block, ToolUseBlock):
+                tool_calls_arr.append({
+                    "id": block.id,
+                    "type": "function",
+                    "function": {
+                        "name": block.name,
+                        "arguments": json.dumps(block.input or {}),
+                    },
+                })
+            elif isinstance(block, TextBlock):
+                text_parts.append(block.text)
+            elif isinstance(block, ThinkingBlock):
+                thinking_dropped += 1
+        if thinking_dropped:
+            _warn_thinking_dropped_once(thinking_dropped)
+        out: dict[str, Any] = {"role": "assistant"}
+        # OpenAI spec: content may be string or null when tool_calls
+        # are present. Use null only when no text was emitted, so
+        # downstream renderers don't see an empty string.
+        out["content"] = "".join(text_parts) if text_parts else None
+        out["tool_calls"] = tool_calls_arr
+        return out
+
     has_image = any(isinstance(b, ImageBlock) for b in msg.content)
     has_multiple = len(msg.content) > 1
 

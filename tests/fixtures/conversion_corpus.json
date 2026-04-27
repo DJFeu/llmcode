@@ -556,7 +556,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "type": "function",
+            "function": {
+              "name": "web_search",
+              "arguments": "{\"query\": \"x\"}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -719,7 +729,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "a",
+            "type": "function",
+            "function": {
+              "name": "read_file",
+              "arguments": "{\"path\": \"x\"}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -728,7 +748,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "b",
+            "type": "function",
+            "function": {
+              "name": "write_file",
+              "arguments": "{\"path\": \"y\", \"text\": \"z\"}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -825,7 +855,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "c",
+            "type": "function",
+            "function": {
+              "name": "bash",
+              "arguments": "{\"command\": \"x\"}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -944,7 +984,25 @@
       },
       {
         "role": "assistant",
-        "content": []
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "t1",
+            "type": "function",
+            "function": {
+              "name": "read_file",
+              "arguments": "{\"path\": \"a\"}"
+            }
+          },
+          {
+            "id": "t2",
+            "type": "function",
+            "function": {
+              "name": "read_file",
+              "arguments": "{\"path\": \"b\"}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -1124,7 +1182,17 @@
       },
       {
         "role": "assistant",
-        "content": []
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "th1",
+            "type": "function",
+            "function": {
+              "name": "web_search",
+              "arguments": "{\"query\": \"x\"}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -1425,7 +1493,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "ls1",
+            "type": "function",
+            "function": {
+              "name": "list_files",
+              "arguments": "{\"path\": \"/tmp\"}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -1777,7 +1855,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "now1",
+            "type": "function",
+            "function": {
+              "name": "current_time",
+              "arguments": "{}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -1897,7 +1985,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "cfg1",
+            "type": "function",
+            "function": {
+              "name": "configure",
+              "arguments": "{\"settings\": {\"key\": \"value\", \"nested\": {\"a\": 1, \"b\": [1, 2, 3]}}, \"flags\": [\"x\", \"y\"]}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -2071,7 +2169,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "p1",
+            "type": "function",
+            "function": {
+              "name": "f",
+              "arguments": "{}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -2080,7 +2188,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "p2",
+            "type": "function",
+            "function": {
+              "name": "f",
+              "arguments": "{}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -2089,7 +2207,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "p3",
+            "type": "function",
+            "function": {
+              "name": "f",
+              "arguments": "{}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -2177,7 +2305,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "e1",
+            "type": "function",
+            "function": {
+              "name": "f",
+              "arguments": "{}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -2576,7 +2714,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "u1",
+            "type": "function",
+            "function": {
+              "name": "search",
+              "arguments": "{\"q\": \"\\u65b0\\u805e\"}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -2668,7 +2816,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "sc1",
+            "type": "function",
+            "function": {
+              "name": "bash",
+              "arguments": "{\"command\": \"echo \\\"hello\\\\nworld\\\"\"}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -3038,7 +3196,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "ar1",
+            "type": "function",
+            "function": {
+              "name": "f",
+              "arguments": "{}"
+            }
+          }
+        ]
       },
       {
         "role": "user",
@@ -3188,7 +3356,33 @@
       },
       {
         "role": "assistant",
-        "content": []
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "px1",
+            "type": "function",
+            "function": {
+              "name": "read_file",
+              "arguments": "{\"p\": \"1\"}"
+            }
+          },
+          {
+            "id": "px2",
+            "type": "function",
+            "function": {
+              "name": "read_file",
+              "arguments": "{\"p\": \"2\"}"
+            }
+          },
+          {
+            "id": "px3",
+            "type": "function",
+            "function": {
+              "name": "read_file",
+              "arguments": "{\"p\": \"3\"}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -3507,7 +3701,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "l1",
+            "type": "function",
+            "function": {
+              "name": "step",
+              "arguments": "{\"i\": 1}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -3516,7 +3720,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "l2",
+            "type": "function",
+            "function": {
+              "name": "step",
+              "arguments": "{\"i\": 2}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -3525,7 +3739,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "l3",
+            "type": "function",
+            "function": {
+              "name": "step",
+              "arguments": "{\"i\": 3}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -3697,7 +3921,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "u1",
+            "type": "function",
+            "function": {
+              "name": "f",
+              "arguments": "{}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -4005,10 +4239,15 @@
       },
       {
         "role": "assistant",
-        "content": [
+        "content": "Let me search:",
+        "tool_calls": [
           {
-            "type": "text",
-            "text": "Let me search:"
+            "id": "x1",
+            "type": "function",
+            "function": {
+              "name": "web_search",
+              "arguments": "{\"q\": \"y\"}"
+            }
           }
         ]
       },
@@ -4116,7 +4355,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "n1",
+            "type": "function",
+            "function": {
+              "name": "configure",
+              "arguments": "{\"key\": null, \"value\": \"x\", \"ints\": [1, 2]}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -4208,7 +4457,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "big1",
+            "type": "function",
+            "function": {
+              "name": "read_file",
+              "arguments": "{\"path\": \"/a\"}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -4296,7 +4555,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "t1",
+            "type": "function",
+            "function": {
+              "name": "ping",
+              "arguments": "{}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -4408,7 +4677,17 @@
       },
       {
         "role": "assistant",
-        "content": []
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "t1",
+            "type": "function",
+            "function": {
+              "name": "search",
+              "arguments": "{\"q\": \"z\"}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -4597,7 +4876,17 @@
       },
       {
         "role": "assistant",
-        "content": ""
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "u1",
+            "type": "function",
+            "function": {
+              "name": "search",
+              "arguments": "{\"q\": \"\\u4eca\\u65e5\\u71b1\\u9580\\u65b0\\u805e \\ud83d\\udd25\", \"lang\": \"zh-TW\"}"
+            }
+          }
+        ]
       },
       {
         "role": "tool",
@@ -4715,14 +5004,15 @@
       },
       {
         "role": "assistant",
-        "content": [
+        "content": "Reasoning aloudNow I'll process the result",
+        "tool_calls": [
           {
-            "type": "text",
-            "text": "Reasoning aloud"
-          },
-          {
-            "type": "text",
-            "text": "Now I'll process the result"
+            "id": "ax1",
+            "type": "function",
+            "function": {
+              "name": "f",
+              "arguments": "{\"x\": 1}"
+            }
           }
         ]
       },

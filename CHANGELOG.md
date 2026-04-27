@@ -1,5 +1,87 @@
 # Changelog
 
+## v2.5.2 — Hotfix follow-up: assistant ToolUseBlock missing tool_calls on outbound
+
+Codex stop-time review of v2.5.1 caught a sibling correctness bug
+exposed by the same assistant↔tool pairing that v2.5.1 fixed on the
+user side.
+
+### Symptom
+
+After v2.5.1 the user-side bundled `ToolResultBlock` correctly splits
+into `role: tool` messages. But the *prior* assistant message in
+the same conversation, if it carried `ToolUseBlock`s (the canonical
+shape under `native_tools=true`), was silently dropping them — the
+parts-array branch in `_openai_convert_message` had no
+`ToolUseBlock` case, so outbound assistant emerged as
+`{"role": "assistant", "content": []}` with **no `tool_calls`
+field at all**. OpenAI-compat servers strictly require every
+`role: tool` message to reference an `id` from the prior assistant's
+`tool_calls`; the v2.5.1 fix made the role:tool entries visible
+on the wire while the assistant side was still empty, breaking the
+pairing the spec depends on.
+
+### Root cause
+
+Pre-existing gap in `_openai_convert_message` — the function had
+branches for `TextBlock`, `ImageBlock`, `ThinkingBlock`, and
+`ToolResultBlock`, but not `ToolUseBlock`. v2.4.0 hid the bug
+because GLM-5.1 ran in XML-tools mode (`native_tools=false`,
+`force_xml_tools=true`) where assistant tool calls live in a
+`TextBlock` body, never in a structured `ToolUseBlock`. When users
+flip to `native_tools=true` (Adam's GLM profile), the inbound path
+correctly parses server-side `tool_calls` into `ToolUseBlock`s, but
+outbound serialization had no symmetric path.
+
+### Fix
+
+`_openai_convert_message` gains an assistant-with-`ToolUseBlock`
+branch placed after the tool-result branch and before the
+parts-array fallback:
+
+- Iterate `msg.content`; collect `ToolUseBlock`s into a `tool_calls`
+  array (each entry has `id`, `type: "function"`,
+  `function: {name, arguments: json.dumps(input)}`).
+- Concatenate `TextBlock`s into `content` (or `null` if there are
+  none, per OpenAI spec for tool-call-only messages).
+- Drop `ThinkingBlock`s silently (existing v2.x behaviour;
+  OpenAI-compat servers reject unknown content types).
+
+### Tests
+
+5 new tests in `tests/test_api/test_conversion.py::TestAssistantToolUseBlockOpenAI`:
+
+- Single `ToolUseBlock` → `tool_calls` of length 1, `content: None`
+- Multiple `ToolUseBlock`s → `tool_calls` array preserves order and
+  IDs
+- `TextBlock + ToolUseBlock` → both populated
+- `ThinkingBlock + ToolUseBlock` → thinking dropped, tool_calls intact
+- Full round-trip (user → assistant with 2 tool_calls → split tool
+  results): every `tool_call_id` on a `role: tool` entry matches an
+  `id` in the prior assistant's `tool_calls`. This is the wire-level
+  contract a downstream provider depends on.
+
+The conversion corpus was re-captured to lock in the corrected
+assistant outbound shape across every scenario that includes a
+`ToolUseBlock`. The parity gate now guards against regressions of
+both v2.5.1 and v2.5.2 fixes simultaneously.
+
+Suite: 7954 → 7959 passed (+5).
+
+### Why both hotfixes were necessary
+
+v2.5.1 alone was a partial fix — it made `role: tool` messages
+visible on the wire, but without v2.5.2 the assistant side was
+still missing `tool_calls`, so a strict OpenAI-compat server would
+reject the request as "tool result without matching tool call".
+GLM-5.1 with v2.5.1-only might have produced the headlines under
+its own permissive parsing, but any conformant downstream provider
+(Anthropic-via-OpenAI-shim, OpenRouter, NVIDIA NIM, etc.) would
+have rejected the next request body. v2.5.2 closes the spec gap
+properly.
+
+---
+
 ## v2.5.1 — Hotfix: bundled ToolResultBlock silently dropped on OpenAI-compat path
 
 Critical correctness bug exposed by GLM-5.1 in v2.5.0 GA smoke testing.
