@@ -48,12 +48,19 @@ class TestFallbackChain:
                 # Ensure no other backend env vars leak in from the host shell —
                 # the test asserts a precise call count.
                 import os as _os
-                for _k in ("EXA_API_KEY", "JINA_API_KEY", "TAVILY_API_KEY", "SERPER_API_KEY"):
+                for _k in (
+                    "EXA_API_KEY",
+                    "JINA_API_KEY",
+                    "LINKUP_API_KEY",
+                    "TAVILY_API_KEY",
+                    "SERPER_API_KEY",
+                ):
                     _os.environ.pop(_k, None)
                 result = tool._search_with_fallback("test", 10, MagicMock(
                     brave_api_key_env="BRAVE_API_KEY",
                     exa_api_key_env="EXA_API_KEY",
                     jina_api_key_env="JINA_API_KEY",
+                    linkup_api_key_env="LINKUP_API_KEY",
                     searxng_base_url="",
                     serper_api_key_env="SERPER_API_KEY",
                     tavily_api_key_env="TAVILY_API_KEY",

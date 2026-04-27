@@ -193,6 +193,8 @@ class WebSearchConfig:
     # v2.7.0a1 M2 — Jina Reader search. Anonymous tier is free; with
     # ``JINA_API_KEY`` the rate limit climbs ~10x.
     jina_api_key_env: str = "JINA_API_KEY"
+    # v2.7.0a1 M3 — Linkup AI-native search (free 1000/mo).
+    linkup_api_key_env: str = "LINKUP_API_KEY"
     searxng_base_url: str = ""
     max_results: int = 10
     domain_allowlist: tuple[str, ...] = ()

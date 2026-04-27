@@ -40,7 +40,7 @@ def create_backend(backend_name: str, **kwargs: object) -> SearchBackend:
 
     Args:
         backend_name: One of "duckduckgo", "brave", "exa", "jina",
-            "searxng", "serper", "tavily".
+            "linkup", "searxng", "serper", "tavily".
         **kwargs: Backend-specific keyword arguments (e.g. api_key, base_url).
 
     Raises:
@@ -60,6 +60,10 @@ def create_backend(backend_name: str, **kwargs: object) -> SearchBackend:
         # v2.7.0a1 M2 — Jina Reader search (free anonymous + key-tier).
         from llm_code.tools.search_backends.jina import JinaSearchBackend
         return JinaSearchBackend(**kwargs)
+    if backend_name == "linkup":
+        # v2.7.0a1 M3 — Linkup AI-native search (free 1000/mo).
+        from llm_code.tools.search_backends.linkup import LinkupBackend
+        return LinkupBackend(**kwargs)
     if backend_name == "tavily":
         from llm_code.tools.search_backends.tavily import TavilyBackend
         return TavilyBackend(**kwargs)

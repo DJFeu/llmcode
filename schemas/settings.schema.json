@@ -734,6 +734,9 @@
         "jina_api_key_env": {
           "type": "string"
         },
+        "linkup_api_key_env": {
+          "type": "string"
+        },
         "max_results": {
           "type": "integer"
         },

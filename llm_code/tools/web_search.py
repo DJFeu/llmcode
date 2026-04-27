@@ -23,6 +23,8 @@ _VALID_BACKENDS = (
     "exa",
     # v2.7.0a1 M2 — Jina Reader search (free anonymous, optional key).
     "jina",
+    # v2.7.0a1 M3 — Linkup AI-native search (free 1000/mo).
+    "linkup",
     "tavily",
     "searxng",
     "serper",
@@ -65,7 +67,8 @@ class WebSearchTool(Tool):
         return (
             "Search the web for information. "
             "Supports DuckDuckGo (default), Brave, Exa (semantic), "
-            "Jina (free anonymous), Tavily, SearXNG, and Serper backends. "
+            "Jina (free anonymous), Linkup (AI-native), Tavily, "
+            "SearXNG, and Serper backends. "
             "Returns ranked results with titles, URLs, and snippets. "
             "For 'today's news' / 'latest X' asks, include the full date "
             "(YYYY-MM-DD — see the Environment section) in the query; a "
@@ -151,6 +154,11 @@ class WebSearchTool(Tool):
             # v2.7.0a1 M2 — Jina Reader search. Anonymous use is OK, so
             # we forward whatever the env var holds (possibly empty).
             api_key_env = getattr(cfg, "jina_api_key_env", "JINA_API_KEY")
+            api_key = os.environ.get(api_key_env, "")
+            kwargs["api_key"] = api_key
+        elif backend_name == "linkup" and cfg is not None:
+            # v2.7.0a1 M3 — Linkup AI-native search.
+            api_key_env = getattr(cfg, "linkup_api_key_env", "LINKUP_API_KEY")
             api_key = os.environ.get(api_key_env, "")
             kwargs["api_key"] = api_key
         elif backend_name == "tavily" and cfg is not None:
@@ -303,8 +311,9 @@ class WebSearchTool(Tool):
     ) -> tuple[SearchResult, ...]:
         """Try backends in order until one returns results.
 
-        Fallback order (v2.7.0a1):
-            duckduckgo -> brave -> exa -> jina -> searxng -> tavily -> serper
+        Fallback order (v2.7.0a1 final):
+            duckduckgo -> brave -> exa -> jina -> linkup
+                       -> searxng -> tavily -> serper
 
         Only backends that are configured (have API keys / base_url set)
         are tried. Jina is special — it has an anonymous tier, so it's
@@ -340,20 +349,27 @@ class WebSearchTool(Tool):
             jina_key = os.environ.get(jina_key_env, "")
             chain.append(("jina", {"api_key": jina_key}))
 
-        # 5. SearXNG (if base_url configured)
+        # 5. Linkup — AI-native search (free 1000/mo). v2.7.0a1 M3.
+        if cfg is not None:
+            linkup_key_env = getattr(cfg, "linkup_api_key_env", "LINKUP_API_KEY")
+            linkup_key = os.environ.get(linkup_key_env, "")
+            if linkup_key:
+                chain.append(("linkup", {"api_key": linkup_key}))
+
+        # 6. SearXNG (if base_url configured)
         if cfg is not None:
             searxng_url = getattr(cfg, "searxng_base_url", "")
             if searxng_url:
                 chain.append(("searxng", {"base_url": searxng_url}))
 
-        # 6. Tavily (if API key configured)
+        # 7. Tavily (if API key configured)
         if cfg is not None:
             tavily_key_env = getattr(cfg, "tavily_api_key_env", "TAVILY_API_KEY")
             tavily_key = os.environ.get(tavily_key_env, "")
             if tavily_key:
                 chain.append(("tavily", {"api_key": tavily_key}))
 
-        # 7. Serper (if API key configured)
+        # 8. Serper (if API key configured)
         if cfg is not None:
             serper_key_env = getattr(cfg, "serper_api_key_env", "SERPER_API_KEY")
             serper_key = os.environ.get(serper_key_env, "")
