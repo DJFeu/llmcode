@@ -1,5 +1,100 @@
 # Changelog
 
+## v2.8.0 — RAG pipeline GA (research keystone + Firecrawl)
+
+Final wave of v17. Adds 56 tests (M5 + M6); promotes the alpha
+content from 2.8.0a1 + 2.8.0a2 to GA.
+
+### M5 — `research` high-level tool (the v2.8.0 keystone)
+
+New `tools/research/pipeline.py` and `tools/research/research_tool.py`.
+`ResearchTool` (`name="research"`) is registered in the default tool
+list — the LLM should prefer it over `web_search` for any
+"research X" / "find papers about X" / "compare A vs B" style query.
+
+Pipeline:
+
+    expand → search × N (parallel) → fetch top-K (parallel) → rerank → top-K
+
+Depth controls behaviour:
+
+* `"fast"` — 1 sub-query, K=3, no rerank.
+* `"standard"` — 3 sub-queries, K=5, rerank (default).
+* `"deep"` — 3 sub-queries, K=10, rerank.
+
+Linkup short-circuit: when `profile.linkup_default_mode ==
+"sourcedAnswer"` AND a `LinkupBackend` is in the chain AND Linkup is
+healthy, the pipeline calls Linkup's sourced-answer mode and returns
+the citation-grounded answer directly — skipping search ×
+fetch × rerank entirely. Hosted-RAG path for factual queries.
+
+Concurrency: `asyncio.Semaphore(profile.research_max_concurrency)`
+caps in-flight HTTP across both the search-gather and fetch-gather
+stages. Default 5; profile-tunable.
+
+Per-step failure handling: any per-task exception in the search /
+fetch `asyncio.gather` calls is logged + continued. The reranker
+sees the surviving documents; the pipeline never fails wholesale
+because one backend or one URL went down.
+
+Dependency injection: `run_research(query, *, profile, search_chain,
+search_fn, fetch_fn, rerank, ...)` exposes every collaborator as a
+keyword argument so unit tests run the full orchestration without
+booting the runtime. The tool wrapper resolves the real backends
+(WebSearchTool's chain + Jina Reader) at execution time.
+
+### M6 — Firecrawl web_fetch backend (optional)
+
+New `tools/web_fetch_backends/firecrawl.py`. Free tier 500/mo;
+opt-in via `FIRECRAWL_API_KEY` env var. Without the key the path is
+silently skipped — `web_fetch` behaviour for users without the key
+is byte-identical to v2.7.0.
+
+`WebFetchConfig.extraction_backend` gains `"firecrawl"` value.
+`"auto"` mode tries Jina (v2.7.0a1) → local readability (v2.6.x) →
+Firecrawl (v2.8.0 M6) only if both prior backends produced <200
+useful chars AND `FIRECRAWL_API_KEY` is set. Explicit
+`extraction_backend="firecrawl"` mode bypasses Jina + local.
+
+The async `WebFetchTool.execute_async` mirrors the sync chain.
+
+### README + tools section
+
+The Web row in the Tools table now lists `web_search`, `web_fetch`
+(with Jina + optional Firecrawl), `rerank`, and `research`.
+
+### Tests + guard rails
+
+* 56 new tests across the pipeline orchestrator, ResearchTool,
+  Firecrawl backend, and integration with the v2.8.0 M4 health
+  module.
+* All Firecrawl tests use `respx` mocks — no real Firecrawl calls
+  in CI.
+* Pipeline tests use deterministic doubles for search_fn / fetch_fn
+  via `_make_search_fn` / `_make_fetch_fn` helpers.
+* v15 grep guard, v15 byte-parity, README↔reality, and v2.6.1
+  system-prompt parity gates all stay green.
+
+### Migration notes
+
+No breaking changes for users on v2.7.0:
+
+* `WebSearchTool` and `WebFetchTool` behaviour is identical when no
+  v2.8.0 env vars are set.
+* `LinkupBackend.search()` is byte-identical; the new
+  `sourced_answer()` method is additive.
+* `_search_with_fallback` adds health tracking but defaults to the
+  same chain order on a fresh process.
+
+To opt into the new RAG pipeline:
+
+* Set `profile.rerank_backend = "local"` (default) and install
+  `[memory]` extra: `pip install llmcode-cli[memory]`.
+* Set `COHERE_API_KEY` to use Cohere reranker instead.
+* Set `FIRECRAWL_API_KEY` to enable the third extraction fallback.
+* Set `profile.linkup_default_mode = "sourcedAnswer"` to short-
+  circuit the research tool to Linkup's hosted RAG.
+
 ## v2.8.0a2 — Multi-query expansion + Linkup sourced-answer
 
 Second wave of v17. Adds 43 tests; bumps to 2.8.0a2.

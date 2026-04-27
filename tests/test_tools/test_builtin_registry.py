@@ -31,12 +31,11 @@ def test_builtin_tools_names_match_keys():
 
 
 def test_builtin_tools_expected_count():
-    """Sanity check: we expect 18 core tools (10 base + rerank + 7 git).
+    """Sanity check: we expect 19 core tools (10 base + rerank + research + 7 git).
 
-    v2.8.0 M1 added the ``rerank`` tool. v2.8.0 M5 will add ``research``
-    in wave 3 and bump this again.
+    v2.8.0 M1 added the ``rerank`` tool; v2.8.0 M5 added ``research``.
     """
     from llm_code.tools.builtin import get_builtin_tools
 
     tools = get_builtin_tools()
-    assert len(tools) == 18
+    assert len(tools) == 19

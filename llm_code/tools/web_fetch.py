@@ -155,13 +155,16 @@ def _resolve_jina_api_key(cfg: object | None) -> str:
 def _resolve_extraction_backend(cfg: object | None) -> str:
     """Resolve the configured extraction backend string.
 
-    Returns one of ``"auto"``, ``"jina"``, ``"local"``. ``"auto"``
-    means "try Jina first, fall back to local on any failure".
+    Returns one of ``"auto"``, ``"jina"``, ``"local"``, ``"firecrawl"``.
+
+    ``"auto"`` means "try Jina first, fall back to local on any
+    failure; if both yield <200 chars and ``FIRECRAWL_API_KEY`` is
+    set, try Firecrawl as a third fallback (v2.8.0 M6)".
     """
     if cfg is None:
         return "auto"
     value = getattr(cfg, "extraction_backend", "auto") or "auto"
-    if value not in ("auto", "jina", "local"):
+    if value not in ("auto", "jina", "local", "firecrawl"):
         # Defensive: unknown values fall back to the safe "auto" mode
         # rather than raising. A user typo in settings.json shouldn't
         # break web_fetch.
@@ -170,6 +173,86 @@ def _resolve_extraction_backend(cfg: object | None) -> str:
         )
         return "auto"
     return value
+
+
+def _firecrawl_api_key(cfg: object | None) -> str:
+    """Resolve the Firecrawl API key from ``WebSearchConfig`` env var (v2.8.0 M6).
+
+    Returns empty string when the env var is unset — the auto path
+    treats that as "user hasn't opted in" and silently skips Firecrawl.
+    """
+    env_var = "FIRECRAWL_API_KEY"
+    if cfg is not None:
+        env_var = getattr(cfg, "firecrawl_api_key_env", env_var) or env_var
+    return os.environ.get(env_var, "")
+
+
+def _try_firecrawl_extraction(
+    url: str,
+    cfg: object | None,
+) -> tuple[str, str, int] | None:
+    """Try Firecrawl extraction (v2.8.0 M6).
+
+    Returns the standard ``(body, content_type, status_code)`` triple
+    or ``None`` if the path is silently skipped (no API key set, or
+    Firecrawl returned empty content / errored). Caller falls through
+    on ``None``.
+
+    Explicit ``extraction_backend="firecrawl"`` mode re-raises
+    transport errors so the caller surfaces the failure; ``"auto"``
+    mode silences them so the chain falls through to the prior result.
+    """
+    backend = _resolve_extraction_backend(cfg)
+    api_key = _firecrawl_api_key(cfg)
+    if not api_key:
+        # No key → never reachable in auto mode. Strict mode raises a
+        # clear error so the user notices.
+        if backend == "firecrawl":
+            from llm_code.tools.web_fetch_backends.firecrawl import FirecrawlAuthError
+            raise FirecrawlAuthError(
+                "Firecrawl extraction requested but FIRECRAWL_API_KEY is not set"
+            )
+        return None
+    from llm_code.tools.web_fetch_backends.firecrawl import (
+        FirecrawlError,
+        fetch_via_firecrawl,
+    )
+    try:
+        result = fetch_via_firecrawl(url, api_key=api_key)
+    except FirecrawlError as exc:
+        if backend == "firecrawl":
+            raise
+        logger.info("Firecrawl failed for %s: %s", url, exc)
+        return None
+    return result.text, "text/markdown", result.status_code
+
+
+async def _try_firecrawl_extraction_async(
+    url: str,
+    cfg: object | None,
+) -> tuple[str, str, int] | None:
+    """Async variant of :func:`_try_firecrawl_extraction`."""
+    backend = _resolve_extraction_backend(cfg)
+    api_key = _firecrawl_api_key(cfg)
+    if not api_key:
+        if backend == "firecrawl":
+            from llm_code.tools.web_fetch_backends.firecrawl import FirecrawlAuthError
+            raise FirecrawlAuthError(
+                "Firecrawl extraction requested but FIRECRAWL_API_KEY is not set"
+            )
+        return None
+    from llm_code.tools.web_fetch_backends.firecrawl import (
+        FirecrawlError,
+        fetch_via_firecrawl_async,
+    )
+    try:
+        result = await fetch_via_firecrawl_async(url, api_key=api_key)
+    except FirecrawlError as exc:
+        if backend == "firecrawl":
+            raise
+        logger.info("Firecrawl failed for %s: %s", url, exc)
+        return None
+    return result.text, "text/markdown", result.status_code
 
 
 def _playwright_available() -> bool:
@@ -434,7 +517,13 @@ class WebFetchTool(Tool):
         content_type: str | None = None
         status_code: int | None = None
         used_jina = False
-        if not raw and resolved_renderer != "browser":
+        used_firecrawl = False
+        explicit_backend = _resolve_extraction_backend(cfg)
+        if (
+            not raw
+            and resolved_renderer != "browser"
+            and explicit_backend != "firecrawl"
+        ):
             try:
                 jina_result = self._try_jina_extraction(url, cfg)
             except JinaReaderError as exc:
@@ -447,6 +536,20 @@ class WebFetchTool(Tool):
             if jina_result is not None:
                 body, content_type, status_code = jina_result
                 used_jina = True
+
+        # v2.8.0 M6 — explicit Firecrawl mode bypasses Jina + local.
+        if explicit_backend == "firecrawl" and not raw and resolved_renderer != "browser":
+            try:
+                firecrawl_result = _try_firecrawl_extraction(url, cfg)
+            except Exception as exc:
+                return ToolResult(
+                    output=f"Firecrawl extraction failed for {url}: {exc}",
+                    is_error=True,
+                    metadata={"url": url, "cached": False},
+                )
+            if firecrawl_result is not None:
+                body, content_type, status_code = firecrawl_result
+                used_firecrawl = True
 
         # Local fetch (fallback path or explicit raw / browser request).
         if body is None:
@@ -478,15 +581,46 @@ class WebFetchTool(Tool):
                     metadata={"url": url, "cached": False},
                 )
 
-        # Extract content (Jina output is already markdown — extract_content
-        # passes "text/markdown" through unchanged, so this is safe).
+        # Extract content (Jina + Firecrawl output is already markdown
+        # — extract_content passes "text/markdown" through unchanged).
         content = extract_content(body, content_type, raw=raw, max_length=max_length)
+
+        # v2.8.0 M6 — auto-mode third fallback. When neither Jina nor
+        # local readability produced ≥200 useful chars AND the user
+        # has opted into Firecrawl via FIRECRAWL_API_KEY, try
+        # Firecrawl's Playwright-rendered scrape as a last resort.
+        # Skipped when we already used Jina / Firecrawl, when raw=True,
+        # or when the user explicitly picked another backend.
+        if (
+            not raw
+            and not used_jina
+            and not used_firecrawl
+            and resolved_renderer != "browser"
+            and explicit_backend == "auto"
+            and len((content or "").strip()) < _MIN_USEFUL_CHARS
+            and _firecrawl_api_key(cfg)
+        ):
+            try:
+                fc_result = _try_firecrawl_extraction(url, cfg)
+            except Exception:
+                fc_result = None
+            if fc_result is not None:
+                fc_body, fc_ct, fc_sc = fc_result
+                fc_content = extract_content(
+                    fc_body, fc_ct, raw=raw, max_length=max_length,
+                )
+                if len(fc_content.strip()) > len(content.strip()):
+                    content = fc_content
+                    content_type = fc_ct
+                    status_code = fc_sc
+                    used_firecrawl = True
 
         # Auto-retry with browser if local httpx result looks like
         # unrendered JS. Jina already handles JS rendering — skip this
         # retry when we used it.
         if (
             not used_jina
+            and not used_firecrawl
             and resolved_renderer == "default"
             and "html" in content_type
             and _looks_unrendered(content)
@@ -505,6 +639,13 @@ class WebFetchTool(Tool):
         # Cache result
         self._cache.put(url, content)
 
+        if used_firecrawl:
+            extraction_backend_used = "firecrawl"
+        elif used_jina:
+            extraction_backend_used = "jina"
+        else:
+            extraction_backend_used = "local"
+
         return ToolResult(
             output=content,
             is_error=False,
@@ -513,7 +654,7 @@ class WebFetchTool(Tool):
                 "status_code": status_code,
                 "content_type": content_type,
                 "cached": False,
-                "extraction_backend": "jina" if used_jina else "local",
+                "extraction_backend": extraction_backend_used,
             },
         )
 
@@ -579,7 +720,13 @@ class WebFetchTool(Tool):
         content_type: str | None = None
         status_code: int | None = None
         used_jina = False
-        if not raw and resolved_renderer != "browser":
+        used_firecrawl = False
+        explicit_backend = _resolve_extraction_backend(cfg)
+        if (
+            not raw
+            and resolved_renderer != "browser"
+            and explicit_backend != "firecrawl"
+        ):
             try:
                 jina_result = await self._try_jina_extraction_async(url, cfg)
             except JinaReaderError as exc:
@@ -591,6 +738,20 @@ class WebFetchTool(Tool):
             if jina_result is not None:
                 body, content_type, status_code = jina_result
                 used_jina = True
+
+        # v2.8.0 M6 — explicit Firecrawl mode bypasses Jina + local.
+        if explicit_backend == "firecrawl" and not raw and resolved_renderer != "browser":
+            try:
+                fc_result = await _try_firecrawl_extraction_async(url, cfg)
+            except Exception as exc:
+                return ToolResult(
+                    output=f"Firecrawl extraction failed for {url}: {exc}",
+                    is_error=True,
+                    metadata={"url": url, "cached": False},
+                )
+            if fc_result is not None:
+                body, content_type, status_code = fc_result
+                used_firecrawl = True
 
         if body is None:
             try:
@@ -627,8 +788,34 @@ class WebFetchTool(Tool):
 
         content = extract_content(body, content_type, raw=raw, max_length=max_length)
 
+        # v2.8.0 M6 — async auto-mode third fallback (Firecrawl).
+        if (
+            not raw
+            and not used_jina
+            and not used_firecrawl
+            and resolved_renderer != "browser"
+            and explicit_backend == "auto"
+            and len((content or "").strip()) < _MIN_USEFUL_CHARS
+            and _firecrawl_api_key(cfg)
+        ):
+            try:
+                fc_result = await _try_firecrawl_extraction_async(url, cfg)
+            except Exception:
+                fc_result = None
+            if fc_result is not None:
+                fc_body, fc_ct, fc_sc = fc_result
+                fc_content = extract_content(
+                    fc_body, fc_ct, raw=raw, max_length=max_length,
+                )
+                if len(fc_content.strip()) > len(content.strip()):
+                    content = fc_content
+                    content_type = fc_ct
+                    status_code = fc_sc
+                    used_firecrawl = True
+
         if (
             not used_jina
+            and not used_firecrawl
             and resolved_renderer == "default"
             and "html" in content_type
             and _looks_unrendered(content)
@@ -646,6 +833,13 @@ class WebFetchTool(Tool):
 
         self._cache.put(url, content)
 
+        if used_firecrawl:
+            extraction_backend_used = "firecrawl"
+        elif used_jina:
+            extraction_backend_used = "jina"
+        else:
+            extraction_backend_used = "local"
+
         return ToolResult(
             output=content,
             is_error=False,
@@ -654,6 +848,6 @@ class WebFetchTool(Tool):
                 "status_code": status_code,
                 "content_type": content_type,
                 "cached": False,
-                "extraction_backend": "jina" if used_jina else "local",
+                "extraction_backend": extraction_backend_used,
             },
         )
