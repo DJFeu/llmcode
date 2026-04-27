@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.7.0 — RAG free-tier search backends GA
+
+Promotes v2.7.0a1 to GA. 71 new tests across 3 backends + the
+extraction-path wiring all stable — no stubs, no follow-up TODOs in
+code. Future RAG mechanisms (research-style aggregation tool,
+reranker, multi-query expansion, sourced-answer mode) belong in a
+v2.8.0 spec — they'd build on this GA, not gate it.
+
+What's in (v2.7.0a1 content unchanged):
+
 ## v2.7.0a1 — RAG free-tier search backends
 
 Adds three new search backends with generous free tiers to close the
