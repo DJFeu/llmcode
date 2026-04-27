@@ -1,5 +1,83 @@
 # Changelog
 
+## v2.6.0a1 — Wave 1 of v16 audit closure (M1-M4)
+
+First alpha of v2.6.0. Closes the four half-wired-feature gaps the
+v2.5.x audit surfaced: custom agent role enum, agent memory subagent
+wiring, plugin marketplace installer integration, /theme + /vim
+runtime support. The README↔reality test is now live and green for
+every ✅ claim under "How it compares".
+
+### M1 — Dynamic agent role enum
+
+`tools/agent.AgentTool.input_schema` now reads its `role` enum from
+`runtime.agent_registry.AgentRegistry` instead of a hardcoded list.
+User-defined roles in `~/.llm-code/agents/*.md` and
+`<project>/.llm-code/agents/*.md` are populated at session init and
+become invocable via `agent(role="researcher", task="...")`. Custom
+roles that shadow built-ins win and emit a WARNING for visibility.
+
+### M2 — Agent memory subagent wiring
+
+`runtime.subagent_factory.make_subagent_runtime` injects three new
+tools — `memory_read`, `memory_write`, `memory_list` — into every
+subagent's tool registry, scoped by `agent_id`. The store
+(`AgentMemoryStore`) lives on the parent runtime so two consecutive
+spawns with the same role share state. Toggle via the new profile
+field `agent_memory_enabled` (default on).
+
+### M3 — Plugin marketplace installer integration
+
+`/plugin install` now routes through `marketplace.installer`'s
+security-scanned `install_from_github` path. Installed plugins with
+`providesTools` entries get registered into the live tool registry
+via `marketplace.executor.load_plugin`. The `_activate_plugin_tools`
+helper handles missing manifests, tool-name conflicts, and
+permission-gated dangerous capabilities cleanly.
+
+### M4 — /theme and /vim runtime support
+
+Eight built-in themes (`default`, `dark`, `light`, `solarized`,
+`dracula`, `nord`, `gruvbox`, `monokai`) live in `view.themes`. The
+`/theme` slash command lists names, switches the live `BrandPalette`
+singleton, and persists to `config.ui_theme`. `/vim on|off|toggle`
+flips prompt_toolkit's `EditingMode` at runtime and persists to
+`config.vim_mode`. Both stub messages are gone.
+
+### Profile schema additions
+
+Four new fields on `ModelProfile` (declared upfront so M5/M10 don't
+double-bump):
+
+- `agent_memory_enabled: bool = True` (M2)
+- `mcp_approval_granularity: str = "tool"` (M10 placeholder)
+- `ui_theme: str = "default"` (M4)
+- `vim_mode: bool = False` (M4)
+
+TOML mapping: `[runtime] agent_memory_enabled`,
+`[mcp] approval_granularity`, `[ui] theme`, `[ui] vim_mode`.
+
+### Tests
+
+- 16 new tests in `test_runtime/test_agent_registry.py`
+- 24 new tests in `test_runtime/test_subagent_memory.py`
+- 7 new tests in `test_marketplace/test_installer_executor_integration.py`
+- 22 new tests in `test_view/test_themes.py`
+- 8 new tests in `test_view/test_theme_vim_commands.py`
+- 34 new tests in `test_readme_claims_match_runtime.py` (README↔reality gate)
+- Updates to `test_subagent_factory.py`, `test_agent_role_enforcement.py`,
+  and `test_dispatcher.py` to reflect the new M2/M4 behaviour.
+
+Suite: 7967 → 8078 passed (+111). v15 grep guard + byte-parity gate
+still green.
+
+### Acceptance criteria covered
+
+- ✅ `.llmcode/agents/custom.md` + `agent(role="custom")` works
+- ✅ Subagent `memory_write/read` round-trips across spawn boundary
+- ✅ `/plugin install` routes through installer (no bare `git clone`)
+- ✅ `/theme dracula` swaps live palette; `/vim on` toggles editing mode
+
 ## v2.5.5 — Hotfix: rescue stranded MCP entries from pre-v2.5.4 configs
 
 Codex stop-time review of v2.5.4 caught the third sibling: users

@@ -87,6 +87,10 @@ def test_subagent_for_build_role_inherits_full_registry(parent: _StubParent) -> 
     sub = _make(parent, BUILD_ROLE)
     parent_names = {t.name for t in parent._tool_registry.all_tools()}
     sub_names = {t.name for t in sub._tool_registry.all_tools()}
+    # v16 M2: agent_memory_enabled defaults to True, so unrestricted
+    # roles get the three memory_* tools injected on top of the
+    # parent's registry. Subtract them before comparing.
+    sub_names -= {"memory_read", "memory_write", "memory_list"}
     assert sub_names == parent_names
 
 
@@ -123,4 +127,6 @@ def test_subagent_factory_accepts_none_role_as_build(parent: _StubParent) -> Non
     sub = _make(parent, None)
     parent_names = {t.name for t in parent._tool_registry.all_tools()}
     sub_names = {t.name for t in sub._tool_registry.all_tools()}
+    # v16 M2: subtract the three memory_* tools added by default.
+    sub_names -= {"memory_read", "memory_write", "memory_list"}
     assert sub_names == parent_names

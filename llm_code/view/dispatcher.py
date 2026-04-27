@@ -827,15 +827,76 @@ class CommandDispatcher:
         self._view.print_info("Usage: /cache list | /cache clear | /cache probe")
 
     def _cmd_theme(self, args: str) -> None:
-        """Theme switch is a v1.x TUI concern (Textual stylesheets).
-        v2.0.0 REPL uses prompt_toolkit + Rich default styling — the
-        command prints a note to keep the command name discoverable.
+        """v16 M4 — switch the active Rich theme.
+
+        ``/theme`` (no arg)        → list available themes with the active marked
+        ``/theme <name>``         → switch + persist to config.ui_theme
+        ``/theme <unknown>``      → error with available list
         """
-        self._view.print_info(
-            "Themes are a legacy TUI feature and are not available "
-            "in the v2.0.0 REPL. prompt_toolkit + Rich honor your "
-            "terminal's own palette."
+        from llm_code.view.themes import (
+            apply_theme_to_palette,
+            list_theme_names,
         )
+
+        names = list_theme_names()
+        cfg = self._state.config
+        active = "default"
+        if cfg is not None:
+            active = (
+                getattr(cfg, "ui_theme", None)
+                or getattr(cfg, "theme_name", None)
+                or "default"
+            )
+
+        arg = args.strip()
+        if not arg:
+            lines = ["Themes:"]
+            for name in names:
+                marker = "* " if name == active else "  "
+                lines.append(f"{marker}{name}")
+            self._view.print_info("\n".join(lines))
+            return
+
+        if arg not in names:
+            self._view.print_error(
+                f"Unknown theme: {arg!r}. Available: {', '.join(names)}"
+            )
+            return
+
+        palette = apply_theme_to_palette(arg)
+        if palette is None:
+            # apply_theme_to_palette already logged the warning.
+            self._view.print_error(f"Failed to apply theme {arg!r}")
+            return
+
+        # Persist the choice on the config object. Use _patched_setattr
+        # if frozen, otherwise plain assignment via dataclasses.replace.
+        if cfg is not None:
+            try:
+                import dataclasses as _dc
+                if _dc.is_dataclass(cfg) and getattr(
+                    type(cfg), "__dataclass_params__", None,
+                ) and type(cfg).__dataclass_params__.frozen:
+                    self._state.config = _dc.replace(cfg, ui_theme=arg)
+                else:
+                    setattr(cfg, "ui_theme", arg)
+            except Exception:  # noqa: BLE001
+                # Persistence is best-effort — in-memory swap already
+                # happened.
+                pass
+
+        # Trigger a redraw via the coordinator if available.
+        coordinator = getattr(self._view, "coordinator", None)
+        if coordinator is not None and hasattr(coordinator, "_app"):
+            try:
+                app = getattr(coordinator, "_app", None)
+                if app is not None and getattr(app, "is_running", False):
+                    app.invalidate()
+            except Exception:  # noqa: BLE001
+                pass
+
+        logger.info("theme_set name=%s", arg)
+        self._view.print_info(f"Theme set to {arg!r}.")
 
     def _cmd_config(self, args: str) -> None:
         """Print the active config summary."""
@@ -1834,6 +1895,60 @@ class CommandDispatcher:
         except Exception as exc:  # noqa: BLE001
             logger.warning("skill reload failed: %r", exc)
 
+    def _activate_plugin_tools(self, plugin_dir: Path) -> None:
+        """v16 M3 — feed a freshly-installed plugin through the executor.
+
+        Reads ``.claude-plugin/plugin.json`` (if present), then calls
+        :func:`marketplace.executor.load_plugin` to register every
+        ``providesTools`` entry into the runtime's tool registry. A
+        plugin without a manifest, without ``providesTools``, or with
+        an unparsable manifest is silently treated as a no-op so the
+        non-tool features (commands, skills, hooks) still work.
+        """
+        try:
+            from llm_code.marketplace.executor import (
+                PluginConflictError,
+                PluginLoadError,
+                load_plugin,
+            )
+            from llm_code.marketplace.plugin import PluginManifest
+        except ImportError:
+            return
+        try:
+            manifest = PluginManifest.from_path(plugin_dir)
+        except FileNotFoundError:
+            # Plugin without a Claude-Code-shaped manifest. Treat the
+            # install as skill/asset only — no executor wiring needed.
+            return
+        except (KeyError, ValueError, TypeError) as exc:
+            logger.warning(
+                "plugin %s manifest invalid: %r", plugin_dir.name, exc,
+            )
+            return
+
+        tool_reg = getattr(self._state, "tool_reg", None)
+        if tool_reg is None:
+            return
+        try:
+            load_plugin(
+                manifest,
+                plugin_dir,
+                tool_registry=tool_reg,
+            )
+        except PluginConflictError as exc:
+            self._view.print_error(
+                f"plugin tool clash for {plugin_dir.name}: {exc}"
+            )
+        except PluginLoadError as exc:
+            self._view.print_error(
+                f"plugin {plugin_dir.name} failed to register tools: {exc}"
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "plugin %s executor wiring failed: %r",
+                plugin_dir.name, exc,
+            )
+
     async def _interactive_skill_browser(self) -> None:
         """M15: Interactive skill browser with ↑/↓ keyboard selection.
 
@@ -1967,7 +2082,14 @@ class CommandDispatcher:
         self._view.print_info("\n".join(lines))
 
     def _cmd_plugin(self, args: str) -> None:
-        """Plugin sub-command router."""
+        """Plugin sub-command router.
+
+        v16 M3 — ``install`` routes through
+        :meth:`PluginInstaller.install_from_github` so the security
+        scan runs and any ``providesTools`` declared in the
+        manifest are wired into the live runtime tool registry via
+        :func:`marketplace.executor.load_plugin`.
+        """
         parts = args.strip().split(None, 1)
         sub = parts[0] if parts else ""
         subargs = parts[1] if len(parts) > 1 else ""
@@ -1977,7 +2099,6 @@ class CommandDispatcher:
         except ImportError:
             self._view.print_error("Plugin system not available.")
             return
-        import shutil as _shutil
 
         if sub == "install" and subargs:
             source = subargs.strip()
@@ -1985,34 +2106,55 @@ class CommandDispatcher:
                 self._view.print_error("Usage: /plugin install owner/repo")
                 return
             repo = source.replace("https://github.com/", "").rstrip("/")
-            name = repo.split("/")[-1]
-            dest = Path.home() / ".llmcode" / "plugins" / name
-            if dest.exists():
-                _shutil.rmtree(dest)
-            self._view.print_info(f"Cloning {repo}…")
+            self._view.print_info(f"Cloning {repo} (with security scan)…")
             try:
-                result = subprocess.run(
-                    [
-                        "git", "clone", "--depth", "1",
-                        f"https://github.com/{repo}.git", str(dest),
-                    ],
-                    capture_output=True, text=True, timeout=30,
-                    check=False,
+                from llm_code.marketplace.installer import SecurityScanError
+                # Schedule the async install on the running event loop
+                # if there is one; otherwise run it eagerly. The same
+                # pattern AgentTool uses for its own asyncio bridge.
+                import asyncio as _asyncio
+                import concurrent.futures as _cf
+
+                async def _install_async() -> Path:
+                    return await installer.install_from_github(repo, ref="main")
+
+                try:
+                    loop = _asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                if loop and loop.is_running():
+                    with _cf.ThreadPoolExecutor() as pool:
+                        dest_path = pool.submit(
+                            _asyncio.run, _install_async(),
+                        ).result()
+                else:
+                    dest_path = _asyncio.run(_install_async())
+            except SecurityScanError as exc:
+                logger.warning(
+                    "plugin %s blocked by security scan: %s", repo, exc,
                 )
-                if result.returncode != 0:
-                    logger.warning(
-                        "Plugin clone failed for %s: %s",
-                        repo, result.stderr[:200],
-                    )
-                    self._view.print_error(
-                        "Clone failed. Check the repository URL."
-                    )
-                    return
-                installer.enable(name)
-                self._reload_skills()
-                self._view.print_info(f"Installed {name}. Activated.")
+                self._view.print_error(
+                    f"Install blocked by security scan: {exc}"
+                )
+                return
             except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Plugin clone failed for %s: %r", repo, exc,
+                )
                 self._view.print_error(f"Install failed: {exc}")
+                return
+
+            # Try to wire any provides_tools entries via the executor.
+            # Failures here are non-fatal — the plugin is still
+            # installed, just without dynamic tool registration.
+            installed_name = dest_path.name
+            self._activate_plugin_tools(dest_path)
+
+            installer.enable(installed_name)
+            self._reload_skills()
+            self._view.print_info(
+                f"Installed {installed_name}. Activated."
+            )
             return
         if sub == "enable" and subargs:
             if not self._is_safe_name(subargs):
@@ -2521,18 +2663,72 @@ class CommandDispatcher:
         )
 
     def _cmd_vim(self, args: str) -> None:
-        """Vim mode toggle.
+        """v16 M4 — toggle prompt_toolkit's vim editing mode at runtime.
 
-        v1.x mutated the Textual ``InputBar.vim_mode`` field. v2.0.0
-        REPL uses prompt_toolkit, which has its own vim-mode
-        facility activated per-keybinding. Toggling from a slash
-        command would require cross-coordinator plumbing — instead,
-        point the user at the persistent config setting.
+        ``/vim``           → show current state
+        ``/vim on``        → switch to ``EditingMode.VI``
+        ``/vim off``       → switch to ``EditingMode.EMACS``
+        ``/vim toggle``    → flip current state
         """
+        cfg = self._state.config
+        current = bool(getattr(cfg, "vim_mode", False)) if cfg is not None else False
+
+        arg = args.strip().lower()
+        if not arg:
+            state = "on" if current else "off"
+            self._view.print_info(
+                f"Vim mode is {state}. Usage: /vim on | off | toggle"
+            )
+            return
+
+        if arg == "toggle":
+            target = not current
+        elif arg in ("on", "true", "1", "yes"):
+            target = True
+        elif arg in ("off", "false", "0", "no"):
+            target = False
+        else:
+            self._view.print_error(
+                "Usage: /vim on | off | toggle"
+            )
+            return
+
+        # Apply to the live prompt_toolkit Application via the coordinator.
+        coordinator = getattr(self._view, "coordinator", None)
+        applied = False
+        if coordinator is not None:
+            try:
+                from prompt_toolkit.enums import EditingMode
+
+                app = getattr(coordinator, "_app", None)
+                if app is not None:
+                    app.editing_mode = (
+                        EditingMode.VI if target else EditingMode.EMACS
+                    )
+                    if getattr(app, "is_running", False):
+                        app.invalidate()
+                    applied = True
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("vim mode toggle failed: %r", exc)
+
+        # Persist to config regardless of whether the live app picked it
+        # up — next session start will honour the setting.
+        if cfg is not None:
+            try:
+                import dataclasses as _dc
+                if _dc.is_dataclass(cfg) and getattr(
+                    type(cfg), "__dataclass_params__", None,
+                ) and type(cfg).__dataclass_params__.frozen:
+                    self._state.config = _dc.replace(cfg, vim_mode=target)
+                else:
+                    setattr(cfg, "vim_mode", target)
+            except Exception:  # noqa: BLE001
+                pass
+
+        logger.info("vim_mode_set state=%s applied=%s", target, applied)
+        suffix = "" if applied else " (will take effect next session)"
         self._view.print_info(
-            "Vim mode: configure via ``prompt_toolkit`` key-binding "
-            "layer, not this command. The v2.0.0 REPL doesn't "
-            "support runtime-toggled vim mode yet."
+            f"Vim mode {'on' if target else 'off'}.{suffix}"
         )
 
 

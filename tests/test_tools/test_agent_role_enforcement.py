@@ -103,6 +103,8 @@ def test_build_subagent_inherits_full_registry() -> None:
     sub = _make(parent, BUILD_ROLE)
     parent_names = {t.name for t in parent._tool_registry.all_tools()}
     sub_names = {t.name for t in sub._tool_registry.all_tools()}
+    # v16 M2: unrestricted roles get the three memory_* tools by default.
+    sub_names -= {"memory_read", "memory_write", "memory_list"}
     assert sub_names == parent_names
 
 

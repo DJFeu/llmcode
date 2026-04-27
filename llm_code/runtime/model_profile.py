@@ -177,6 +177,40 @@ class ModelProfile:
     proactive_rate_limit_per_minute: int = 0
     proactive_rate_limit_concurrency: int = 0
 
+    # ── v16 (v2.6.0) — audit closure + cross-project borrow ─────────
+    # Four optional flags introduced in M1's commit so M2 / M4 / M10
+    # don't double-bump the profile schema (see spec §4):
+    #
+    # * ``agent_memory_enabled`` (M2) — when True, ``subagent_factory``
+    #   injects ``memory_read``/``memory_write``/``memory_list`` tools
+    #   per spawn, scoped by ``agent_id``. Default on; profiles that
+    #   want lean subagents flip it off.
+    # * ``mcp_approval_granularity`` (M10) — ``"tool"`` (default,
+    #   matches v2.5.x) approves a tool name once for the session;
+    #   ``"call"`` requires re-approval per ``(tool, args_hash)`` pair.
+    # * ``ui_theme`` (M4) — name of the active Rich theme; one of the
+    #   8 built-in themes documented in
+    #   ``llm_code.view.themes.BUILTIN_THEMES``. Falls back to
+    #   ``"default"`` when unrecognised.
+    # * ``vim_mode`` (M4) — runtime-toggleable via ``/vim``; persisted
+    #   on the profile so the user's preference survives reload.
+    #
+    # TOML authoring (matches the existing flat-section convention):
+    #
+    #     [runtime]
+    #     agent_memory_enabled = true
+    #
+    #     [mcp]
+    #     approval_granularity = "tool"   # or "call"
+    #
+    #     [ui]
+    #     theme = "default"
+    #     vim_mode = false
+    agent_memory_enabled: bool = True
+    mcp_approval_granularity: str = "tool"
+    ui_theme: str = "default"
+    vim_mode: bool = False
+
 
 # ── Built-in profiles ─────────────────────────────────────────────────
 
@@ -592,8 +626,19 @@ def _profile_from_dict(data: dict[str, Any], base: ModelProfile | None = None) -
             "strip_prior_reasoning",
             "retry_on_denial",
         ),
-        # v15 — borrow from free-claude-code.
-        "runtime": ("enable_request_optimizations",),
+        # v15 — borrow from free-claude-code; v16 extends with agent_memory.
+        "runtime": (
+            "enable_request_optimizations",
+            "agent_memory_enabled",
+        ),
+        # v16 M10 — fine-grained MCP approval; section is ``[mcp]`` so it
+        # never collides with the ``[provider]`` section that already
+        # carries provider-specific knobs. The TOML key on disk is
+        # ``approval_granularity`` to match the spec; the flat field is
+        # ``mcp_approval_granularity`` to keep the dataclass tidy.
+        "mcp": ("mcp_approval_granularity",),
+        # v16 M4 — UI surfaces (theme + vim mode) on a dedicated section.
+        "ui": ("ui_theme", "vim_mode"),
     }
     for key, value in data.items():
         if isinstance(value, dict):

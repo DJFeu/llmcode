@@ -31,6 +31,22 @@ from llm_code.tools.agent_roles import BUILT_IN_ROLES, AgentRole
 from llm_code.tools.base import PermissionLevel, Tool, ToolResult
 
 
+def _registry_names() -> tuple[str, ...]:
+    """Return the dynamic enum from :mod:`runtime.agent_registry`.
+
+    Falls back to the built-in five-role list if the registry is
+    unavailable (legacy import path or extreme-early init). The
+    fallback never breaks tests — it just collapses to the v2.5.5
+    behaviour.
+    """
+    try:
+        from llm_code.runtime.agent_registry import get_registry
+    except ImportError:  # pragma: no cover — defensive
+        return tuple(BUILT_IN_ROLES.keys())
+    names = get_registry().list_names()
+    return names if names else tuple(BUILT_IN_ROLES.keys())
+
+
 class AgentInput(BaseModel):
     task: str
     model: str = ""
@@ -67,6 +83,12 @@ class AgentTool(Tool):
 
     @property
     def input_schema(self) -> dict:
+        # v16 M1: enum is built dynamically from the AgentRegistry so
+        # user-defined roles in ``.llm-code/agents/*.md`` show up in
+        # the LLM's tool schema. The schema is rebuilt every turn
+        # (existing tool-definition flow), so registry changes never
+        # surface as a stale enum.
+        role_names = list(_registry_names())
         return {
             "type": "object",
             "properties": {
@@ -80,12 +102,12 @@ class AgentTool(Tool):
                 },
                 "role": {
                     "type": "string",
-                    "enum": ["build", "plan", "explore", "verify", "general"],
+                    "enum": role_names,
                     "description": (
-                        "Built-in agent role. 'build' (default) has unrestricted "
-                        "tool access; 'plan' and 'explore' are read-only for "
-                        "analysis; 'verify' runs tests/checks adversarially; "
-                        "'general' is a focused subagent without todowrite."
+                        "Agent role from the registry. Built-ins: 'build' "
+                        "(default, unrestricted), 'plan'/'explore' (read-only), "
+                        "'verify' (adversarial), 'general' (focused subagent). "
+                        "User-defined roles from .llm-code/agents/*.md also appear here."
                     ),
                 },
                 "fork_directives": {
@@ -139,13 +161,24 @@ class AgentTool(Tool):
         model: str | None = args.get("model") or None
         role_name: str = args.get("role", "")
 
-        # Resolve role
+        # Resolve role via the dynamic registry (M1) — built-ins +
+        # user-defined .llm-code/agents/*.md files. Falls back to the
+        # built-in dict if the registry is unavailable for any reason
+        # (e.g. import-cycle during very-early init), preserving the
+        # v2.5.5 behaviour.
         role: AgentRole | None = None
         if role_name:
-            role = BUILT_IN_ROLES.get(role_name)
+            try:
+                from llm_code.runtime.agent_registry import get_registry
+                role = get_registry().resolve(role_name)
+            except ImportError:  # pragma: no cover — defensive
+                role = None
             if role is None:
+                role = BUILT_IN_ROLES.get(role_name)
+            if role is None:
+                valid = list(_registry_names())
                 return ToolResult(
-                    output=f"Unknown role: '{role_name}'. Valid roles: {list(BUILT_IN_ROLES)}",
+                    output=f"Unknown role: '{role_name}'. Valid roles: {valid}",
                     is_error=True,
                 )
 

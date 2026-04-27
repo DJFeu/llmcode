@@ -809,10 +809,15 @@ def test_cache_unknown_sub_shows_usage(
     assert any("Usage" in i for i in backend.info_lines)
 
 
-def test_theme_is_stubbed(dispatcher_factory, backend) -> None:
+def test_theme_lists_when_no_arg(dispatcher_factory, backend) -> None:
+    """v16 M4: /theme is no longer a stub — empty arg lists themes."""
     d = dispatcher_factory()
     d.dispatch("theme", "")
-    assert any("legacy TUI feature" in i for i in backend.info_lines)
+    info = "\n".join(backend.info_lines)
+    assert "Themes:" in info
+    # Spot-check three of the eight named themes.
+    for name in ("default", "dracula", "nord"):
+        assert name in info
 
 
 def test_config_without_config_prints_message(

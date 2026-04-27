@@ -100,3 +100,74 @@ def inject_memory_tools(
     if allowed_tools is None:
         return None
     return allowed_tools | MEMORY_TOOLS
+
+
+# ---------------------------------------------------------------------------
+# v16 M2 — per-agent KV view + session-level store
+# ---------------------------------------------------------------------------
+
+
+class AgentMemoryStore:
+    """Session-scoped in-memory KV store keyed by ``agent_id``.
+
+    The store survives across subagent spawns within a single
+    :class:`llm_code.runtime.session.Session` so two consecutive
+    subagents with the same ``agent_id`` see each other's writes. M10
+    later migrates this to SQLite via ``runtime/state_db.py``; the
+    public surface (``AgentMemoryView``) stays stable.
+    """
+
+    def __init__(self) -> None:
+        self._cells: dict[str, dict[str, str]] = {}
+
+    def view(self, agent_id: str) -> "AgentMemoryView":
+        """Return a per-agent facade. The cell is created on demand."""
+        if not agent_id:
+            raise ValueError("agent_id must be a non-empty string")
+        return AgentMemoryView(agent_id, self)
+
+    def _cell(self, agent_id: str) -> dict[str, str]:
+        return self._cells.setdefault(agent_id, {})
+
+
+class AgentMemoryView:
+    """Per-agent_id facade over an :class:`AgentMemoryStore`.
+
+    Methods are deliberately tiny so the wrapping tool classes are
+    one-liners; the heavy lifting is the keying convention.
+    """
+
+    def __init__(self, agent_id: str, store: AgentMemoryStore) -> None:
+        if not agent_id:
+            raise ValueError("agent_id must be a non-empty string")
+        self._agent_id = agent_id
+        self._store = store
+
+    @property
+    def agent_id(self) -> str:
+        return self._agent_id
+
+    def read(self, key: str) -> str | None:
+        if not key:
+            return None
+        return self._store._cell(self._agent_id).get(key)
+
+    def write(self, key: str, value: str) -> None:
+        if not key:
+            raise ValueError("memory key must be a non-empty string")
+        # Reject huge values to keep the in-memory store cheap. v2.6.0
+        # ships a conservative 64 KiB cap; M10's SQLite backend will
+        # bump it.
+        if len(value) > 65536:
+            raise ValueError("memory value exceeds 64 KiB limit")
+        self._store._cell(self._agent_id)[key] = value
+
+    def delete(self, key: str) -> bool:
+        cell = self._store._cell(self._agent_id)
+        if key in cell:
+            del cell[key]
+            return True
+        return False
+
+    def list_keys(self) -> tuple[str, ...]:
+        return tuple(sorted(self._store._cell(self._agent_id)))

@@ -533,6 +533,14 @@ class AppState:
             logger.warning("agent_loader: %r", exc)
             state.user_agent_roles = {}
 
+        # v16 M1: populate the AgentRegistry so AgentTool's input_schema
+        # surfaces user-defined roles in the LLM tool list.
+        try:
+            from llm_code.runtime.agent_registry import get_registry
+            get_registry().discover(state.cwd)
+        except Exception as exc:  # noqa: BLE001 — never crash session init
+            logger.warning("agent_registry discovery failed: %r", exc)
+
         # Build project index
         try:
             from llm_code.runtime.indexer import ProjectIndexer
