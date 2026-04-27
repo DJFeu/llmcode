@@ -49,6 +49,17 @@ class ModelProfile:
     reasoning_field: str = ""  # e.g. "reasoning_content", "" = auto-detect
     thinking_extra_body_format: str = "chat_template_kwargs"  # or "anthropic_native"
     default_thinking_budget: int = 10000
+    # v2.8.1 — per-iteration thinking budget for the post-tool consumption
+    # phase (iteration > 0 AND a tool was already called this turn). The
+    # rationale: iteration 0 needs full thinking to decide which tool to
+    # call and how to shape the args, but iteration 1+ is summarising a
+    # tool result that's already ground truth — deep reasoning at that
+    # phase is largely redundant and burns 30-90s of wall clock on slow
+    # local models. ``0`` (the default) disables the override and the
+    # full ``default_thinking_budget`` is used for every iteration,
+    # preserving v2.8.0 behaviour byte-for-byte. GLM-5.1's profile opts
+    # in to a 1024-token cap on consumption iterations.
+    post_tool_thinking_budget: int = 0
 
     # ── Sampling ──────────────────────────────────────────────────────
     default_temperature: float = -1.0  # -1 = use config; >=0 = model-specific default
@@ -679,7 +690,12 @@ def _profile_from_dict(data: dict[str, Any], base: ModelProfile | None = None) -
     section_map = {
         "provider": "provider_type",
         "streaming": ("implicit_thinking", "reasoning_field"),
-        "thinking": ("thinking_extra_body_format", "default_thinking_budget"),
+        "thinking": (
+            "thinking_extra_body_format",
+            "default_thinking_budget",
+            # v2.8.1 — per-iteration budget for post-tool consumption.
+            "post_tool_thinking_budget",
+        ),
         "pricing": ("price_input", "price_output"),
         "limits": ("max_output_tokens", "context_window"),
         "sampling": ("default_temperature", "reasoning_effort"),

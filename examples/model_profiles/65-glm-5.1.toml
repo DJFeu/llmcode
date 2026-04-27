@@ -34,6 +34,12 @@ reasoning_field = "reasoning_content"
 # chat_template_kwargs route as vLLM.
 thinking_extra_body_format = "chat_template_kwargs"
 default_thinking_budget = 16384
+# v2.8.1 — post-tool consumption iterations don't need 16384 thinking
+# tokens to summarise an already-fetched tool result. Cap at 1024 so
+# iteration 0 (decision phase) keeps full reasoning depth while
+# iteration 1+ (consume + answer) stops burning ~30-90s of wall clock
+# on redundant chain-of-thought. Set to 0 to disable the override.
+post_tool_thinking_budget = 1024
 
 [sampling]
 # GLM family upstream guidance suggests 0.6; matches DeepSeek-R1 which

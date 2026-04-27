@@ -150,6 +150,7 @@ def build_thinking_extra_body(
     runtime: Any = None,
     max_output_tokens: int | None = None,
     profile: Any = None,
+    post_tool_iteration: bool = False,
 ) -> dict | None:
     """Build extra_body dict for thinking mode configuration.
 
@@ -175,6 +176,14 @@ def build_thinking_extra_body(
     scaling), never silently clipped to ``max_output_tokens / 2``.
     Profiles with ``default_thinking_budget == 0`` (the dataclass
     default value) fall through to the v2.6.0 adaptive path.
+
+    v2.8.1 — when ``post_tool_iteration=True`` AND
+    ``profile.post_tool_thinking_budget`` is non-zero, that smaller
+    budget replaces ``default_thinking_budget`` for this single call.
+    Iteration 0 (decision phase) is unaffected. Iteration 1+ on a
+    turn that already dispatched a tool gets the reduced budget,
+    saving 30-90s on slow local models without degrading the
+    decision-phase reasoning that actually needs depth.
     """
     fmt = "chat_template_kwargs"
     if profile is not None:
@@ -195,6 +204,19 @@ def build_thinking_extra_body(
         if profile is not None
         else 0
     )
+
+    # v2.8.1 — substitute the post-tool budget when applicable. Only
+    # fires when (a) we are past iteration 0, (b) profile pins a
+    # non-zero override, AND (c) the existing default budget path is
+    # already engaged (profile_budget > 0). Profiles that don't opt
+    # in retain their full ``default_thinking_budget`` on every
+    # iteration — v2.8.0 byte-for-byte.
+    if post_tool_iteration and profile is not None:
+        post_tool_budget = int(
+            getattr(profile, "post_tool_thinking_budget", 0) or 0
+        )
+        if post_tool_budget > 0 and profile_budget > 0:
+            profile_budget = post_tool_budget
 
     def _budget_from_profile() -> int:
         """Build the effective budget when the profile pins it.
@@ -1262,6 +1284,12 @@ class ConversationRuntime:
                     runtime=self,
                     max_output_tokens=_current_max_tokens,
                     profile=self._model_profile,
+                    # v2.8.1 — iteration 1+ on a turn that already
+                    # dispatched a tool is the consumption phase; the
+                    # profile's reduced budget kicks in here when set.
+                    post_tool_iteration=(
+                        _iteration > 0 and _tool_called_this_turn
+                    ),
                 ) if not use_native else None,
             )
 
@@ -1383,6 +1411,11 @@ class ConversationRuntime:
                             runtime=self,
                             max_output_tokens=_current_max_tokens,
                             profile=self._model_profile,
+                            # v2.8.1 — same post-tool gate as the main
+                            # call site above; XML retry path mirrors.
+                            post_tool_iteration=(
+                                _iteration > 0 and _tool_called_this_turn
+                            ),
                         ),
                     )
                     try:

@@ -1,5 +1,71 @@
 # Changelog
 
+## v2.8.1 — Per-iteration thinking budget (no quality loss)
+
+Closes the wall-clock-on-GLM-5.1 gap that v2.6.1's M1 fix
+intentionally widened. v2.6.1 honored the profile's full
+``default_thinking_budget`` (16384 for GLM) on every turn iteration —
+the right move for iteration 0 (decision phase: which tool to call,
+what args to pass), but wasteful from iteration 1 onward (the
+consumption phase: summarise the tool result that's already ground
+truth and emit content).
+
+v2.8.1 adds a per-iteration override:
+
+```toml
+# 65-glm-5.1.toml
+[thinking]
+default_thinking_budget = 16384      # iteration 0 keeps full reasoning
+post_tool_thinking_budget = 1024     # iteration 1+ caps at 1024
+```
+
+GLM-5.1's profile opts in. Set ``post_tool_thinking_budget = 0`` to
+disable the override (preserves v2.8.0 behaviour byte-for-byte).
+
+### Why this isn't a quality loss
+
+Iteration 0 picks the tool and shapes args — the reasoning depth
+that decides "search Exa for X with these params" matters. After
+the tool returns, iteration 1's job is summarise + cite + format.
+Deep chain-of-thought there reasons over already-fetched ground
+truth and adds little signal at large wall-clock cost. Reducing
+the budget for that single phase is "stop doing redundant work",
+not "stop reasoning".
+
+### Activation gate
+
+The reduced budget kicks in only when ALL three hold:
+
+1. ``post_tool_iteration=True`` — iteration > 0 AND a tool fired this turn
+2. Profile's ``post_tool_thinking_budget > 0`` (opt-in)
+3. Profile's ``default_thinking_budget > 0`` (legacy adaptive flow opts out)
+
+Reasoning-effort scaling and small-model caps still apply on top.
+
+### Expected wall-clock impact (GLM-5.1)
+
+Pre-v2.8.1: iteration 0 thinks 16384 → tool call → iteration 1
+thinks 16384 → emit content. **Two** full-budget reasoning passes.
+
+v2.8.1: iteration 0 thinks 16384 → tool call → iteration 1 thinks
+≤1024 → emit content. **Saves ~30-90s per turn** depending on how
+much GLM was actually burning in consumption phase pre-fix.
+
+Anthropic profiles default to ``post_tool_thinking_budget = 0``
+(unchanged) — `cache_control` already optimises that pipeline.
+
+### Tests
+
+8 new in `tests/test_runtime/test_post_tool_thinking_budget_v281.py`:
+iteration-0 keeps default; post-tool iteration uses override;
+override = 0 preserves v2.8.0; legacy adaptive opts out;
+``reasoning_effort`` scaling applies; back-compat without kwarg;
+TOML round-trip with + without the field.
+
+Suite: 8605 → 8613 (+8). Ruff clean. All four guards green.
+
+---
+
 ## v2.8.0 — RAG pipeline deepening GA
 
 Promotes the v2.8.0a1 + v2.8.0a2 alphas to GA. 185 new tests across
