@@ -1,9 +1,113 @@
 # Changelog
 
-## v2.8.0 — RAG pipeline GA (research keystone + Firecrawl)
+## v2.8.0 — RAG pipeline deepening GA
 
-Final wave of v17. Adds 56 tests (M5 + M6); promotes the alpha
-content from 2.8.0a1 + 2.8.0a2 to GA.
+Promotes the v2.8.0a1 + v2.8.0a2 alphas to GA. 185 new tests across
+six mechanisms — rerank Protocol + 3 backends, health-aware
+fallback, multi-query expansion, Linkup sourced-answer mode, the
+high-level `research` tool, and an optional Firecrawl extraction
+backend. After v2.8.0 a query like `research transformers attention
+2025` runs N parallel sub-queries, fetches top-K pages, reranks for
+relevance, and returns 3 fully-extracted sources to the model — one
+tool call where v2.7.0 needed three.
+
+What's in:
+
+### M1 — Rerank backends
+
+New `llm_code/tools/rerank/` package with a `RerankBackend` Protocol
+and 4 implementations:
+
+* `LocalRerankBackend` — `sentence-transformers/ms-marco-MiniLM-L-6-v2`
+  cross-encoder (default, free, runs on CPU). Lazy-loads the model
+  once per process; cached at module level so successive calls reuse
+  the hot model. Requires the `[memory]` extra; without it the first
+  `rerank()` call raises a clear `ImportError("install llmcode-cli[memory] ...")`.
+* `CohereRerankBackend` — `rerank-multilingual-v3.0` via the Cohere
+  REST API. Free tier 1000/mo. `COHERE_API_KEY` env var. Empty key
+  raises `AuthError` eagerly so misconfigured deployments fail loudly
+  instead of silently consuming nothing.
+* `JinaRerankBackend` — `jina-reranker-v2-base-multilingual` via
+  Jina's REST API. Anonymous tier supported (rate-limited);
+  `JINA_API_KEY` raises the limit.
+* `IdentityRerankBackend` (`name="none"`) — passthrough used when
+  `profile.rerank_backend == "none"` so callers never branch on
+  "is reranking enabled?".
+
+A new `RerankTool` (`name="rerank"`) exposes the same capability as
+a first-class LLM tool — input `{query, documents, top_k}`, output
+markdown ranked list with scores. Auto-resolves the backend from
+`profile.rerank_backend`.
+
+Disk-space note: the local backend's first use downloads the ~80MB
+cross-encoder into `~/.cache/huggingface/hub/`. Cached afterwards.
+
+### M2 — Multi-query expansion
+
+New `llm_code/tools/research/expansion.py` exposes `expand(query,
+profile)` and `expand_template(query, max_subqueries)`. Two
+strategies, dispatched on `profile.research_query_expansion`:
+
+* `"template"` (default, free) — pattern-rule expansion. 5 rules
+  cover `research X`, `X vs Y`, time-sensitive triggers,
+  how-to / 如何 / 教學, what-is. CJK trigger words mirror the v2.3.1
+  `_TIME_SENSITIVE_TRIGGERS` so Chinese-language asks get the same
+  treatment.
+* `"llm"` (opt-in) — single round-trip via `profile.tier_c_model`
+  asking for a JSON array of 2-3 alternate phrasings. Falls back to
+  template on parse error or missing provider/model. The reusable
+  call shape mirrors `runtime/skill_router._classify_with_llm_debug`
+  (sys/user message pair, max 256 tokens, temperature 0.0).
+* `"off"` — single-shot, returns only the original query.
+
+Original query is always element 0 of the returned tuple — defensive
+baseline so a botched expansion still searches the user's words.
+Sub-queries are deduplicated case-insensitively against the original
+and each other; capped at `profile.research_max_subqueries`.
+
+### M3 — Linkup sourced-answer mode
+
+Extends `LinkupBackend` (from v2.7.0a1) with a `sourced_answer(query,
+depth)` method that calls Linkup's `outputType: "sourcedAnswer"` mode
+— a model-grounded answer plus citation sources in one round-trip.
+M5's research tool short-circuits to this when
+`profile.linkup_default_mode == "sourcedAnswer"` and Linkup is
+healthy.
+
+New frozen dataclasses `Source` (title / url / snippet) and
+`SourcedAnswer` (answer / sources tuple) preserve the immutability
+convention. Empty `sources` array → empty tuple (not `None`) so
+callers can iterate unconditionally.
+
+Auth + error handling matches the existing `search()` path:
+`RateLimitError` on 429, `ValueError` mentioning the env var on
+401/403, `ValueError` with parse / transport detail on any other
+failure.
+
+The existing v2.7.0a1 `search()` method is byte-identical to v2.7.0;
+backward-compat is asserted by a regression test in
+`test_linkup_sourced.py`.
+
+### M4 — Backend health-check + smart fallback
+
+New `llm_code/tools/search_backends/health.py` adds per-process
+circuit-breaker tracking for each search backend. Three consecutive
+failures (rate-limit / timeout / generic error) opens the circuit
+for 5 minutes; any successful call resets the failure counter
+immediately.
+
+`_search_with_fallback` now calls `sort_chain()` once at the start
+of each search, demoting unhealthy backends to the end (preserving
+their relative priority among other unhealthy backends). On
+exception it records the failure kind and continues; on success it
+records the success and returns when results are non-empty.
+
+Concurrency: the module-level `_health` dict is guarded by a
+`threading.Lock` so concurrent `record_failure` calls from
+`asyncio.gather` (e.g. M5's research pipeline) don't race.
+
+The `backend_health_check_enabled` profile flag (default True) lets
+deterministic test scenarios opt out of the smart-fallback ordering.
 
 ### M5 — `research` high-level tool (the v2.8.0 keystone)
 
@@ -54,26 +158,43 @@ is byte-identical to v2.7.0.
 `"auto"` mode tries Jina (v2.7.0a1) → local readability (v2.6.x) →
 Firecrawl (v2.8.0 M6) only if both prior backends produced <200
 useful chars AND `FIRECRAWL_API_KEY` is set. Explicit
-`extraction_backend="firecrawl"` mode bypasses Jina + local.
+`extraction_backend="firecrawl"` mode bypasses Jina + local. The
+async `WebFetchTool.execute_async` mirrors the sync chain.
 
-The async `WebFetchTool.execute_async` mirrors the sync chain.
+### Profile schema additions
+
+Seven new profile fields (declared upfront in M1's commit so
+M2-M6 don't double-bump the dataclass):
+
+* `rerank_backend: str = "local"` (M1)
+* `research_query_expansion: str = "template"` (M2)
+* `research_max_subqueries: int = 3` (M2)
+* `research_default_depth: str = "standard"` (M5)
+* `research_max_concurrency: int = 5` (M5)
+* `linkup_default_mode: str = "searchResults"` (M3)
+* `backend_health_check_enabled: bool = True` (M4)
+
+`WebSearchConfig` gains `cohere_api_key_env = "COHERE_API_KEY"` (M1)
+and `firecrawl_api_key_env = "FIRECRAWL_API_KEY"` (M6).
 
 ### README + tools section
 
 The Web row in the Tools table now lists `web_search`, `web_fetch`
-(with Jina + optional Firecrawl), `rerank`, and `research`.
+(with Jina + optional Firecrawl), `rerank`, and `research`. Two new
+tools (`rerank`, `research`) registered alongside the existing 17
+core tools — total 19.
 
 ### Tests + guard rails
 
-* 56 new tests across the pipeline orchestrator, ResearchTool,
-  Firecrawl backend, and integration with the v2.8.0 M4 health
-  module.
-* All Firecrawl tests use `respx` mocks — no real Firecrawl calls
-  in CI.
-* Pipeline tests use deterministic doubles for search_fn / fetch_fn
-  via `_make_search_fn` / `_make_fetch_fn` helpers.
+* 185 new tests across the six mechanisms.
+* Local rerank backend tests inject a fake `CrossEncoder` via
+  `sys.modules` so CI doesn't pay the 80MB model download.
+* All cloud-backend tests (Cohere, Jina rerank, Firecrawl) use
+  `respx` mocks — no real network calls in CI.
+* Pipeline tests use deterministic doubles for `search_fn` /
+  `fetch_fn` via dependency injection.
 * v15 grep guard, v15 byte-parity, README↔reality, and v2.6.1
-  system-prompt parity gates all stay green.
+  system-prompt parity gates all stay green throughout the release.
 
 ### Migration notes
 
@@ -88,150 +209,12 @@ No breaking changes for users on v2.7.0:
 
 To opt into the new RAG pipeline:
 
-* Set `profile.rerank_backend = "local"` (default) and install
+* Set `profile.rerank_backend = "local"` (default) and install the
   `[memory]` extra: `pip install llmcode-cli[memory]`.
-* Set `COHERE_API_KEY` to use Cohere reranker instead.
+* Set `COHERE_API_KEY` to use the Cohere reranker instead.
 * Set `FIRECRAWL_API_KEY` to enable the third extraction fallback.
 * Set `profile.linkup_default_mode = "sourcedAnswer"` to short-
   circuit the research tool to Linkup's hosted RAG.
-
-## v2.8.0a2 — Multi-query expansion + Linkup sourced-answer
-
-Second wave of v17. Adds 43 tests; bumps to 2.8.0a2.
-
-### M2 — Multi-query expansion
-
-New `llm_code/tools/research/expansion.py` exposes `expand(query,
-profile)` and `expand_template(query, max_subqueries)`. Two
-strategies, dispatched on `profile.research_query_expansion`:
-
-* `"template"` (default, free) — pattern-rule expansion. 5 rules
-  cover `research X`, `X vs Y`, time-sensitive triggers,
-  how-to / 如何 / 教學, what-is. CJK trigger words mirror the v2.3.1
-  `_TIME_SENSITIVE_TRIGGERS` so Chinese-language asks get the same
-  treatment.
-* `"llm"` (opt-in) — single round-trip via `profile.tier_c_model`
-  asking for a JSON array of 2-3 alternate phrasings. Falls back to
-  template on parse error or missing provider/model. The reusable
-  call shape mirrors `runtime/skill_router._classify_with_llm_debug`
-  (sys/user message pair, max 256 tokens, temperature 0.0).
-* `"off"` — single-shot, returns only the original query.
-
-Original query is always element 0 of the returned tuple — defensive
-baseline so a botched expansion still searches the user's words.
-Sub-queries are deduplicated case-insensitively against the original
-and each other; capped at `profile.research_max_subqueries`.
-
-### M3 — Linkup sourced-answer mode
-
-Extends `LinkupBackend` (from v2.7.0a1) with a `sourced_answer(query,
-depth)` method that calls Linkup's `outputType: "sourcedAnswer"` mode
-— a model-grounded answer plus citation sources in one round-trip.
-M5's research tool (wave 3) will short-circuit to this when
-`profile.linkup_default_mode == "sourcedAnswer"` and Linkup is
-healthy.
-
-New frozen dataclasses `Source` (title / url / snippet) and
-`SourcedAnswer` (answer / sources tuple) preserve the immutability
-convention. Empty `sources` array → empty tuple (not `None`) so
-callers can iterate unconditionally.
-
-Auth + error handling matches the existing `search()` path:
-`RateLimitError` on 429, `ValueError` mentioning the env var on
-401/403, `ValueError` with parse / transport detail on any other
-failure.
-
-The existing v2.7.0a1 `search()` method is byte-identical to v2.7.0;
-backward-compat is asserted by a regression test in
-`test_linkup_sourced.py`.
-
-## v2.8.0a1 — RAG pipeline foundation (rerank backends + health-aware fallback)
-
-First wave of v17 (the v2.8.0 RAG pipeline deepening). Closes the
-"naive top-N take" gap from v2.7.0 with a rerank Protocol + 3
-backends, and replaces the static fallback chain with a circuit-
-breaker that demotes unhealthy backends to the end of the chain
-instead of paying retry latency on every call.
-
-Profile schema additions are landed all at once (M1 commit) so M2-M6
-in subsequent waves don't double-bump the dataclass — see
-`llm_code/runtime/model_profile.py::ModelProfile` for the seven new
-v2.8.0 fields.
-
-### M1 — Rerank backends
-
-New `llm_code/tools/rerank/` package with a `RerankBackend` Protocol
-and 3 implementations:
-
-* `LocalRerankBackend` — `sentence-transformers/ms-marco-MiniLM-L-6-v2`
-  cross-encoder (default, free, runs on CPU). Lazy-loads the model
-  once per process; cached at module level so successive calls reuse
-  the hot model. Requires the `[memory]` extra; without it the first
-  `rerank()` call raises a clear `ImportError("install llmcode-cli[memory] ...")`.
-* `CohereRerankBackend` — `rerank-multilingual-v3.0` via the Cohere
-  REST API. Free tier 1000/mo. `COHERE_API_KEY` env var. Empty key
-  raises `AuthError` eagerly so misconfigured deployments fail loudly
-  instead of silently consuming nothing.
-* `JinaRerankBackend` — `jina-reranker-v2-base-multilingual` via
-  Jina's REST API. Anonymous tier supported (rate-limited);
-  `JINA_API_KEY` raises the limit.
-* `IdentityRerankBackend` (`name="none"`) — passthrough used when
-  `profile.rerank_backend == "none"` so callers never branch on
-  "is reranking enabled?".
-
-A new `RerankTool` (`name="rerank"`) exposes the same capability as a
-first-class LLM tool — input `{query, documents, top_k}`, output
-markdown ranked list with scores. Auto-resolves the backend from
-`profile.rerank_backend`.
-
-Disk-space note: the local backend's first use downloads the ~80MB
-cross-encoder into `~/.cache/huggingface/hub/`. Cached afterwards.
-
-### M4 — Backend health-check + smart fallback
-
-New `llm_code/tools/search_backends/health.py` adds per-process
-circuit-breaker tracking for each search backend. Three consecutive
-failures (rate-limit / timeout / generic error) opens the circuit for
-5 minutes; any successful call resets the failure counter immediately.
-
-`_search_with_fallback` now calls `sort_chain()` once at the start of
-each search, demoting unhealthy backends to the end (preserving their
-relative priority among other unhealthy backends). On exception it
-records the failure kind and continues; on success it records the
-success and returns when results are non-empty.
-
-Concurrency: the module-level `_health` dict is guarded by a
-`threading.Lock` so concurrent `record_failure` calls from
-`asyncio.gather` (e.g. M5's research pipeline) don't race.
-
-The `backend_health_check_enabled` profile flag (default True) lets
-deterministic test scenarios opt out of the smart-fallback ordering.
-
-### Profile schema additions (declared upfront, M2-M6 will populate)
-
-* `rerank_backend: str = "local"` (M1)
-* `research_query_expansion: str = "template"` (M2 — wave 2)
-* `research_max_subqueries: int = 3` (M2 — wave 2)
-* `research_default_depth: str = "standard"` (M5 — wave 3)
-* `research_max_concurrency: int = 5` (M5 — wave 3)
-* `linkup_default_mode: str = "searchResults"` (M3 — wave 2)
-* `backend_health_check_enabled: bool = True` (M4)
-
-`WebSearchConfig` gains `cohere_api_key_env = "COHERE_API_KEY"` (M1)
-and `firecrawl_api_key_env = "FIRECRAWL_API_KEY"` (declared in M1 to
-avoid a schema double-bump when M6 lands in wave 3).
-
-### Tests + guard rails
-
-* 86 new tests across rerank backends, factory, RerankTool, and
-  health-check / fallback integration.
-* Local backend tests inject a fake `CrossEncoder` via `sys.modules`
-  so CI doesn't pay the model download cost; manual smoke against
-  the real model documented in spec §8.
-* All cloud backend tests use `respx` mocks — no real Cohere / Jina
-  calls in CI.
-* v15 grep guard, v15 byte-parity, README↔reality, and v2.6.1
-  system-prompt parity gates all stay green.
 
 ## v2.7.0 — RAG free-tier search backends GA
 
