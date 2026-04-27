@@ -1,5 +1,97 @@
 # Changelog
 
+## v2.6.0a4 — Wave 4 of v16 (M9)
+
+Fourth alpha of v2.6.0. Adds the formal client/server API + session
+sharing surface (M9) borrowed from opencode and rewritten for
+llmcode conventions.
+
+### M9 — Formal client/server API + session sharing
+
+A new `llm_code/server/` package exposes JSON-RPC 2.0 over WebSocket:
+
+- `proto.py` — frozen dataclasses for `JsonRpcRequest`,
+  `JsonRpcResponse`, `EventNotification`, plus `parse_message`,
+  `encode_request`, `encode_response`, `encode_event`. Method
+  catalogue: `session.create`, `session.attach`, `session.send`,
+  `session.subscribe_events`, `session.fork`, `session.detach`,
+  `session.close`.
+- `server.py` — `SessionManager` + `ServerSession` + `ClientHandle`.
+  Each session keeps a 1000-event ring buffer, one writer slot, and
+  N observer queues. `dispatch(token, request, client_id)` is the
+  single dispatcher entry point and is fully unit-tested without
+  binding a port.
+- `tokens.py` — HMAC-signed bearer tokens persisted in SQLite WAL
+  at `~/.llmcode/server/tokens.db`. Validation hits the DB row on
+  every request, so `revoke` is immediate. `LLMCODE_SERVER_TOKEN_SECRET`
+  pre-seeds the HMAC secret for multi-host deployments.
+- `client.py` — async Python client lib with auto-reconnect +
+  `last_event_id` resumption. `EVENTS_EVICTED` is handled via the
+  optional `on_evicted` callback.
+- `websocket_transport.py` — separate transport tier so the
+  dispatcher stays test-focused. Bearer tokens never appear in
+  logs (only the 8-char SHA-256 fingerprint).
+
+CLI surface:
+
+- `llmcode server start [--host 127.0.0.1] [--port 8080]`
+- `llmcode server stop`
+- `llmcode server token grant <session_id> [--role writer|observer]
+   [--ttl 3600]`
+- `llmcode server token revoke <token>`
+- `llmcode server token list`
+- `llmcode connect <ws-url> --token <token> [--role ...]
+   [--session-id ...]`
+
+The legacy `llmcode --serve` (debug REPL) is unchanged. The new
+server is a separate surface with separate defaults; a bound writer
+token cannot mint new sessions, an observer token cannot upgrade to
+writer, a session-scoped token cannot reach a different session.
+
+Multi-client semantics:
+
+- One writer per session at a time. Second writer attach by a
+  different `client_id` returns `WRITER_CONFLICT` (-32002).
+- Re-attach by the same `client_id` is a no-op.
+- A writer attaching as `observer` releases the writer slot first,
+  so a second writer can take over (R3 mitigation).
+
+Reconnect flow: each `attach` carries `last_event_id`; the server
+replays the buffered tail; on cursor older than the buffer it
+returns `EVENTS_EVICTED` (-32004) so the client can drop local
+state and re-attach fresh.
+
+### Tests
+
+34 new tests under `tests/test_server/`:
+
+- `test_protocol.py` — encode/decode round trips + dispatch surface
+  (12 tests).
+- `test_multi_client.py` — writer/observer fanout, conflict
+  detection, idempotent re-attach, downgrade, replay, eviction,
+  fork, detach, 50-observer broadcast, cross-session token
+  rejection (11 tests).
+- `test_token_lifecycle.py` — grant/validate/revoke/expire,
+  fingerprint discipline, tampered-signature rejection, store
+  survives reopen, revocation immediate at next dispatch (11
+  tests).
+
+Suite: 8216 → 8245 passed (+29 net new). v15 grep guard +
+byte-parity gate + README↔reality test all green.
+
+### Acceptance criteria covered
+
+- ✅ `llmcode server start` runs concurrent sessions safely
+- ✅ Multi-client write/observe works; writer-conflict detected
+- ✅ Reconnect with `last_event_id` is lossless
+- ✅ Token issue/revoke survives restart
+- ✅ Legacy `llmcode --serve` unchanged
+
+### Documentation
+
+- `docs/server.md` — quick start, methods, multi-client semantics,
+  reconnect flow, error codes, operations.
+
 ## v2.6.0a3 — Wave 3 of v16 (M7 + M8)
 
 Third alpha of v2.6.0. Adds expressive subagent tool policies with

@@ -506,6 +506,16 @@ def _register_subcommands() -> None:
     except Exception:  # pragma: no cover — defensive
         pass
 
+    # v16 M9 — formal client/server API. ``llmcode server start|stop|token``
+    # and ``llmcode connect``. Imported lazily and silenced on failure so
+    # the optional ``[websocket]`` extra never blocks the top-level CLI.
+    try:
+        from llm_code.cli.server_commands import connect_command, server_group
+        main.add_command(server_group, name="server")
+        main.add_command(connect_command, name="connect")
+    except Exception:  # pragma: no cover — defensive
+        pass
+
 
 _register_subcommands()
 
