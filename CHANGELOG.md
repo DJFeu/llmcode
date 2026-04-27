@@ -1,5 +1,105 @@
 # Changelog
 
+## v2.6.0 — Audit closure + cross-project borrow GA
+
+GA cut for v16. Closes the four half-wired-feature gaps surfaced by
+the v2.5.x audit (M1–M4) and ports six features from qwen-code,
+gemini-cli, opencode, and codex (M5–M10). After v2.6.0, every
+feature claimed in the README has matching runtime behaviour.
+
+The 10-mechanism rollout shipped across four alpha/RC waves
+(`a1`/`a2`/`a3`/`a4`/`rc1`); the per-wave entries below cover the
+incremental shape. This top section is the GA-level summary.
+
+### Audit closure (M1–M4)
+
+- **M1 — Dynamic agent role enum.** `AgentTool.input_schema` now
+  builds the `enum` from `AgentRegistry`, so user-defined roles in
+  `.llmcode/agents/*.md` are reachable end-to-end.
+- **M2 — Agent memory subagent wiring.** `subagent_factory.spawn`
+  injects `memory_read`/`memory_write`/`memory_list` per spawn
+  scoped by `agent_id`; profile flag `agent_memory_enabled`
+  defaults on.
+- **M3 — Plugin marketplace installer integration.** `/plugin
+  install` routes through `marketplace.installer.install_plugin`
+  with the security scan; `executor.attach_plugin_tools` registers
+  manifest-declared tools into the live runtime registry.
+- **M4 — `/theme` + `/vim` runtime support.** Both slash commands
+  apply to the live prompt_toolkit + Rich path and persist to
+  `~/.llmcode/config.json::ui`. Eight built-in themes match the
+  README.
+
+### Cross-project borrows (M5–M10)
+
+- **M5 — Extension manifest.** `marketplace/manifest.toml` schema +
+  `marketplace.validator` + `marketplace.converters.claude_plugin`.
+  Subdir-bearing manifests install into the right layer; Claude
+  plugins import via the converter.
+- **M6 — `/auth` + provider/OAuth/free-tier UX.** Per-provider
+  credential handlers under `runtime/auth/handlers/*.py`; storage
+  in `~/.llmcode/auth/<provider>.json` (mode 0600); `/auth
+  list|login|logout|status` slash command.
+- **M7 — Subagent wildcard tools + inline MCP + per-agent policy.**
+  `.llmcode/agents/<role>.md` frontmatter accepts wildcard tool
+  patterns, inline MCP server entries with SIGTERM→SIGKILL
+  teardown, and prebuilt `tool_policy` strings.
+- **M8 — GitHub Action wrapper.** `--headless` flag + composite
+  action at `.github/llmcode-action.yml` + 3 templates under
+  `.github/templates/`. Structured exit codes (0=success, 1=tool,
+  2=model, 3=auth, 4=user-cancel).
+- **M9 — Formal client/server API.** New `llm_code/server/`
+  package: JSON-RPC 2.0 over WebSocket, multi-client per session,
+  HMAC bearer tokens persisted in SQLite WAL. CLI: `llmcode server
+  start|stop|token grant|revoke|list` + `llmcode connect <url>`.
+  Legacy `llmcode --serve` debug REPL unchanged.
+- **M10 — Codex inspirations.** `MCPCallApproval` for per-call MCP
+  granularity; SQLite state DB at `~/.llmcode/state.db` with
+  optional `llmcode migrate v2.6 state-db` migration; transcript
+  pager component with model-first navigation + search exposed via
+  `/transcript`.
+
+### Profile schema additions (v16)
+
+```toml
+[runtime]
+agent_memory_enabled = true        # M2
+
+[mcp]
+approval_granularity = "tool"      # M10 — "tool" | "call"
+
+[ui]
+theme = "default"                  # M4 — one of 8 built-in themes
+vim_mode = false                   # M4 — runtime-toggleable
+```
+
+### Tests
+
+Suite: 8160 (pre-v16) → 8288 passed (+128 net new). v15 grep guard
+(`tests/test_no_model_branch_in_core.py`), v15 byte-parity
+(`tests/test_api/parity/`), and README↔reality
+(`tests/test_readme_claims_match_runtime.py`) all green.
+
+### Acceptance criteria
+
+- ✅ `.llmcode/agents/custom.md` defines a role; `/agent custom "..."`
+  invokes it (M1)
+- ✅ Subagent memory round-trips across spawn boundary (M2)
+- ✅ `/plugin install <claude-code-plugin>` runs Claude converter,
+  installs, tools available immediately (M3 + M5)
+- ✅ `/theme dracula` re-renders status line; `/vim on` switches
+  editing mode mid-session (M4)
+- ✅ `/auth login zhipu` walks OAuth flow; `/auth list` shows token
+  status (M6)
+- ✅ Custom agent with `tools: ["read_*"]` tries `bash` → denied (M7)
+- ✅ GitHub Action review template runs against a synthetic PR
+  fixture (M8)
+- ✅ Two clients attach to one `llmcode server` session; one writer,
+  one observer; both see streaming (M9)
+- ✅ `/approve mcp_filesystem_read_file --session` grants for the
+  rest of the session; subsequent calls don't re-prompt (M10)
+- ✅ All 10 mechanisms covered by unit + integration tests
+- ✅ README↔reality test green — every README ✅ has runtime backing
+
 ## v2.6.0rc1 — Wave 4 of v16 (M10)
 
 Release candidate for v2.6.0. Adds three high-leverage UX
