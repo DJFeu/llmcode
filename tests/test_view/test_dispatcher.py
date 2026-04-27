@@ -1326,3 +1326,90 @@ def test_mcp_remove_finds_split_schema_entry(
     assert "to_remove" not in data["mcpServers"]["always_on"]
     # on_demand sibling must remain untouched.
     assert "lazy_one" in data["mcpServers"]["on_demand"]
+
+
+def test_loader_promotes_stranded_top_level_into_always_on(tmp_path) -> None:
+    """v2.5.5 — when a config has split schema (``always_on`` and/or
+    ``on_demand``) PLUS sibling top-level server entries (left over
+    from pre-v2.5.4 ``/mcp install`` writes), the loader must promote
+    those siblings into ``always_on`` instead of dropping them."""
+    from llm_code.runtime.config import _dict_to_runtime_config
+    raw = {
+        "model": "x",
+        "mcpServers": {
+            "always_on": {
+                "explicit_server": {"command": "npx", "args": ["-y", "a"]},
+            },
+            "on_demand": {
+                "lazy_server": {"command": "npx", "args": ["-y", "lazy"]},
+            },
+            # Stranded by a prior buggy install — must be rescued.
+            "stranded_server": {"command": "npx", "args": ["-y", "rescued"]},
+        },
+    }
+    cfg = _dict_to_runtime_config(raw)
+    assert "explicit_server" in cfg.mcp_servers
+    assert "stranded_server" in cfg.mcp_servers, (
+        "stranded top-level entry must be promoted to always_on, not "
+        "dropped by the loader's split branch"
+    )
+    # on_demand stays in its own slot (not flattened into always_on
+    # because it's a lazy / opt-in surface).
+    assert "lazy_server" not in cfg.mcp_servers
+    assert "lazy_server" in cfg.mcp.on_demand
+
+
+def test_explicit_always_on_wins_over_stranded(tmp_path) -> None:
+    """When the same key exists both at the top level (stranded) and
+    inside ``always_on`` (explicit), the explicit declaration wins —
+    a user re-declaring a server should not get clobbered by a stale
+    sibling left over from a prior install."""
+    from llm_code.runtime.config import _dict_to_runtime_config
+    raw = {
+        "model": "x",
+        "mcpServers": {
+            "always_on": {
+                "shared_name": {"command": "npx", "args": ["-y", "winner"]},
+            },
+            "shared_name": {"command": "npx", "args": ["-y", "loser"]},
+        },
+    }
+    cfg = _dict_to_runtime_config(raw)
+    assert cfg.mcp_servers["shared_name"]["args"] == ["-y", "winner"]
+
+
+def test_install_rescues_stranded_top_level_entries(
+    dispatcher_factory, backend, tmp_path, monkeypatch,
+) -> None:
+    """v2.5.5 — running ``/mcp install`` on a config with stranded
+    top-level entries (from pre-v2.5.4 installs) MUST migrate them
+    into ``always_on`` on disk so the config self-heals — not just
+    on the next reload, but in the persisted file too."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config_path = tmp_path / ".llmcode" / "config.json"
+    config_path.parent.mkdir(parents=True)
+    import json
+    config_path.write_text(json.dumps({
+        "mcpServers": {
+            "always_on": {
+                "explicit": {"command": "npx", "args": ["-y", "x"]},
+            },
+            "on_demand": {},
+            "stranded": {"command": "npx", "args": ["-y", "y"]},
+        },
+    }))
+
+    state = _make_state(tmp_path)
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("mcp", "install fresh-pkg")
+
+    data = json.loads(config_path.read_text())
+    assert "stranded" not in data["mcpServers"], (
+        "stranded entry must be moved out of the top level"
+    )
+    assert "stranded" in data["mcpServers"]["always_on"], (
+        "stranded entry must be migrated into always_on"
+    )
+    assert "fresh-pkg" in data["mcpServers"]["always_on"]
+    assert "explicit" in data["mcpServers"]["always_on"]

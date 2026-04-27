@@ -1,5 +1,53 @@
 # Changelog
 
+## v2.5.5 — Hotfix: rescue stranded MCP entries from pre-v2.5.4 configs
+
+Codex stop-time review of v2.5.4 caught the third sibling: users
+who ran `/mcp install` under v2.5.0–v2.5.3 against a split-schema
+config still had the new entries written at the top level
+(stranded), and the loader's strict split branch silently dropped
+them. v2.5.4 fixed install for the future but didn't rescue
+already-stranded data.
+
+### Fix
+
+`runtime/config._parse_mcp_config`: when a config uses split schema
+(`always_on` / `on_demand` keys present), promote any sibling
+top-level entries that look like server config dicts into the
+`always_on` view. Explicit `always_on` entries win on key collision
+so a user's deliberate re-declaration is not clobbered by stale
+strands.
+
+`view/dispatcher.py /mcp install`: when running on a split-schema
+config, also migrates stranded top-level entries into `always_on`
+on disk. The persisted config self-heals on the next install
+instead of relying on the loader's runtime view.
+
+### Tests
+
+3 new tests in `test_view/test_dispatcher.py`:
+
+- Loader promotes stranded top-level entry into `always_on`
+- Explicit `always_on` declaration wins on key collision with a
+  stranded sibling
+- `/mcp install` rescues stranded entries on disk during the same
+  command (config self-heals)
+
+Suite: 7964 → 7967 passed (+3).
+
+### Three-fix lineage (v2.5.3 → v2.5.4 → v2.5.5)
+
+| Hotfix | Symptom |
+|---|---|
+| v2.5.3 | `/mcp install` wrote `mcp_servers` (snake_case); loader read `mcpServers` (camelCase). New entry vanished on next startup. |
+| v2.5.4 | `/mcp install` wrote at top level under split schema; loader's split branch read only `always_on` / `on_demand`. New entry vanished. |
+| v2.5.5 | Configs already mutated by v2.5.0–v2.5.3 retained stranded top-level entries. Even after upgrading to v2.5.4 they were silently dropped. v2.5.5 self-heals at both load time and the next install. |
+
+`/mcp install` now works correctly across every key/schema/age
+combination of pre-existing user config.
+
+---
+
 ## v2.5.4 — Hotfix: /mcp install respects split-schema mcpServers
 
 Codex stop-time review of v2.5.3 caught a sibling bug to the

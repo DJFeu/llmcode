@@ -65,17 +65,38 @@ def _parse_mcp_config(raw: dict) -> MCPConfig:
     Legacy schema::
 
         {"filesystem": {...}, "tavily": {...}}   # all treated as always_on
+
+    Mixed / stranded schema (v2.5.0–v2.5.3 ``/mcp install`` bug
+    history): the user's config has ``always_on`` (and/or
+    ``on_demand``) AND top-level sibling entries left over from
+    install commands that didn't know about the split schema. Those
+    siblings would silently disappear under the old strict-split
+    branch. v2.5.5 promotes them into ``always_on`` so users on any
+    schema flavour written by any prior version recover their MCP
+    servers without manual config editing.
     """
     if not isinstance(raw, dict) or not raw:
         return MCPConfig()
     if "always_on" in raw or "on_demand" in raw:
-        always = raw.get("always_on") or {}
-        on_demand = raw.get("on_demand") or {}
-        if not isinstance(always, dict):
-            always = {}
-        if not isinstance(on_demand, dict):
-            on_demand = {}
-        return MCPConfig(always_on=dict(always), on_demand=dict(on_demand))
+        always_raw = raw.get("always_on") or {}
+        on_demand_raw = raw.get("on_demand") or {}
+        if not isinstance(always_raw, dict):
+            always_raw = {}
+        if not isinstance(on_demand_raw, dict):
+            on_demand_raw = {}
+        # Promote stranded top-level entries (anything that isn't
+        # ``always_on`` / ``on_demand`` and looks like a server config
+        # dict) into ``always_on``. Pre-existing ``always_on`` entries
+        # win on key collision so an explicit always_on declaration
+        # overrides a stale stranded sibling.
+        always = {}
+        for key, value in raw.items():
+            if key in {"always_on", "on_demand"}:
+                continue
+            if isinstance(value, dict):
+                always[key] = value
+        always.update(always_raw)
+        return MCPConfig(always_on=always, on_demand=dict(on_demand_raw))
     return MCPConfig(always_on=dict(raw), on_demand={})
 
 

@@ -1533,16 +1533,27 @@ class CommandDispatcher:
                     config_data.setdefault("mcpServers", {}).update(legacy)
                 mcp_block = config_data.setdefault("mcpServers", {})
                 entry = {"command": "npx", "args": ["-y", pkg]}
-                # v2.5.4 — detect the split schema documented in
-                # ``runtime/config.MCPConfig`` (``always_on`` /
-                # ``on_demand`` sub-dicts). Pre-v2.5.4 this wrote the
-                # new server at the top level, which the loader's split
-                # branch silently ignored — install ran, restart didn't
-                # show the server. Default new entries to ``always_on``
-                # so /mcp install matches its prior semantics under
-                # both schemas.
+                # v2.5.4 + v2.5.5 — split-schema handling.
+                #
+                # Detect the split schema documented in
+                # ``runtime/config.MCPConfig``. New entries default to
+                # ``always_on``. v2.5.5 also rescues any stranded
+                # top-level entries left behind by pre-v2.5.4 installs
+                # (they wrote new servers at the top level under split
+                # schema, where the loader silently dropped them).
+                # Promote them into ``always_on`` so the on-disk config
+                # matches the schema the loader actually reads.
                 if "always_on" in mcp_block or "on_demand" in mcp_block:
-                    mcp_block.setdefault("always_on", {})[short_name] = entry
+                    always_dict = mcp_block.setdefault("always_on", {})
+                    stranded_keys = [
+                        k for k, v in list(mcp_block.items())
+                        if k not in {"always_on", "on_demand"}
+                        and isinstance(v, dict)
+                    ]
+                    for k in stranded_keys:
+                        # Existing always_on entries win on key collision.
+                        always_dict.setdefault(k, mcp_block.pop(k))
+                    always_dict[short_name] = entry
                 else:
                     mcp_block[short_name] = entry
                 config_path.parent.mkdir(parents=True, exist_ok=True)
