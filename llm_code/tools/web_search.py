@@ -21,6 +21,8 @@ _VALID_BACKENDS = (
     "brave",
     # v2.7.0a1 M1 — Exa semantic / neural search (free 1000/mo).
     "exa",
+    # v2.7.0a1 M2 — Jina Reader search (free anonymous, optional key).
+    "jina",
     "tavily",
     "searxng",
     "serper",
@@ -63,7 +65,7 @@ class WebSearchTool(Tool):
         return (
             "Search the web for information. "
             "Supports DuckDuckGo (default), Brave, Exa (semantic), "
-            "Tavily, SearXNG, and Serper backends. "
+            "Jina (free anonymous), Tavily, SearXNG, and Serper backends. "
             "Returns ranked results with titles, URLs, and snippets. "
             "For 'today's news' / 'latest X' asks, include the full date "
             "(YYYY-MM-DD — see the Environment section) in the query; a "
@@ -143,6 +145,12 @@ class WebSearchTool(Tool):
         elif backend_name == "exa" and cfg is not None:
             # v2.7.0a1 M1 — Exa semantic / neural search.
             api_key_env = getattr(cfg, "exa_api_key_env", "EXA_API_KEY")
+            api_key = os.environ.get(api_key_env, "")
+            kwargs["api_key"] = api_key
+        elif backend_name == "jina" and cfg is not None:
+            # v2.7.0a1 M2 — Jina Reader search. Anonymous use is OK, so
+            # we forward whatever the env var holds (possibly empty).
+            api_key_env = getattr(cfg, "jina_api_key_env", "JINA_API_KEY")
             api_key = os.environ.get(api_key_env, "")
             kwargs["api_key"] = api_key
         elif backend_name == "tavily" and cfg is not None:
@@ -296,12 +304,14 @@ class WebSearchTool(Tool):
         """Try backends in order until one returns results.
 
         Fallback order (v2.7.0a1):
-            duckduckgo -> brave -> exa -> searxng -> tavily -> serper
+            duckduckgo -> brave -> exa -> jina -> searxng -> tavily -> serper
 
         Only backends that are configured (have API keys / base_url set)
-        are tried. The order puts free / no-key backends first, then
-        free-tier semantic engines, then keyword paid services as
-        last-resort fallbacks.
+        are tried. Jina is special — it has an anonymous tier, so it's
+        always included once `cfg` is available, even without a key.
+        The order puts free / no-key backends first, then free-tier
+        semantic engines, then keyword paid services as last-resort
+        fallbacks.
         """
         # Build ordered list of (backend_name, kwargs) to try
         chain: list[tuple[str, dict]] = []
@@ -323,20 +333,27 @@ class WebSearchTool(Tool):
             if exa_key:
                 chain.append(("exa", {"api_key": exa_key}))
 
-        # 4. SearXNG (if base_url configured)
+        # 4. Jina — anonymous-friendly free tier. v2.7.0a1 M2.
+        # Always included when cfg is loaded; key is optional.
+        if cfg is not None:
+            jina_key_env = getattr(cfg, "jina_api_key_env", "JINA_API_KEY")
+            jina_key = os.environ.get(jina_key_env, "")
+            chain.append(("jina", {"api_key": jina_key}))
+
+        # 5. SearXNG (if base_url configured)
         if cfg is not None:
             searxng_url = getattr(cfg, "searxng_base_url", "")
             if searxng_url:
                 chain.append(("searxng", {"base_url": searxng_url}))
 
-        # 5. Tavily (if API key configured)
+        # 6. Tavily (if API key configured)
         if cfg is not None:
             tavily_key_env = getattr(cfg, "tavily_api_key_env", "TAVILY_API_KEY")
             tavily_key = os.environ.get(tavily_key_env, "")
             if tavily_key:
                 chain.append(("tavily", {"api_key": tavily_key}))
 
-        # 6. Serper (if API key configured)
+        # 7. Serper (if API key configured)
         if cfg is not None:
             serper_key_env = getattr(cfg, "serper_api_key_env", "SERPER_API_KEY")
             serper_key = os.environ.get(serper_key_env, "")

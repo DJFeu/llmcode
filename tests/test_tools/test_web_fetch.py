@@ -112,7 +112,14 @@ class TestWebFetchToolSuccessfulFetch:
         assert isinstance(result, ToolResult)
         assert result.is_error is False
         assert len(result.output) > 0
-        mock_get.assert_called_once()
+        # v2.7.0a1 M2: Jina is tried first (anonymous tier) and falls back
+        # to local httpx because the short mock body fails the
+        # _MIN_USEFUL_CHARS threshold. Either both URLs were hit (2 calls)
+        # or just the local one (cfg unavailable, 1 call). Assert that
+        # at least the original URL was reached.
+        assert mock_get.called
+        called_urls = [c.args[0] for c in mock_get.call_args_list if c.args]
+        assert any("example.com" in u for u in called_urls)
 
     def test_successful_json_fetch(self) -> None:
         tool = WebFetchTool()
@@ -219,13 +226,14 @@ class TestWebFetchToolCacheHit:
         url = "https://example.com/cached-page"
 
         with patch("httpx.get", return_value=mock_response) as mock_get:
-            # First fetch — should call httpx
+            # First fetch — should call httpx (possibly twice: Jina then local)
             result1 = tool.execute({"url": url})
-            # Second fetch — should use cache
+            first_call_count = mock_get.call_count
+            # Second fetch — should use cache (NO additional httpx call)
             result2 = tool.execute({"url": url})
 
-        # httpx should only be called once
-        assert mock_get.call_count == 1
+        # The second fetch must not trigger any additional HTTP traffic.
+        assert mock_get.call_count == first_call_count
         assert result1.output == result2.output
 
     def test_cache_hit_metadata_cached_true(self) -> None:
@@ -260,7 +268,11 @@ class TestWebFetchToolRendererResolution:
                 result = tool.execute({"url": "https://example.com/renderer-auto", "renderer": "auto"})
 
         assert result.is_error is False
-        mock_get.assert_called_once()
+        # Jina-first then local fallback when short body fails threshold;
+        # at minimum the original URL was hit.
+        assert mock_get.called
+        called_urls = [c.args[0] for c in mock_get.call_args_list if c.args]
+        assert any("renderer-auto" in u for u in called_urls)
 
     def test_renderer_default_uses_httpx(self) -> None:
         from llm_code.tools.web_common import UrlCache
@@ -274,4 +286,8 @@ class TestWebFetchToolRendererResolution:
             result = tool.execute({"url": "https://example.com/renderer-default", "renderer": "default"})
 
         assert result.is_error is False
-        mock_get.assert_called_once()
+        # Jina-first then local fallback when short body fails threshold;
+        # at minimum the original URL was hit.
+        assert mock_get.called
+        called_urls = [c.args[0] for c in mock_get.call_args_list if c.args]
+        assert any("renderer-default" in u for u in called_urls)

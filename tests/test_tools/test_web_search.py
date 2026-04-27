@@ -212,10 +212,15 @@ class TestWebSearchToolExecute:
         mock_backend = MagicMock()
         mock_backend.search.return_value = ()
 
+        # auto-fallback chain may try multiple backends — assert that
+        # every search() call carried the requested max_results.
         with patch("llm_code.tools.web_search.create_backend", return_value=mock_backend):
             self.tool.execute({"query": "test", "max_results": 5})
 
-        mock_backend.search.assert_called_once_with("test", max_results=5)
+        assert mock_backend.search.called
+        for call in mock_backend.search.call_args_list:
+            assert call.kwargs.get("max_results") == 5
+            assert call.args == ("test",)
 
     def test_execute_default_max_results(self) -> None:
         mock_backend = MagicMock()
@@ -224,7 +229,10 @@ class TestWebSearchToolExecute:
         with patch("llm_code.tools.web_search.create_backend", return_value=mock_backend):
             self.tool.execute({"query": "test"})
 
-        mock_backend.search.assert_called_once_with("test", max_results=10)
+        assert mock_backend.search.called
+        for call in mock_backend.search.call_args_list:
+            assert call.kwargs.get("max_results") == 10
+            assert call.args == ("test",)
 
     def test_execute_backend_exception_returns_error(self) -> None:
         # When a specific (non-auto) backend raises, the tool returns an error.
@@ -315,11 +323,12 @@ class TestDuckDuckGoRateLimit:
             with patch.dict("os.environ", {"BRAVE_API_KEY": "test-key"}, clear=False):
                 # Ensure no other paid-backend env vars leak in from the host shell.
                 import os as _os
-                for _k in ("EXA_API_KEY", "TAVILY_API_KEY", "SERPER_API_KEY"):
+                for _k in ("EXA_API_KEY", "JINA_API_KEY", "TAVILY_API_KEY", "SERPER_API_KEY"):
                     _os.environ.pop(_k, None)
                 results = tool._search_with_fallback("test", 10, MagicMock(
                     brave_api_key_env="BRAVE_API_KEY",
                     exa_api_key_env="EXA_API_KEY",
+                    jina_api_key_env="JINA_API_KEY",
                     searxng_base_url="",
                     serper_api_key_env="SERPER_API_KEY",
                     tavily_api_key_env="TAVILY_API_KEY",

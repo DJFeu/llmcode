@@ -164,6 +164,22 @@ class WebFetchConfig:
     cache_ttl: float = 900.0
     cache_max_entries: int = 50
     max_length: int = 50_000
+    # v2.7.0a1 M2 — extraction pipeline selector.
+    #
+    # Values:
+    #   "auto"     : try Jina Reader first (free, robust on JS-heavy
+    #                pages), fall back to local readability-lxml +
+    #                html2text on any Jina failure.
+    #   "jina"     : Jina Reader only — error if Jina is unreachable.
+    #                For installs that can rely on JINA_API_KEY.
+    #   "local"    : skip Jina entirely, use the v2.6.x readability
+    #                + html2text path. Preserves the legacy default
+    #                for users who don't want an outbound dependency
+    #                on jina.ai for every fetch.
+    extraction_backend: str = "auto"
+    # ``JINA_API_KEY`` is optional — anonymous mode works for both
+    # the search and reader endpoints, just at a tighter rate limit.
+    jina_api_key_env: str = "JINA_API_KEY"
 
 
 @dataclass(frozen=True)
@@ -174,6 +190,9 @@ class WebSearchConfig:
     serper_api_key_env: str = "SERPER_API_KEY"
     # v2.7.0a1 M1 — Exa semantic / neural search (free 1000/mo).
     exa_api_key_env: str = "EXA_API_KEY"
+    # v2.7.0a1 M2 — Jina Reader search. Anonymous tier is free; with
+    # ``JINA_API_KEY`` the rate limit climbs ~10x.
+    jina_api_key_env: str = "JINA_API_KEY"
     searxng_base_url: str = ""
     max_results: int = 10
     domain_allowlist: tuple[str, ...] = ()

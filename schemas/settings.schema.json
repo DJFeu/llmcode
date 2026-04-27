@@ -694,6 +694,12 @@
         "default_renderer": {
           "type": "string"
         },
+        "extraction_backend": {
+          "type": "string"
+        },
+        "jina_api_key_env": {
+          "type": "string"
+        },
         "max_length": {
           "type": "integer"
         }
@@ -723,6 +729,9 @@
           "type": "array"
         },
         "exa_api_key_env": {
+          "type": "string"
+        },
+        "jina_api_key_env": {
           "type": "string"
         },
         "max_results": {
