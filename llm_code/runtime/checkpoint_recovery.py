@@ -1,4 +1,11 @@
-"""Session checkpoint recovery: save/load full session state for crash recovery."""
+"""Session checkpoint recovery: save/load full session state for crash recovery.
+
+v16 M10 introduces an optional SQLite-backed store
+(:class:`llm_code.runtime.state_db.StateDB`). When the user has run
+``llmcode migrate v2.6 state-db``, the per-session ``state.db``
+becomes the source of truth and JSON files only persist as a fallback
+for users who have not migrated yet.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -10,6 +17,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from llm_code.runtime.session import Session
+    from llm_code.runtime.state_db import StateDB
 
 logger = logging.getLogger(__name__)
 
@@ -19,13 +27,21 @@ _CHECKPOINTS_DIR_NAME = "checkpoints"
 class CheckpointRecovery:
     """Persist and restore full session state for crash recovery.
 
-    Checkpoints are stored as JSON files under
-    ``~/.llmcode/checkpoints/<session_id>.json`` (or a custom *checkpoints_dir*).
+    By default checkpoints live as JSON files under
+    ``~/.llmcode/checkpoints/<session_id>.json``. Pass a
+    :class:`StateDB` (v16 M10) to write/read through SQLite instead;
+    the JSON path is preserved as a read-fallback so unmigrated
+    machines keep working.
     """
 
-    def __init__(self, checkpoints_dir: Path) -> None:
+    def __init__(
+        self,
+        checkpoints_dir: Path,
+        state_db: "StateDB | None" = None,
+    ) -> None:
         self._dir = checkpoints_dir
         self._dir.mkdir(parents=True, exist_ok=True)
+        self._state_db = state_db
         self._auto_save_task: asyncio.Task | None = None
 
     # ------------------------------------------------------------------
@@ -48,6 +64,20 @@ class CheckpointRecovery:
         data["checkpoint_saved_at"] = datetime.now(timezone.utc).isoformat()
         if cost_tracker is not None and hasattr(cost_tracker, "to_dict"):
             data["cost_tracker"] = cost_tracker.to_dict()
+
+        # v16 M10 — when a StateDB is wired, write through it so
+        # subsequent loads can use the single SQLite source of truth.
+        # JSON file is still written for back-compat (users mid-migration
+        # may roll back to v2.5.x and expect the JSON to be there).
+        if self._state_db is not None:
+            try:
+                self._state_db.upsert_session(
+                    session_id=session.id,
+                    payload=data,
+                    project_path=str(getattr(session, "project_path", "")),
+                )
+            except Exception as exc:  # noqa: BLE001 — defensive
+                logger.warning("state_db.upsert failed: %s", exc)
 
         path = self._dir / f"{session.id}.json"
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -72,6 +102,39 @@ class CheckpointRecovery:
         still works.
         """
         from llm_code.runtime.session import Session  # local import to avoid cycles
+
+        # v16 M10 — try the SQLite store first when wired so migrated
+        # sessions resume from there even if the legacy JSON file is
+        # gone. Falls back to JSON when the row is missing or the
+        # store wasn't injected.
+        if self._state_db is not None:
+            payload = self._state_db.load_session(session_id)
+            if payload is not None:
+                payload.pop("checkpoint_saved_at", None)
+                cost_data = payload.pop("cost_tracker", None)
+                try:
+                    session = Session.from_dict(payload)
+                except (KeyError, TypeError) as exc:
+                    logger.warning(
+                        "state_db payload for %s rejected: %s — falling back to JSON",
+                        session_id,
+                        exc,
+                    )
+                else:
+                    if (
+                        cost_tracker is not None
+                        and cost_data is not None
+                        and hasattr(cost_tracker, "restore_from_dict")
+                    ):
+                        try:
+                            cost_tracker.restore_from_dict(cost_data)
+                        except Exception as exc:  # pragma: no cover - defensive
+                            logger.debug(
+                                "cost_tracker.restore_from_dict (state_db) failed for %s: %s",
+                                session_id,
+                                exc,
+                            )
+                    return session
 
         path = self._dir / f"{session_id}.json"
         if not path.exists():

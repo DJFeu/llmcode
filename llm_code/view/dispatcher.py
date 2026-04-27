@@ -2835,5 +2835,144 @@ class CommandDispatcher:
             f"Vim mode {'on' if target else 'off'}.{suffix}"
         )
 
+    # ── v16 M10 — per-call MCP approval + transcript pager ───────────
+
+    def _cmd_approve(self, args: str) -> None:
+        """v16 M10 — manage MCP per-call approvals.
+
+        ``/approve``                    → list current approvals
+        ``/approve <tool>``             → grant one-shot approval for ``<tool>``
+        ``/approve <tool> --session``   → grant session-wide approval
+
+        Approvals are tracked in
+        :class:`llm_code.runtime.permissions.MCPCallApproval`. The
+        ``--session`` form skips per-call args matching for the rest
+        of the session; the bare form approves the next call only.
+        """
+        from llm_code.runtime.permissions import MCPCallApproval
+
+        runtime = getattr(self._state, "runtime", None)
+        if runtime is None:
+            self._view.print_warning("/approve: runtime not initialised")
+            return
+        approval: MCPCallApproval | None = getattr(runtime, "mcp_call_approval", None)
+        if approval is None:
+            approval = MCPCallApproval()
+            try:
+                setattr(runtime, "mcp_call_approval", approval)
+            except Exception:  # noqa: BLE001 — defensive
+                self._view.print_warning(
+                    "/approve: runtime does not accept attributes"
+                )
+                return
+
+        text = args.strip()
+        if not text:
+            tools = approval.list_tool_grants()
+            calls = approval.list_grants()
+            if not tools and not calls:
+                self._view.print_info("No active approvals.")
+                return
+            for tool in tools:
+                self._view.print_info(f"  session-wide: {tool}")
+            for grant in calls:
+                self._view.print_info(
+                    f"  per-call ({grant.scope}): {grant.tool_name} "
+                    f"args={grant.args_hash[:8]}"
+                )
+            return
+
+        # Parse "<tool> [--session]"
+        parts = text.split()
+        tool_name = parts[0]
+        session_flag = any(p in {"--session", "-s"} for p in parts[1:])
+
+        if session_flag:
+            approval.approve_tool(tool_name)
+            self._view.print_info(
+                f"Approved {tool_name} session-wide (use /approve to list)."
+            )
+        else:
+            # One-shot: pre-approve "any args" — represent as session
+            # tool grant with scope=once. Args-specific grants are
+            # produced by the runtime's prompt path, not the slash
+            # command (the slash command can't see future args).
+            approval.approve_tool(tool_name)
+            # Mark as one-shot by also tracking via the call grant
+            # registry so the next runtime call can consume it.
+            approval.approve_call(tool_name, args={}, scope="once")
+            self._view.print_info(
+                f"Approved {tool_name} for the next call. "
+                f"Use /approve {tool_name} --session for the whole session."
+            )
+
+        logger.info(
+            "mcp_call_approval_granted tool=%s scope=%s",
+            tool_name,
+            "session" if session_flag else "once",
+        )
+
+    def _cmd_transcript(self, args: str) -> None:
+        """v16 M10 — open the transcript pager over the SQLite state DB.
+
+        ``/transcript``        → render the last 50 turns
+        ``/transcript <N>``    → render the last N turns
+        ``/transcript /needle``→ open with a search prefilled
+        """
+        from llm_code.runtime.state_db import get_state_db
+        from llm_code.view.repl.components.transcript_pager import (
+            TranscriptPager,
+        )
+
+        session = getattr(self._state, "session", None)
+        if session is None or not getattr(session, "id", None):
+            self._view.print_warning("/transcript: no active session")
+            return
+
+        max_turns = 50
+        prefix_search: str | None = None
+        text = args.strip()
+        if text:
+            if text.startswith("/"):
+                prefix_search = text[1:]
+            else:
+                try:
+                    max_turns = max(1, int(text))
+                except ValueError:
+                    self._view.print_warning(
+                        f"/transcript: bad arg {text!r}; expected count or /needle"
+                    )
+                    return
+
+        try:
+            db = get_state_db()
+        except Exception as exc:  # noqa: BLE001 — defensive
+            self._view.print_error(f"/transcript: state_db unavailable: {exc}")
+            return
+
+        pager = TranscriptPager(
+            state_db=db,
+            session_id=session.id,
+            max_turns=max_turns,
+        )
+        pager.open()
+        if prefix_search:
+            pager.begin_search()
+            for ch in prefix_search:
+                pager.update_search_buffer(ch)
+            pager.commit_search()
+
+        # /transcript renders the current viewport inline through the
+        # existing print surface so the feature ships end-to-end
+        # without introducing a new modal floating-overlay
+        # infrastructure. The pager model itself is framework-
+        # agnostic — bindings on a Float overlay would call the same
+        # navigation methods.
+        for line in pager.current_view():
+            prefix = "* " if line.is_match else "  "
+            self._view.print_info(f"{prefix}{line.text}")
+        self._view.print_info(pager.status_line())
+        pager.close()
+
 
 __all__ = ["CommandDispatcher"]

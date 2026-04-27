@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import fnmatch
+import hashlib
+import json
 import logging
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any, Literal
 
 from llm_code.tools.base import PermissionLevel
 
@@ -290,3 +293,123 @@ class PermissionPolicy:
     def allow_tool(self, tool_name: str) -> None:
         """Dynamically add a tool to the allow list (e.g. after user approves 'always')."""
         self._allow_tools = self._allow_tools | frozenset({tool_name})
+
+
+# ── v16 M10: per-call MCP approval ────────────────────────────────────
+
+
+def args_hash(args: Any) -> str:
+    """Stable SHA-256 hash of MCP tool arguments.
+
+    JSON serialisation with ``sort_keys=True`` so ``{"a":1,"b":2}`` and
+    ``{"b":2,"a":1}`` collapse to the same fingerprint. Non-serialisable
+    inputs fall back to ``str(args)`` — defensive only; the runtime
+    always passes JSON-shaped dicts, but tests sometimes inject
+    weird structures.
+    """
+    try:
+        canonical = json.dumps(args, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        canonical = str(args)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class MCPCallApprovalGrant:
+    """One granted approval for an MCP tool call.
+
+    ``scope="once"`` means the grant is consumed on first match;
+    ``scope="session"`` keeps the grant until explicit revocation.
+    """
+
+    tool_name: str
+    args_hash: str
+    scope: Literal["once", "session"]
+
+
+class MCPCallApproval:
+    """Tracks per-(tool, args_hash) approvals for fine-grained MCP gating.
+
+    The class is deliberately separate from :class:`PermissionPolicy`
+    so the existing per-tool-name approval flow keeps working
+    unchanged. ``check`` is the single hot-path call from the runtime;
+    callers pass the resolved ``args_hash`` (computed via
+    :func:`args_hash`) to avoid re-hashing on every wildcard miss.
+
+    Profile flag ``mcp_approval_granularity`` decides when callers
+    consult this object: ``"tool"`` (default) keeps the v2.5.x
+    behaviour where a tool name approved once unlocks every call;
+    ``"call"`` requires every distinct ``args_hash`` to be approved.
+    """
+
+    def __init__(self) -> None:
+        self._grants: dict[str, MCPCallApprovalGrant] = {}
+        # Tool-name-level "session-wide" grants — set by ``approve_tool``.
+        self._tool_session_grants: set[str] = set()
+
+    def _key(self, tool_name: str, hash_value: str) -> str:
+        return f"{tool_name}::{hash_value}"
+
+    def approve_call(
+        self,
+        tool_name: str,
+        args: Any,
+        scope: Literal["once", "session"] = "once",
+    ) -> MCPCallApprovalGrant:
+        """Record a per-call approval. Returns the grant record."""
+        h = args_hash(args)
+        grant = MCPCallApprovalGrant(
+            tool_name=tool_name, args_hash=h, scope=scope
+        )
+        self._grants[self._key(tool_name, h)] = grant
+        return grant
+
+    def approve_tool(self, tool_name: str) -> None:
+        """Session-wide grant for every call of ``tool_name``.
+
+        Equivalent to ``permissions.allow_tool`` for MCP tools that
+        have already been gated through the per-tool surface; lets a
+        ``/approve <tool> --session`` command short-circuit the
+        per-call check.
+        """
+        self._tool_session_grants.add(tool_name)
+
+    def revoke_tool(self, tool_name: str) -> None:
+        self._tool_session_grants.discard(tool_name)
+        for key in [k for k in self._grants if k.startswith(f"{tool_name}::")]:
+            self._grants.pop(key, None)
+
+    def check(self, tool_name: str, args: Any) -> bool:
+        """Return True if the call is approved.
+
+        ``once`` grants are consumed on first match; ``session`` grants
+        remain. A session-wide tool grant short-circuits the args
+        check so re-running an MCP tool with new arguments works
+        without re-prompting.
+        """
+        if tool_name in self._tool_session_grants:
+            return True
+        h = args_hash(args)
+        key = self._key(tool_name, h)
+        grant = self._grants.get(key)
+        if grant is None:
+            return False
+        if grant.scope == "once":
+            self._grants.pop(key, None)
+        return True
+
+    def list_grants(self) -> list[MCPCallApprovalGrant]:
+        """Snapshot of current per-call grants (session-wide tool grants
+        are not included; query :meth:`is_tool_approved` for those)."""
+        return list(self._grants.values())
+
+    def list_tool_grants(self) -> list[str]:
+        """Sorted list of tools currently granted session-wide."""
+        return sorted(self._tool_session_grants)
+
+    def is_tool_approved(self, tool_name: str) -> bool:
+        return tool_name in self._tool_session_grants
+
+    def reset(self) -> None:
+        self._grants.clear()
+        self._tool_session_grants.clear()

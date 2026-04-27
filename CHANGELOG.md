@@ -1,5 +1,129 @@
 # Changelog
 
+## v2.6.0rc1 — Wave 4 of v16 (M10)
+
+Release candidate for v2.6.0. Adds three high-leverage UX
+improvements borrowed from codex (M10): per-call MCP approval
+granularity, SQLite session state, and a transcript pager backed by
+the new state DB.
+
+### M10 — Codex inspirations
+
+#### Per-call MCP approval
+
+`runtime/permissions.py` gains `MCPCallApproval`, a separate registry
+that tracks `(tool_name, args_hash)` pairs. Two grant scopes:
+
+- `once` — consumed on first match.
+- `session` — persists until revocation.
+
+`approve_tool(tool_name)` short-circuits the args check so a session-
+wide grant unlocks every call of that tool. `approve_call(tool, args,
+scope)` records a per-call grant. `args_hash` is a stable SHA-256
+over the canonical JSON serialisation; ordering of dict keys does
+not affect the hash.
+
+The profile flag `mcp_approval_granularity` (declared in wave 1) is
+the toggle: `"tool"` keeps v2.5.x behaviour, `"call"` enforces per-
+call approval. The runtime consults `MCPCallApproval.check` only
+when the profile selects `"call"`.
+
+New slash command `/approve`:
+
+- `/approve` — list current grants.
+- `/approve <tool>` — one-shot grant for the next call.
+- `/approve <tool> --session` — session-wide grant.
+
+#### SQLite state DB
+
+`runtime/state_db.py` is a new SQLite WAL store at
+`~/.llmcode/state.db` covering three tables:
+
+- `sessions` (id, model, project_path, payload JSON, timestamps).
+- `turns` (id, session_id, idx, user_message, assistant_message)
+  with `ix_turns_session` on `(session_id, idx)`.
+- `tool_calls` (id, turn_id, tool_name, args_json, result_json).
+
+WAL + `busy_timeout=5000` lets multiple llmcode processes share the
+same `state.db`. Foreign keys cascade so deleting a session
+removes its turns and tool calls. The store is intentionally
+runtime-free (no imports from session/conversation) so the
+migration command can write to it without loading the conversation
+engine.
+
+`runtime/checkpoint_recovery.py` accepts an optional `state_db=`
+parameter; when wired, save/load round-trips through SQLite while
+the legacy JSON path is preserved as a read fallback so unmigrated
+machines keep working.
+
+#### Migration command
+
+`llmcode migrate v2.6 state-db` is the opt-in JSON → SQLite
+migration. Atomic flow:
+
+1. Build `~/.llmcode/state.db.tmp` from scratch in a single
+   transaction.
+2. On error: temp deleted, originals untouched, exception bubbles
+   up.
+3. On success: temp renamed to `state.db`, originals moved to
+   `~/.llmcode/checkpoints.bak/<timestamp>/`.
+
+Bad JSON files are skipped with a warning so one corrupt checkpoint
+doesn't abort the migration.
+
+#### Transcript pager
+
+`view/repl/components/transcript_pager.py` is a model-first pager
+over the state DB:
+
+- `open()` loads the last N turns; cursor positioned near the bottom.
+- `scroll_up/down`, `page_up/down`, `goto_start/end` for navigation.
+- `begin_search` / `update_search_buffer` / `commit_search` /
+  `next_match` / `prev_match` for search; matches highlighted via
+  `PagerLine.is_match`.
+- `current_view()` returns the visible slice; `status_line()` shows
+  position + match progress.
+
+New slash command `/transcript`:
+
+- `/transcript` — last 50 turns.
+- `/transcript <N>` — last N turns.
+- `/transcript /needle` — open with search prefilled.
+
+The pager is framework-agnostic by design: the data + interaction
+model lives in the component module and is fully covered by tests,
+while `/transcript` renders the current viewport inline through the
+existing print surface so the feature ships end-to-end without
+introducing a new modal floating-overlay infrastructure.
+
+### Tests
+
+43 new tests:
+
+- `tests/test_runtime/test_state_db.py` — schema bootstrap, session
+  round trips, turn ordering, tool call linkage, concurrent writers
+  (R1 mitigation), busy_timeout cross-conn, migration round trip,
+  corrupt-file skip, atomic-on-failure (mid-migration crash leaves
+  no half-state), empty checkpoint dir (19 tests).
+- `tests/test_runtime/test_mcp_call_approval.py` — stable args
+  hash, scope semantics, tool-level grants, revocation, reset,
+  list_grants (11 tests).
+- `tests/test_view/test_transcript_pager.py` — open/close, up/down/
+  page nav, search next/prev cycle, no-match status, backspace +
+  cancel, current_view slice, match highlighting, status line
+  reporting (13 tests).
+
+Suite: 8245 → 8288 passed (+43 net new). v15 grep guard +
+byte-parity gate + README↔reality test green.
+
+### Acceptance criteria covered
+
+- ✅ `mcp_approval_granularity: "call"` enforces per-call approval
+- ✅ `llmcode migrate v2.6 state-db` migrates atomically with backup
+- ✅ Mid-migration crash leaves originals untouched + temp DB cleaned
+- ✅ Concurrent SQLite writers serialize correctly
+- ✅ Pager open → search → close exposed via `/transcript` slash command
+
 ## v2.6.0a4 — Wave 4 of v16 (M9)
 
 Fourth alpha of v2.6.0. Adds the formal client/server API + session

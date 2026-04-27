@@ -155,6 +155,25 @@ def _emit_run_summary(result: "v12_runner.RunResult", *, dry_run: bool) -> None:
                 )
 
 
+# ── v2.6.0 (v16 M10) — JSON checkpoints → SQLite state DB ─────────────
+
+
+@migrate_cli.group(
+    name="v2.6",
+    help="v2.6 migrations (e.g. JSON checkpoints → SQLite state DB).",
+)
+def v26_group() -> None:
+    """Subgroup for v2.6 migration commands."""
+
+
+try:
+    from llm_code.cli.migrate_v26_state_db import state_db_command
+
+    v26_group.add_command(state_db_command, name="state-db")
+except Exception:  # pragma: no cover — defensive on partial checkouts
+    pass
+
+
 def main(argv: list[str] | None = None) -> Any:
     """Programmatic entry used by tests and any future CLI hookup."""
     return migrate_cli.main(args=argv, standalone_mode=False)

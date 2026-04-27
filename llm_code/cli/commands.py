@@ -66,6 +66,9 @@ COMMAND_REGISTRY: tuple[CommandDef, ...] = (
     CommandDef("compact", "Compact conversation to free context window"),
     CommandDef("export", "Export conversation to markdown file"),
     CommandDef("update", "Check for updates and upgrade llmcode-cli"),
+    # v16 M10 — per-call MCP approval + transcript pager
+    CommandDef("approve", "Manage MCP per-call approvals"),
+    CommandDef("transcript", "Open transcript pager over recent turns"),
     CommandDef("exit", "Quit", no_arg=True),
     CommandDef("quit", "Quit", no_arg=True),
 )
