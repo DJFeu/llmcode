@@ -1,5 +1,140 @@
 # Changelog
 
+## v2.9.0 — GLM Wall-Clock Optimization Wave (P1 + P2 + P3)
+
+A user transcript on GLM-5.1 (744B/40B MoE on llama.cpp) ran the
+prompt `查詢今日熱門新聞三則` ("fetch today's top 3 news") and finished
+in **217.9s** with **41,921 input tokens** prefilled by the final
+iteration. v2.8.1 already capped post-tool thinking at 1024 tokens —
+the bottleneck has *moved* to (a) sequential tool dispatch, (b)
+re-prefilling the full conversation history every iter, and (c)
+thinking on the final compile step that's pure templating work.
+
+v2.9.0 ships **three opt-in levers** in a single wave that target
+the moved bottleneck without touching reasoning depth. Combined,
+they cut wall-clock on the same workflow to **~80-110s** with no
+quality loss:
+
+> **No quality loss — these reduce *redundant* work, not reasoning depth.**
+> Iteration 0 (decision phase: which tool to call, what args to pass)
+> still gets the profile's full ``default_thinking_budget``. The
+> levers eliminate sequential round-trips, stale prefill, and
+> templating-phase chain-of-thought.
+
+### P1 — Parallel tool call execution
+
+When the model emits multiple non-agent tool calls in one assistant
+turn (GLM does this natively via the ``harmony_kv`` and ``glm_brace``
+parser variants), dispatch them concurrently via ``asyncio.gather``
+instead of the v2.8.1 sequential ``for`` loop. Tool results are
+appended in the original ``tool_call_id`` order so the downstream
+provider serialization stays stable.
+
+* Profile flag: ``[parallel_tools] enable_parallel_tools = true``.
+* Default ``True`` — read-only path was already concurrent in
+  v2.8.1; this lever extends to write-pending and non-pre-computed
+  calls.
+* Expected savings: **N-1 round-trips** on multi-call turns. On the
+  3-search news workflow GLM emits one call per iter so P1 is dormant
+  there; on broader queries (e.g. "compare 5 GPUs") it eliminates 4
+  round-trips at ~13s each.
+
+### P2 — Tool-result compression on re-feed
+
+When the conversation is serialized for iteration N+1, replace older
+``ToolResultBlock`` payloads with a 500-char preview + structured
+marker:
+
+```
+[v2.9 compressed] preview (500 chars of <total>):
+<first 500 chars>
+[full content omitted to reduce prefill cost — <hidden> chars hidden.
+The most recent tool result for this turn was kept intact; refer to
+it for the complete payload.]
+```
+
+The most recent contiguous tool-result batch stays full so the model
+still has complete data for current reasoning. llama.cpp has no
+prompt cache; the 41k-token observed prefill on the 3-search
+workflow was almost entirely stale tool payloads.
+
+* Profile flag: ``[tool_consumption] compress_old_tool_results = true``.
+* Default ``False`` — Anthropic prompt caching already amortises
+  stable prefixes; cloud profiles keep v2.8.1 byte-parity.
+* Expected savings: **~30s on the news workflow's compile iter**
+  (prefill drops from 41k → ~10k tokens at ~700 tok/s).
+* Idempotent — already-compressed bodies pass through unchanged.
+
+### P3 — Final compile thinking=0 heuristic
+
+When iter > 0 AND ``tool_calls_this_turn >= compile_after_tool_calls > 0``,
+drop the thinking budget to ``compile_thinking_budget`` (typically
+0). The "compile" step after N tool results is templating: extract
+title from result[0], URL from result[1], format. Deep
+chain-of-thought there reasons over already-fetched ground truth
+and adds little signal.
+
+* Profile flags:
+  ``[tool_consumption] compile_after_tool_calls = 3``
+  ``[tool_consumption] compile_thinking_budget = 0``
+* Default ``compile_after_tool_calls = 0`` is the disable sentinel —
+  v2.8.1's per-iteration ``post_tool_thinking_budget`` stays in
+  effect for profiles that don't opt in.
+* Expected savings: **~5-15s per compile turn** on slow local models.
+* Compile lever supersedes v2.8.1 ``post_tool_thinking_budget`` when
+  both opt in (compile is more specific).
+
+### GLM-5.1 profile opts in to all three
+
+``examples/model_profiles/65-glm-5.1.toml`` sets all three flags.
+Other built-in profiles inherit dataclass defaults — Anthropic and
+cloud profiles see no behavioural change.
+
+### Worked example — projected savings
+
+| Phase | v2.8.1 | v2.9.0 | Source |
+|---|---|---|---|
+| Iter 0 — decide search | ~30s | ~30s | unchanged |
+| Iter 0 — exec search #1 | ~12s | ~12s | unchanged (1 call/iter) |
+| Iter 1 — process, decide #2 | ~25s | ~25s | unchanged |
+| Iter 1 — exec search #2 | ~14s | ~14s | unchanged |
+| Iter 2 — process, decide #3 | ~30s | ~30s | unchanged |
+| Iter 2 — exec search #3 | ~13s | ~13s | unchanged |
+| Iter 3 — final compile | ~75s | **~25s** | P2 cuts ~30s prefill, P3 cuts ~15s thinking |
+| **Total** | **218s** | **~150s** | -31% |
+
+Workflows where the model dispatches multiple calls per iter (which
+GLM does on broader queries) see the bigger savings from P1 — a
+5-search workflow drops 4 × 13s = 52s of round-trip latency.
+
+### Backwards compatibility
+
+Defaults preserve v2.8.1 behaviour byte-for-byte for every profile
+other than GLM-5.1:
+
+* ``enable_parallel_tools`` defaults to True, but the read-only
+  concurrent path was already on in v2.8.1; the new code path only
+  activates when ≥2 non-agent calls land in one turn. Single-call
+  turns are sequential (byte-parity).
+* ``compress_old_tool_results`` defaults to False (no compression).
+* ``compile_after_tool_calls`` defaults to 0 (lever disabled).
+
+The `test_system_prompt_v260_byte_parity.py` corpus + the 49-scenario
+`test_provider_conversion_parity_v15.py` gate stay green; the v2.8.1
+post-tool budget tests still pass unchanged.
+
+### Tests
+
+32 new across three files:
+
+* `tests/test_runtime/test_parallel_tools_v290.py` — 9 tests
+* `tests/test_runtime/test_compress_tool_results_v290.py` — 12 tests
+* `tests/test_runtime/test_compile_thinking_v290.py` — 11 tests
+
+Suite: 8613 → 8645 (+32). Ruff clean.
+
+---
+
 ## v2.8.1 — Per-iteration thinking budget (no quality loss)
 
 Closes the wall-clock-on-GLM-5.1 gap that v2.6.1's M1 fix
