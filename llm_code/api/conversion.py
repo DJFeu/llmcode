@@ -471,6 +471,145 @@ def _split_bundled_tool_results(
     return tuple(expanded)
 
 
+# ── v2.9.0 P2 — tool-result compression on re-feed ───────────────────
+
+
+# Hard cap on the per-result preview length retained in the truncated
+# marker. 500 chars is enough to keep title/url + a 2-3 sentence
+# excerpt for every common tool (web_search, web_fetch, research),
+# which is what downstream re-feeds need to cite. Anything longer is
+# already in session history if the model wants the full payload.
+_COMPRESS_PREVIEW_CHARS: int = 500
+
+# Marker placed in front of every compressed payload so users (and
+# tests) can grep for the v2.9 lever in the wire dump. Includes the
+# version tag for forward-compat traceability.
+_COMPRESS_MARKER_PREFIX: str = "[v2.9 compressed]"
+
+
+def _looks_like_tool_result_message(msg: Message) -> bool:
+    """True when ``msg`` is a tool-result-only user/tool message.
+
+    Both providers route these to ``role: tool`` (OpenAI) or
+    ``tool_result`` (Anthropic) and the conversion picks a stable
+    block path; compression replaces only the content payload, the
+    block structure stays intact.
+    """
+    return bool(msg.content) and all(
+        isinstance(b, ToolResultBlock) for b in msg.content
+    )
+
+
+def _truncate_tool_result_payload(content: object) -> str:
+    """Return a structured truncated marker for a tool_result body.
+
+    ``content`` may be ``None``, a ``str``, a ``list`` of dicts (the
+    Anthropic block array shape), or a ``dict`` (cohere-style
+    sourced answer). All variants are normalised through
+    :func:`serialize_tool_result` so the compression sees the same
+    string the model would otherwise have read on the wire.
+
+    The returned marker is plain text so both providers accept it:
+    OpenAI-compat puts it in the ``content`` string verbatim;
+    Anthropic wraps it in a ``{"type": "text", "text": ...}`` block
+    via :func:`_anthropic_block_to_dict`.
+
+    Idempotence — bodies that already begin with the v2.9 marker
+    prefix are returned verbatim. The compression step is wired into
+    every outbound serialization, so a profile that compresses on
+    iteration 1 must not double-truncate on iteration 2.
+    """
+    body = serialize_tool_result(content)
+    if body.startswith(_COMPRESS_MARKER_PREFIX):
+        # Already compressed — leave it alone (idempotence).
+        return body
+    preview = body[:_COMPRESS_PREVIEW_CHARS]
+    truncated_chars = max(len(body) - _COMPRESS_PREVIEW_CHARS, 0)
+    if truncated_chars <= 0:
+        # Nothing to compress — keep the original body so the wire
+        # payload is identical to the un-compressed path.
+        return body
+    return (
+        f"{_COMPRESS_MARKER_PREFIX} preview ({_COMPRESS_PREVIEW_CHARS} chars "
+        f"of {len(body)}):\n"
+        f"{preview}\n"
+        f"[full content omitted to reduce prefill cost — {truncated_chars} "
+        f"chars hidden. The most recent tool result for this turn was kept "
+        f"intact; refer to it for the complete payload.]"
+    )
+
+
+def _compressed_block(block: ToolResultBlock) -> ToolResultBlock:
+    """Return a copy of ``block`` with its content replaced by the
+    truncated marker. ``is_error`` and ``tool_use_id`` are preserved
+    so the provider still pairs the compressed result with the right
+    ``tool_call_id``.
+    """
+    return ToolResultBlock(
+        tool_use_id=block.tool_use_id,
+        content=_truncate_tool_result_payload(block.content),
+        is_error=block.is_error,
+    )
+
+
+def compress_old_tool_results(
+    messages: tuple[Message, ...],
+) -> tuple[Message, ...]:
+    """v2.9.0 P2 — replace older tool_result payloads with truncated
+    markers, leaving the most recent contiguous batch intact.
+
+    "Most recent batch" is the trailing run of tool-result-only
+    messages (after the bundle splitter, every such message holds a
+    single ToolResultBlock; before the splitter, a bundle holds N).
+    Anything before the trailing batch (i.e. tool results from a
+    prior iteration) gets compressed; the trailing batch stays as-is
+    because the model is currently reasoning over it and needs the
+    full payload.
+
+    Non-tool-result messages (assistant text, user prompts, mixed
+    content) are passed through verbatim. Compression is purely
+    additive: ``ToolResultBlock`` blocks get a smaller content
+    string; the message tuple shape, ordering, and per-block
+    metadata (tool_use_id, is_error) are unchanged.
+
+    The transform is idempotent — already-compressed bodies start
+    with ``[v2.9 compressed]`` and the truncate path detects the
+    short payload and returns it verbatim.
+    """
+    if not messages:
+        return messages
+
+    # Walk from the tail backwards to find the contiguous trailing
+    # tool-result batch. ``preserve_from`` is the index of the first
+    # message in that batch — everything at or after it stays full.
+    preserve_from = len(messages)
+    for i in range(len(messages) - 1, -1, -1):
+        if _looks_like_tool_result_message(messages[i]):
+            preserve_from = i
+        else:
+            break
+    if preserve_from == 0:
+        # The whole conversation is tool results (unusual but valid).
+        # Treat the entire trailing run as "most recent" — nothing to
+        # compress because there's no older batch.
+        return messages
+
+    out: list[Message] = []
+    for idx, msg in enumerate(messages):
+        if idx >= preserve_from:
+            out.append(msg)
+            continue
+        if not _looks_like_tool_result_message(msg):
+            out.append(msg)
+            continue
+        compressed = tuple(
+            _compressed_block(b) if isinstance(b, ToolResultBlock) else b
+            for b in msg.content
+        )
+        out.append(Message(role=msg.role, content=compressed))
+    return tuple(out)
+
+
 def _serialize_openai(
     messages: tuple[Message, ...],
     *,

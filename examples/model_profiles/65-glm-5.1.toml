@@ -12,6 +12,13 @@
 # below. GLM-5.1 reliably emits multi-call assistant turns through the
 # harmony_kv / glm_brace parser variants; opting in directly cuts the
 # wall-clock cost of multi-search workflows by N-1 round-trips.
+#
+# v2.9.0 P2 — compress older tool_result payloads on re-feed via
+# ``compress_old_tool_results`` in [tool_consumption]. llama.cpp has
+# no prompt cache; the observed 41k-token prefill on a 3-search
+# workflow was almost entirely stale tool payloads. Compression cuts
+# that by 60-80% with no quality loss (the most recent batch stays
+# full for current reasoning).
 
 name = "GLM-5.1 (744B.A40B)"
 
@@ -151,6 +158,16 @@ strip_prior_reasoning = true
 # news/realtime queries — observe the
 # llmcode.tool_consumption.denial_retries_total counter).
 retry_on_denial = true
+
+# v2.9.0 P2 — replace older tool_result payloads with a 500-char
+# preview + structured marker on iter N+1 prefill. The trailing
+# (most recent) batch of tool results stays full so the model still
+# has complete data for current reasoning. Drops 60-80% of prefill
+# tokens on multi-search workflows. Default off globally; GLM opts
+# in because llama.cpp re-prefills the full history every iter and
+# the 41k-token observed prefill on the 3-search workflow was
+# almost entirely stale tool payloads.
+compress_old_tool_results = true
 
 # v2.9.0 P1 — parallel tool dispatch. When the model emits multiple
 # tool calls in a single assistant turn, run them concurrently via

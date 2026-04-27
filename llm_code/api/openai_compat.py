@@ -276,6 +276,21 @@ class OpenAICompatProvider(LLMProvider):
         # exists "above", which GLM-5.1 correctly identifies as an
         # injection and refuses to act on (observed in v2.5.0 GA).
         from llm_code.api.conversion import _split_bundled_tool_results
+
+        # v2.9.0 P2 — compress older tool_result payloads on re-feed
+        # when the active profile opts in. Saves 60-80% of the prefill
+        # token cost on multi-search workflows where iter N+1 would
+        # otherwise re-prefill iter 0..N-1's full tool results. The
+        # most recent contiguous tool-result batch is preserved intact
+        # so the model still has full data for current reasoning.
+        # Default ``False`` keeps v2.8.1 byte-parity for every profile
+        # that doesn't explicitly opt in.
+        if getattr(self._profile, "compress_old_tool_results", False):
+            from llm_code.api.conversion import (
+                compress_old_tool_results as _compress,
+            )
+            messages = _compress(messages)
+
         messages = _split_bundled_tool_results(messages)
 
         result: list[dict] = []

@@ -309,6 +309,25 @@ class ModelProfile:
     #     enable_parallel_tools = true
     enable_parallel_tools: bool = True
 
+    # ── v2.9.0 P2 — tool-result compression on re-feed ──────────────
+    # When the conversation is serialized for iteration N+1, replace
+    # older ``ToolResultBlock`` payloads with a 500-char preview +
+    # structured marker. The most recent contiguous tool-result
+    # batch stays full so the model still has complete data for the
+    # current iteration's reasoning. Drops 60-80% of prefill tokens
+    # on multi-search workflows where llama.cpp re-prefills the full
+    # conversation history every iter (no prompt cache).
+    #
+    # Default ``False`` so cloud / Anthropic profiles keep v2.8.1
+    # byte-parity (Anthropic prompt caching already amortises stable
+    # prefixes); GLM-5.1 opts in via its profile.
+    #
+    # TOML authoring (matches the existing flat-section convention):
+    #
+    #     [tool_consumption]
+    #     compress_old_tool_results = true
+    compress_old_tool_results: bool = False
+
 
 # ── Built-in profiles ─────────────────────────────────────────────────
 
@@ -727,11 +746,14 @@ def _profile_from_dict(data: dict[str, Any], base: ModelProfile | None = None) -
         ),
         "parser": ("parser_variants",),
         "parser_hints": ("custom_close_tags", "call_separator_chars"),
-        # v14 — tool consumption compat layer.
+        # v14 — tool consumption compat layer; v2.9.0 P2 adds
+        # compress_old_tool_results to the same section since both
+        # mechanisms shape how tool results re-feed.
         "tool_consumption": (
             "reminder_after_each_call",
             "strip_prior_reasoning",
             "retry_on_denial",
+            "compress_old_tool_results",
         ),
         # v2.9.0 P1 — parallel tool dispatch lever lives in its own
         # section so opting in / out doesn't require touching the

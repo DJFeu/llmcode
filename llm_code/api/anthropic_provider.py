@@ -244,6 +244,20 @@ class AnthropicProvider(LLMProvider):
         # ``_convert_message`` continue to work. The 49-scenario
         # parity gate verifies byte-identical output against a corpus
         # captured from v2.4.0.
+        #
+        # v2.9.0 P2 — compress older tool_result payloads on re-feed
+        # when the active profile opts in. Anthropic's prompt cache
+        # already amortises stable prefixes, so most cloud profiles
+        # default ``compress_old_tool_results = False``. The hook is
+        # available for adopters that want to cut prefill on tool-
+        # heavy turns even on Anthropic; the trailing batch stays
+        # intact so the current iteration always sees full data.
+        if getattr(self._profile, "compress_old_tool_results", False):
+            from llm_code.api.conversion import (
+                compress_old_tool_results as _compress,
+            )
+            messages = _compress(messages)
+
         result: list[dict] = []
         for msg in messages:
             result.append(self._convert_message(msg))
