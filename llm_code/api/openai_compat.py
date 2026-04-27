@@ -18,7 +18,7 @@ from llm_code.api.errors import (
     ProviderTimeoutError,
 )
 from llm_code.api.provider import LLMProvider
-from llm_code.api.sse import parse_sse_events
+from llm_code.api.sse import aparse_sse_events_from_lines, parse_sse_events
 from llm_code.api.types import (
     ContentBlock,
     Message,
@@ -225,8 +225,12 @@ class OpenAICompatProvider(LLMProvider):
             if hit is not None:
                 return _synthesize_stream_events(hit.response)
         payload = self._build_payload(request, stream=True)
-        response = await self._post_with_retry(payload)
-        return self._iter_stream_events(response.text)
+        # v2.6.1 M3 — true SSE streaming. The previous implementation
+        # called ``_post_with_retry`` which buffered the entire response
+        # body before parsing, so user-visible TTFT was full generation
+        # time. With ``_stream_with_retry`` the chunks are parsed as
+        # they arrive, dropping perceived latency to actual TTFT.
+        return self._stream_with_retry(payload)
 
     def supports_native_tools(self) -> bool:
         return self._native_tools
@@ -566,8 +570,135 @@ class OpenAICompatProvider(LLMProvider):
         )
 
     def _iter_stream_events(self, raw: str) -> _StreamIterator:
-        """Return async iterator over parsed SSE stream events."""
+        """Return async iterator over parsed SSE stream events.
+
+        Legacy synchronous-feed path kept for callers that already
+        have the full response body in memory (tests using
+        ``respx.mock(text=sse_body)``). v2.6.1 M3 introduced the
+        streaming counterpart :meth:`_stream_with_retry` which
+        delivers events as soon as each block parses.
+        """
         return _StreamIterator(raw)
+
+    async def _stream_with_retry(
+        self, payload: dict,
+    ) -> AsyncIterator[StreamEvent]:
+        """v2.6.1 M3 — true SSE streaming with retry on connect-time errors.
+
+        Opens an httpx streaming POST, validates the response status
+        BEFORE yielding any event, and forwards parsed SSE chunks
+        downstream as they arrive. Retries are honored only when the
+        failure happens before the first event yields — once data has
+        been emitted to the consumer there is no safe way to retry
+        without duplicating events, so mid-stream errors propagate.
+        """
+        url = f"{self._base_url}/chat/completions"
+        last_exc: Exception | None = None
+
+        # Match the non-streaming retry budget so configured providers see
+        # uniform behaviour across both code paths.
+        _OVERLOAD_BACKOFFS = [30, 60, 120]
+        _overload_attempt = 0
+        attempt = 0
+
+        while attempt <= self._max_retries:
+            try:
+                async for event in self._stream_one_attempt(url, payload):
+                    yield event
+                return
+            except ProviderOverloadError as exc:
+                last_exc = exc
+                if _overload_attempt < len(_OVERLOAD_BACKOFFS):
+                    backoff = _OVERLOAD_BACKOFFS[_overload_attempt]
+                    _overload_attempt += 1
+                    await asyncio.sleep(backoff)
+                    # Overload retries don't count against normal retry budget
+                    continue
+                raise
+            except ProviderRateLimitError as exc:
+                last_exc = exc
+                if attempt < self._max_retries:
+                    backoff = (
+                        exc.retry_after if exc.retry_after is not None
+                        else float(2 ** attempt)
+                    )
+                    await asyncio.sleep(backoff)
+                    attempt += 1
+                    continue
+                raise
+            except ProviderConnectionError as exc:
+                last_exc = exc
+                if attempt < self._max_retries:
+                    await asyncio.sleep(2 ** attempt)
+                    attempt += 1
+                    continue
+                raise
+            except (ProviderAuthError, ProviderModelNotFoundError):
+                raise
+            except httpx.ConnectError as exc:
+                last_exc = ProviderConnectionError(str(exc))
+                if attempt < self._max_retries:
+                    await asyncio.sleep(2 ** attempt)
+                    attempt += 1
+                    continue
+                raise last_exc from exc
+            except (
+                httpx.ReadTimeout,
+                httpx.ConnectTimeout,
+                httpx.WriteTimeout,
+                httpx.PoolTimeout,
+            ) as exc:
+                last_exc = ProviderTimeoutError(
+                    str(exc) or type(exc).__name__
+                )
+                if attempt < self._max_retries:
+                    await asyncio.sleep(2 ** attempt)
+                    attempt += 1
+                    continue
+                raise last_exc from exc
+            attempt += 1
+
+        if last_exc is not None:
+            raise last_exc
+
+    async def _stream_one_attempt(
+        self, url: str, payload: dict,
+    ) -> AsyncIterator[StreamEvent]:
+        """One streaming attempt — opens the POST, parses incrementally.
+
+        Status check runs BEFORE any event is yielded so a non-200
+        response surfaces as a typed provider error that the
+        ``_stream_with_retry`` outer loop can classify and retry.
+        """
+        if self._limiter is not None:
+            async with self._limiter:
+                async for event in self._aiter_stream_events_from_http(url, payload):
+                    yield event
+        else:
+            async for event in self._aiter_stream_events_from_http(url, payload):
+                yield event
+
+    async def _aiter_stream_events_from_http(
+        self, url: str, payload: dict,
+    ) -> AsyncIterator[StreamEvent]:
+        """Open the streaming POST and translate SSE events into StreamEvents.
+
+        Uses ``httpx.AsyncClient.stream`` so the response body is read
+        lazily via ``aiter_lines``. Each parsed SSE chunk is fed to
+        ``_AsyncStreamIterator`` which produces one or more
+        ``StreamEvent`` instances per SSE chunk.
+        """
+        async with self._client.stream("POST", url, json=payload) as response:
+            if response.status_code != 200:
+                # Read the body so error parsers see the full error
+                # payload, then raise a typed provider exception.
+                await response.aread()
+                self._raise_for_status(response)
+
+            sse_iter = aparse_sse_events_from_lines(response.aiter_lines())
+            iterator = _AsyncStreamIterator(sse_iter)
+            async for event in iterator:
+                yield event
 
 
 class _StreamIterator:
@@ -674,3 +805,137 @@ class _StreamIterator:
         event = self._processed[self._index]
         self._index += 1
         return event
+
+
+class _AsyncStreamIterator:
+    """v2.6.1 M3 — async iterator over a *streaming* SSE source.
+
+    Mirrors :class:`_StreamIterator`'s semantics (delta accumulation,
+    pending tool-call assembly, single ``StreamMessageStop`` emission,
+    trailing-usage patch) but consumes the SSE chunks LAZILY so each
+    parsed event is forwarded as soon as the upstream chunk arrives.
+
+    The buffered list pattern stays for the trailing-usage rewrite
+    edge case: vLLM / Ollama send a final usage-only chunk AFTER the
+    chunk that carries ``finish_reason``. Today that is rare in
+    practice — the more common shape has usage on the same chunk —
+    so the iterator yields the regular events as they arrive, holds
+    only the most recent ``StreamMessageStop`` for usage patching,
+    and emits it (or its patched replacement) once the upstream
+    stream completes. This keeps TTFT the only metric that actually
+    sees the streaming benefit; downstream renderers see the same
+    final shape they did before.
+    """
+
+    def __init__(self, sse_iter: AsyncIterator[dict]) -> None:
+        self._sse_iter = sse_iter
+        self._pending_tools: dict[int, dict] = {}
+        self._stop_emitted = False
+        self._last_usage: dict = {}
+        # Holds StreamEvents that have been parsed but not yet yielded
+        # — needed because a single SSE chunk can produce multiple
+        # StreamEvents (thinking + content + tool-call deltas).
+        self._buffer: list[StreamEvent] = []
+        # The pending stop event waits for end-of-stream so the
+        # trailing-usage patch can rewrite it before the consumer
+        # observes the final event.
+        self._pending_stop: StreamMessageStop | None = None
+        self._upstream_done = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self) -> StreamEvent:
+        # Drain the buffer first
+        if self._buffer:
+            return self._buffer.pop(0)
+
+        # Pull more chunks from the SSE iterator until we either
+        # produce events or exhaust upstream.
+        while not self._buffer and not self._upstream_done:
+            try:
+                chunk = await self._sse_iter.__anext__()
+            except StopAsyncIteration:
+                self._upstream_done = True
+                break
+            self._process_chunk(chunk)
+
+        if self._buffer:
+            return self._buffer.pop(0)
+
+        # Upstream fully drained — emit the held stop event (if any),
+        # patched with any trailing usage seen after finish_reason.
+        if self._pending_stop is not None:
+            stop = self._pending_stop
+            self._pending_stop = None
+            if (
+                self._last_usage
+                and stop.usage.input_tokens == 0
+                and stop.usage.output_tokens == 0
+            ):
+                stop = StreamMessageStop(
+                    usage=_token_usage_from_dict(self._last_usage),
+                    stop_reason=stop.stop_reason,
+                )
+            return stop
+
+        raise StopAsyncIteration
+
+    def _process_chunk(self, chunk: dict) -> None:
+        """Translate one SSE chunk dict into queued StreamEvents.
+
+        Mirrors ``_StreamIterator._build_events`` but feeds the
+        buffer instead of accumulating into a list.
+        """
+        chunk_usage = chunk.get("usage")
+        if chunk_usage:
+            self._last_usage = chunk_usage
+
+        choices = chunk.get("choices", [])
+        for choice in choices:
+            delta = choice.get("delta", {})
+            finish_reason = choice.get("finish_reason")
+
+            reasoning_chunk = _extract_reasoning_text(delta)
+            if reasoning_chunk:
+                self._buffer.append(StreamThinkingDelta(text=reasoning_chunk))
+
+            text = delta.get("content")
+            if text and isinstance(text, str):
+                self._buffer.append(StreamTextDelta(text=text))
+
+            tool_calls = delta.get("tool_calls", [])
+            for tc in tool_calls:
+                idx = tc.get("index", 0)
+                if idx not in self._pending_tools:
+                    self._pending_tools[idx] = {
+                        "id": tc.get("id", ""),
+                        "name": tc.get("function", {}).get("name", ""),
+                        "args": "",
+                    }
+                    if self._pending_tools[idx]["name"]:
+                        self._buffer.append(
+                            StreamToolUseStart(
+                                id=self._pending_tools[idx]["id"],
+                                name=self._pending_tools[idx]["name"],
+                            )
+                        )
+                args_fragment = tc.get("function", {}).get("arguments", "")
+                if args_fragment:
+                    self._pending_tools[idx]["args"] += args_fragment
+                    self._buffer.append(
+                        StreamToolUseInputDelta(
+                            id=self._pending_tools[idx]["id"],
+                            partial_json=args_fragment,
+                        )
+                    )
+
+            if finish_reason and not self._stop_emitted:
+                self._stop_emitted = True
+                usage_data = chunk_usage or self._last_usage or {}
+                usage = _token_usage_from_dict(usage_data)
+                # Hold back the stop event until upstream drains so
+                # any trailing usage chunk can patch its tokens.
+                self._pending_stop = StreamMessageStop(
+                    usage=usage, stop_reason=finish_reason,
+                )
