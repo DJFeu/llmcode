@@ -1246,3 +1246,83 @@ def test_config_loader_accepts_legacy_snake_case_mcp_key(tmp_path) -> None:
     cfg = _dict_to_runtime_config(raw)
     assert "snake_server" in cfg.mcp_servers
     assert "camel_server" in cfg.mcp_servers
+
+
+def test_mcp_install_respects_split_schema(
+    dispatcher_factory, backend, tmp_path, monkeypatch,
+) -> None:
+    """v2.5.4 — when the user's config already uses the documented
+    ``always_on`` / ``on_demand`` split schema, /mcp install must
+    insert the new server INTO ``always_on`` (not at the top level
+    next to those keys, where the loader's split branch ignores
+    everything except those two keys)."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config_path = tmp_path / ".llmcode" / "config.json"
+    config_path.parent.mkdir(parents=True)
+    import json
+    config_path.write_text(json.dumps({
+        "mcpServers": {
+            "always_on": {
+                "existing_server": {"command": "npx", "args": ["-y", "exists"]},
+            },
+            "on_demand": {},
+        },
+    }))
+
+    state = _make_state(tmp_path)
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("mcp", "install new-pkg")
+
+    data = json.loads(config_path.read_text())
+    assert "always_on" in data["mcpServers"]
+    assert "existing_server" in data["mcpServers"]["always_on"], (
+        "existing always_on entries must survive the install"
+    )
+    assert "new-pkg" in data["mcpServers"]["always_on"], (
+        "new server must land inside always_on, not next to it where "
+        "the loader's split branch would ignore it"
+    )
+    assert "new-pkg" not in data["mcpServers"], (
+        "new server must NOT live at the top level when split schema "
+        "is in use"
+    )
+
+    # Verify the loader actually sees the new entry.
+    from llm_code.runtime.config import _dict_to_runtime_config
+    cfg = _dict_to_runtime_config({"model": "x", **data})
+    assert "new-pkg" in cfg.mcp_servers, (
+        "loader must surface the newly-installed server"
+    )
+
+
+def test_mcp_remove_finds_split_schema_entry(
+    dispatcher_factory, backend, tmp_path, monkeypatch,
+) -> None:
+    """v2.5.4 — /mcp remove must search both top-level and the split
+    sub-dicts so it works regardless of which install version (or
+    schema) put the entry there."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config_path = tmp_path / ".llmcode" / "config.json"
+    config_path.parent.mkdir(parents=True)
+    import json
+    config_path.write_text(json.dumps({
+        "mcpServers": {
+            "always_on": {
+                "to_remove": {"command": "npx", "args": ["-y", "x"]},
+            },
+            "on_demand": {
+                "lazy_one": {"command": "npx", "args": ["-y", "y"]},
+            },
+        },
+    }))
+
+    state = _make_state(tmp_path)
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("mcp", "remove to_remove")
+
+    data = json.loads(config_path.read_text())
+    assert "to_remove" not in data["mcpServers"]["always_on"]
+    # on_demand sibling must remain untouched.
+    assert "lazy_one" in data["mcpServers"]["on_demand"]

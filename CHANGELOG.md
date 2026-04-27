@@ -1,5 +1,48 @@
 # Changelog
 
+## v2.5.4 — Hotfix: /mcp install respects split-schema mcpServers
+
+Codex stop-time review of v2.5.3 caught a sibling bug to the
+mcp-key migration: `/mcp install` wrote the new entry at the top
+level of `mcpServers`, but when the user's config already used the
+documented split schema (`{"always_on": {...}, "on_demand": {...}}`),
+`runtime/config._parse_mcp_config` only reads those two sub-dicts
+and silently ignores any other top-level key. The newly installed
+server appeared in `config.json` but didn't load on next startup —
+identical user-visible symptom to the v2.5.3 bug.
+
+### Fix
+
+`/mcp install`: detects the split schema (presence of `always_on`
+or `on_demand` keys) and inserts new servers into `always_on` by
+default. Without the split schema, behaviour is unchanged from
+v2.5.3 (top-level entry, treated as `always_on` by the legacy-flat
+loader branch).
+
+`/mcp remove`: searches both the top level and the split sub-dicts
+so it works regardless of which install version (or schema) put
+the entry there.
+
+### Tests
+
+2 new dispatcher tests in `test_view/test_dispatcher.py`:
+
+- Install on a split-schema config: new server lands inside
+  `always_on`, NOT next to it; loader actually surfaces the entry
+  via `_dict_to_runtime_config`.
+- Remove on a split-schema config: finds the entry inside
+  `always_on`, leaves the `on_demand` sibling untouched.
+
+Suite: 7962 → 7964 passed (+2).
+
+### Why both v2.5.3 and v2.5.4 were necessary
+
+v2.5.3 fixed the **wrong-key** case (snake_case → camelCase). v2.5.4
+fixes the **wrong-level** case (top-level → split sub-dict). Users
+on either schema flavour now have `/mcp install` actually work.
+
+---
+
 ## v2.5.3 — Audit hotfix: /mcp install key + --serve security + README accuracy
 
 External audit of v2.5.2 surfaced three correctness/security/docs

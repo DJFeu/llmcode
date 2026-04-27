@@ -1531,10 +1531,20 @@ class CommandDispatcher:
                 if "mcp_servers" in config_data:
                     legacy = config_data.pop("mcp_servers")
                     config_data.setdefault("mcpServers", {}).update(legacy)
-                mcp_servers = config_data.setdefault("mcpServers", {})
-                mcp_servers[short_name] = {
-                    "command": "npx", "args": ["-y", pkg],
-                }
+                mcp_block = config_data.setdefault("mcpServers", {})
+                entry = {"command": "npx", "args": ["-y", pkg]}
+                # v2.5.4 — detect the split schema documented in
+                # ``runtime/config.MCPConfig`` (``always_on`` /
+                # ``on_demand`` sub-dicts). Pre-v2.5.4 this wrote the
+                # new server at the top level, which the loader's split
+                # branch silently ignored — install ran, restart didn't
+                # show the server. Default new entries to ``always_on``
+                # so /mcp install matches its prior semantics under
+                # both schemas.
+                if "always_on" in mcp_block or "on_demand" in mcp_block:
+                    mcp_block.setdefault("always_on", {})[short_name] = entry
+                else:
+                    mcp_block[short_name] = entry
                 config_path.parent.mkdir(parents=True, exist_ok=True)
                 config_path.write_text(
                     _json.dumps(config_data, indent=2) + "\n"
@@ -1569,13 +1579,27 @@ class CommandDispatcher:
                 if "mcp_servers" in config_data:
                     legacy = config_data.pop("mcp_servers")
                     config_data.setdefault("mcpServers", {}).update(legacy)
-                mcp_servers = config_data.get("mcpServers", {})
-                if name not in mcp_servers:
+                mcp_block = config_data.get("mcpServers", {})
+                # v2.5.4 — search both the flat top level and the
+                # split-schema sub-dicts so /mcp remove finds the server
+                # regardless of where /mcp install (across versions)
+                # placed it.
+                target: dict | None = None
+                _RESERVED = {"always_on", "on_demand"}
+                if name in mcp_block and name not in _RESERVED:
+                    target = mcp_block
+                else:
+                    for sub in ("always_on", "on_demand"):
+                        sub_dict = mcp_block.get(sub)
+                        if isinstance(sub_dict, dict) and name in sub_dict:
+                            target = sub_dict
+                            break
+                if target is None:
                     self._view.print_info(
                         f"MCP server '{name}' not found in config."
                     )
                     return
-                del mcp_servers[name]
+                del target[name]
                 config_path.write_text(
                     _json.dumps(config_data, indent=2) + "\n"
                 )
