@@ -39,7 +39,8 @@ def create_backend(backend_name: str, **kwargs: object) -> SearchBackend:
     """Factory function to create a search backend by name.
 
     Args:
-        backend_name: One of "duckduckgo", "brave", "tavily", "searxng", "serper".
+        backend_name: One of "duckduckgo", "brave", "exa", "jina",
+            "linkup", "searxng", "serper", "tavily".
         **kwargs: Backend-specific keyword arguments (e.g. api_key, base_url).
 
     Raises:
@@ -51,6 +52,10 @@ def create_backend(backend_name: str, **kwargs: object) -> SearchBackend:
     if backend_name == "brave":
         from llm_code.tools.search_backends.brave import BraveBackend
         return BraveBackend(**kwargs)
+    if backend_name == "exa":
+        # v2.7.0a1 M1 — Exa semantic / neural search (free 1000/mo).
+        from llm_code.tools.search_backends.exa import ExaBackend
+        return ExaBackend(**kwargs)
     if backend_name == "tavily":
         from llm_code.tools.search_backends.tavily import TavilyBackend
         return TavilyBackend(**kwargs)

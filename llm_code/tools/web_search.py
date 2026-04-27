@@ -15,7 +15,16 @@ from llm_code.tools.search_backends import RateLimitError, SearchResult, create_
 
 logger = logging.getLogger(__name__)
 
-_VALID_BACKENDS = ("auto", "duckduckgo", "brave", "tavily", "searxng", "serper")
+_VALID_BACKENDS = (
+    "auto",
+    "duckduckgo",
+    "brave",
+    # v2.7.0a1 M1 — Exa semantic / neural search (free 1000/mo).
+    "exa",
+    "tavily",
+    "searxng",
+    "serper",
+)
 
 _TIME_SENSITIVE_TRIGGERS: tuple[str, ...] = (
     "今日", "今天", "現在", "即時",
@@ -53,7 +62,8 @@ class WebSearchTool(Tool):
     def description(self) -> str:
         return (
             "Search the web for information. "
-            "Supports DuckDuckGo (default), Brave, Tavily, SearXNG, and Serper backends. "
+            "Supports DuckDuckGo (default), Brave, Exa (semantic), "
+            "Tavily, SearXNG, and Serper backends. "
             "Returns ranked results with titles, URLs, and snippets. "
             "For 'today's news' / 'latest X' asks, include the full date "
             "(YYYY-MM-DD — see the Environment section) in the query; a "
@@ -128,6 +138,11 @@ class WebSearchTool(Tool):
         kwargs: dict = {}
         if backend_name == "brave" and cfg is not None:
             api_key_env = getattr(cfg, "brave_api_key_env", "BRAVE_API_KEY")
+            api_key = os.environ.get(api_key_env, "")
+            kwargs["api_key"] = api_key
+        elif backend_name == "exa" and cfg is not None:
+            # v2.7.0a1 M1 — Exa semantic / neural search.
+            api_key_env = getattr(cfg, "exa_api_key_env", "EXA_API_KEY")
             api_key = os.environ.get(api_key_env, "")
             kwargs["api_key"] = api_key
         elif backend_name == "tavily" and cfg is not None:
@@ -280,8 +295,13 @@ class WebSearchTool(Tool):
     ) -> tuple[SearchResult, ...]:
         """Try backends in order until one returns results.
 
-        Fallback order: duckduckgo -> brave -> searxng -> serper -> tavily.
-        Only backends that are configured (have API keys / base_url set) are tried.
+        Fallback order (v2.7.0a1):
+            duckduckgo -> brave -> exa -> searxng -> tavily -> serper
+
+        Only backends that are configured (have API keys / base_url set)
+        are tried. The order puts free / no-key backends first, then
+        free-tier semantic engines, then keyword paid services as
+        last-resort fallbacks.
         """
         # Build ordered list of (backend_name, kwargs) to try
         chain: list[tuple[str, dict]] = []
@@ -296,18 +316,18 @@ class WebSearchTool(Tool):
             if brave_key:
                 chain.append(("brave", {"api_key": brave_key}))
 
-        # 3. SearXNG (if base_url configured)
+        # 3. Exa — semantic / neural search (free 1000/mo). v2.7.0a1 M1.
+        if cfg is not None:
+            exa_key_env = getattr(cfg, "exa_api_key_env", "EXA_API_KEY")
+            exa_key = os.environ.get(exa_key_env, "")
+            if exa_key:
+                chain.append(("exa", {"api_key": exa_key}))
+
+        # 4. SearXNG (if base_url configured)
         if cfg is not None:
             searxng_url = getattr(cfg, "searxng_base_url", "")
             if searxng_url:
                 chain.append(("searxng", {"base_url": searxng_url}))
-
-        # 4. Serper (if API key configured)
-        if cfg is not None:
-            serper_key_env = getattr(cfg, "serper_api_key_env", "SERPER_API_KEY")
-            serper_key = os.environ.get(serper_key_env, "")
-            if serper_key:
-                chain.append(("serper", {"api_key": serper_key}))
 
         # 5. Tavily (if API key configured)
         if cfg is not None:
@@ -315,6 +335,13 @@ class WebSearchTool(Tool):
             tavily_key = os.environ.get(tavily_key_env, "")
             if tavily_key:
                 chain.append(("tavily", {"api_key": tavily_key}))
+
+        # 6. Serper (if API key configured)
+        if cfg is not None:
+            serper_key_env = getattr(cfg, "serper_api_key_env", "SERPER_API_KEY")
+            serper_key = os.environ.get(serper_key_env, "")
+            if serper_key:
+                chain.append(("serper", {"api_key": serper_key}))
 
         for backend_name, kwargs in chain:
             try:

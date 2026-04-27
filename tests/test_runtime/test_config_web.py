@@ -46,6 +46,8 @@ class TestWebSearchConfig:
         cfg = WebSearchConfig()
         assert cfg.default_backend == "duckduckgo"
         assert cfg.tavily_api_key_env == "TAVILY_API_KEY"
+        assert cfg.serper_api_key_env == "SERPER_API_KEY"
+        assert cfg.exa_api_key_env == "EXA_API_KEY"
         assert cfg.searxng_base_url == ""
         assert cfg.max_results == 10
         assert cfg.domain_allowlist == ()

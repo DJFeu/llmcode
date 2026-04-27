@@ -172,6 +172,8 @@ class WebSearchConfig:
     brave_api_key_env: str = "BRAVE_API_KEY"
     tavily_api_key_env: str = "TAVILY_API_KEY"
     serper_api_key_env: str = "SERPER_API_KEY"
+    # v2.7.0a1 M1 — Exa semantic / neural search (free 1000/mo).
+    exa_api_key_env: str = "EXA_API_KEY"
     searxng_base_url: str = ""
     max_results: int = 10
     domain_allowlist: tuple[str, ...] = ()

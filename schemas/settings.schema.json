@@ -364,6 +364,45 @@
     "memory": {
       "additionalProperties": false,
       "properties": {
+        "context_template": {
+          "type": "string"
+        },
+        "default_scope": {
+          "type": "string"
+        },
+        "embedder": {
+          "type": "string"
+        },
+        "embedder_model": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "hida_index_path": {
+          "type": "string"
+        },
+        "layer": {
+          "type": "string"
+        },
+        "max_context_chars": {
+          "type": "integer"
+        },
+        "remember_filter": {
+          "type": "string"
+        },
+        "rerank_top_k": {
+          "type": "integer"
+        },
+        "reranker": {
+          "type": "string"
+        },
+        "reranker_model": {
+          "type": "string"
+        },
+        "retrieve_top_k": {
+          "type": "integer"
+        },
         "strict_derivable_check": {
           "type": "boolean"
         }
@@ -683,10 +722,16 @@
           },
           "type": "array"
         },
+        "exa_api_key_env": {
+          "type": "string"
+        },
         "max_results": {
           "type": "integer"
         },
         "searxng_base_url": {
+          "type": "string"
+        },
+        "serper_api_key_env": {
           "type": "string"
         },
         "tavily_api_key_env": {
