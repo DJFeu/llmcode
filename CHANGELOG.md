@@ -1,5 +1,55 @@
 # Changelog
 
+## v2.8.0a2 — Multi-query expansion + Linkup sourced-answer
+
+Second wave of v17. Adds 43 tests; bumps to 2.8.0a2.
+
+### M2 — Multi-query expansion
+
+New `llm_code/tools/research/expansion.py` exposes `expand(query,
+profile)` and `expand_template(query, max_subqueries)`. Two
+strategies, dispatched on `profile.research_query_expansion`:
+
+* `"template"` (default, free) — pattern-rule expansion. 5 rules
+  cover `research X`, `X vs Y`, time-sensitive triggers,
+  how-to / 如何 / 教學, what-is. CJK trigger words mirror the v2.3.1
+  `_TIME_SENSITIVE_TRIGGERS` so Chinese-language asks get the same
+  treatment.
+* `"llm"` (opt-in) — single round-trip via `profile.tier_c_model`
+  asking for a JSON array of 2-3 alternate phrasings. Falls back to
+  template on parse error or missing provider/model. The reusable
+  call shape mirrors `runtime/skill_router._classify_with_llm_debug`
+  (sys/user message pair, max 256 tokens, temperature 0.0).
+* `"off"` — single-shot, returns only the original query.
+
+Original query is always element 0 of the returned tuple — defensive
+baseline so a botched expansion still searches the user's words.
+Sub-queries are deduplicated case-insensitively against the original
+and each other; capped at `profile.research_max_subqueries`.
+
+### M3 — Linkup sourced-answer mode
+
+Extends `LinkupBackend` (from v2.7.0a1) with a `sourced_answer(query,
+depth)` method that calls Linkup's `outputType: "sourcedAnswer"` mode
+— a model-grounded answer plus citation sources in one round-trip.
+M5's research tool (wave 3) will short-circuit to this when
+`profile.linkup_default_mode == "sourcedAnswer"` and Linkup is
+healthy.
+
+New frozen dataclasses `Source` (title / url / snippet) and
+`SourcedAnswer` (answer / sources tuple) preserve the immutability
+convention. Empty `sources` array → empty tuple (not `None`) so
+callers can iterate unconditionally.
+
+Auth + error handling matches the existing `search()` path:
+`RateLimitError` on 429, `ValueError` mentioning the env var on
+401/403, `ValueError` with parse / transport detail on any other
+failure.
+
+The existing v2.7.0a1 `search()` method is byte-identical to v2.7.0;
+backward-compat is asserted by a regression test in
+`test_linkup_sourced.py`.
+
 ## v2.8.0a1 — RAG pipeline foundation (rerank backends + health-aware fallback)
 
 First wave of v17 (the v2.8.0 RAG pipeline deepening). Closes the
