@@ -151,6 +151,7 @@ def build_thinking_extra_body(
     max_output_tokens: int | None = None,
     profile: Any = None,
     post_tool_iteration: bool = False,
+    tool_calls_this_turn: int = 0,
 ) -> dict | None:
     """Build extra_body dict for thinking mode configuration.
 
@@ -184,6 +185,22 @@ def build_thinking_extra_body(
     turn that already dispatched a tool gets the reduced budget,
     saving 30-90s on slow local models without degrading the
     decision-phase reasoning that actually needs depth.
+
+    v2.9.0 P3 — final compile thinking=0. When all of the following
+    hold, the budget drops to ``profile.compile_thinking_budget``
+    (typically 0) instead of the v2.8.1 ``post_tool_thinking_budget``:
+
+    * ``post_tool_iteration=True`` (iteration 1+ after a tool ran),
+    * ``profile.compile_after_tool_calls > 0`` (lever opted in),
+    * ``tool_calls_this_turn >= profile.compile_after_tool_calls``.
+
+    The intuition: after the model has already issued ≥ N tool calls
+    this turn, the next iteration is the "final compile" step — it's
+    summarising N tool results into one user-facing answer. That step
+    is templating, not reasoning, so a 0-token thinking budget saves
+    another 5-15s on slow local models without quality loss. With the
+    default ``compile_after_tool_calls = 0`` the lever stays inert
+    (preserves v2.8.1 byte-for-byte).
     """
     fmt = "chat_template_kwargs"
     if profile is not None:
@@ -211,11 +228,38 @@ def build_thinking_extra_body(
     # already engaged (profile_budget > 0). Profiles that don't opt
     # in retain their full ``default_thinking_budget`` on every
     # iteration — v2.8.0 byte-for-byte.
+    #
+    # v2.9.0 P3 — when the profile opts in to the "final compile"
+    # heuristic AND the model has already issued enough tool calls
+    # this turn, the compile budget supersedes the post-tool budget.
+    # Compile-phase thinking is templating work — replace 1024 tokens
+    # of redundant reasoning with 0 to save another 5-15s on slow
+    # local models without quality loss. ``compile_thinking_budget = 0``
+    # short-circuits to a fully disabled thinking config (the model
+    # generates no chain-of-thought for the compile step at all),
+    # which is the canonical "free templating turn" shape.
+    compile_engaged = False
     if post_tool_iteration and profile is not None:
         post_tool_budget = int(
             getattr(profile, "post_tool_thinking_budget", 0) or 0
         )
-        if post_tool_budget > 0 and profile_budget > 0:
+        compile_after = int(
+            getattr(profile, "compile_after_tool_calls", 0) or 0
+        )
+        compile_budget = int(
+            getattr(profile, "compile_thinking_budget", 0) or 0
+        )
+        compile_engaged = (
+            compile_after > 0
+            and tool_calls_this_turn >= compile_after
+            and profile_budget > 0
+        )
+        if compile_engaged:
+            if compile_budget <= 0:
+                # Disable thinking entirely for the compile turn.
+                return _wrap(False)
+            profile_budget = compile_budget
+        elif post_tool_budget > 0 and profile_budget > 0:
             profile_budget = post_tool_budget
 
     def _budget_from_profile() -> int:
@@ -1050,6 +1094,13 @@ class ConversationRuntime:
         _tool_called_this_turn = False
         _denial_retry_count = 0
 
+        # v2.9.0 P3 — count distinct tool dispatches across this turn
+        # so ``build_thinking_extra_body`` can apply the "final compile"
+        # heuristic when the model has issued ``profile.compile_after_tool_calls``
+        # tool calls already and the next iteration is summarisation
+        # work.
+        _tool_calls_this_turn = 0
+
         # Fresh iteration budget for this turn — exposes an observable
         # ``used`` / ``exceeded`` counter and produces the max-steps
         # reminder text when the turn has burned its budget.
@@ -1290,6 +1341,12 @@ class ConversationRuntime:
                     post_tool_iteration=(
                         _iteration > 0 and _tool_called_this_turn
                     ),
+                    # v2.9.0 P3 — drives the "final compile" heuristic
+                    # in build_thinking_extra_body. When this count
+                    # reaches ``profile.compile_after_tool_calls``,
+                    # the next iteration's thinking budget drops to
+                    # ``profile.compile_thinking_budget`` (typically 0).
+                    tool_calls_this_turn=_tool_calls_this_turn,
                 ) if not use_native else None,
             )
 
@@ -1416,6 +1473,10 @@ class ConversationRuntime:
                             post_tool_iteration=(
                                 _iteration > 0 and _tool_called_this_turn
                             ),
+                            # v2.9.0 P3 — same compile-heuristic input
+                            # as the main call site so the XML fallback
+                            # request lands the same budget shape.
+                            tool_calls_this_turn=_tool_calls_this_turn,
                         ),
                     )
                     try:
@@ -2210,6 +2271,14 @@ class ConversationRuntime:
                 # the rest of the turn even if subsequent iterations
                 # don't call tools.
                 _tool_called_this_turn = True
+                # v2.9.0 P3 — accumulate the running count of distinct
+                # tool dispatches so the compile-thinking heuristic
+                # has a turn-level totaliser to compare against
+                # ``profile.compile_after_tool_calls``. We count the
+                # number of tool RESULTS (1:1 with dispatched calls)
+                # to keep the metric independent of whether parallel
+                # dispatch fired sequentially or via gather().
+                _tool_calls_this_turn += len(tool_result_blocks)
                 tool_result_msg = Message(
                     role="user",
                     content=tuple(tool_result_blocks),

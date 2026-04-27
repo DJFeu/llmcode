@@ -328,6 +328,30 @@ class ModelProfile:
     #     compress_old_tool_results = true
     compress_old_tool_results: bool = False
 
+    # ── v2.9.0 P3 — final compile thinking=0 ────────────────────────
+    # When iter > 0 AND ``tool_calls_this_turn >= compile_after_tool_calls > 0``,
+    # drop the thinking budget to ``compile_thinking_budget``
+    # (typically 0). The "compile" step (final summarisation after N
+    # tool results) doesn't need reasoning — it's templating work:
+    # extract title from result[0], URL from result[1], format. Deep
+    # chain-of-thought there reasons over ground truth and adds little
+    # signal at large wall-clock cost on slow local models.
+    #
+    # Default ``compile_after_tool_calls = 0`` is the disable sentinel
+    # so v2.8.1's per-iteration ``post_tool_thinking_budget`` stays in
+    # effect for profiles that don't opt in. When the lever engages
+    # AND ``compile_thinking_budget == 0``, the runtime emits a fully
+    # disabled thinking config (no enable=True, no budget) for that
+    # single call.
+    #
+    # TOML authoring (matches the existing flat-section convention):
+    #
+    #     [tool_consumption]
+    #     compile_after_tool_calls = 3
+    #     compile_thinking_budget = 0
+    compile_after_tool_calls: int = 0
+    compile_thinking_budget: int = 0
+
 
 # ── Built-in profiles ─────────────────────────────────────────────────
 
@@ -748,12 +772,17 @@ def _profile_from_dict(data: dict[str, Any], base: ModelProfile | None = None) -
         "parser_hints": ("custom_close_tags", "call_separator_chars"),
         # v14 — tool consumption compat layer; v2.9.0 P2 adds
         # compress_old_tool_results to the same section since both
-        # mechanisms shape how tool results re-feed.
+        # mechanisms shape how tool results re-feed; v2.9.0 P3 adds
+        # the compile-thinking heuristic fields here too because the
+        # heuristic gates on tool_calls_this_turn — same problem
+        # surface (post-tool consumption shape).
         "tool_consumption": (
             "reminder_after_each_call",
             "strip_prior_reasoning",
             "retry_on_denial",
             "compress_old_tool_results",
+            "compile_after_tool_calls",
+            "compile_thinking_budget",
         ),
         # v2.9.0 P1 — parallel tool dispatch lever lives in its own
         # section so opting in / out doesn't require touching the

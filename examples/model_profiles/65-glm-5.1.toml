@@ -19,6 +19,12 @@
 # workflow was almost entirely stale tool payloads. Compression cuts
 # that by 60-80% with no quality loss (the most recent batch stays
 # full for current reasoning).
+#
+# v2.9.0 P3 — final compile thinking=0 via ``compile_after_tool_calls``
+# + ``compile_thinking_budget`` in [tool_consumption]. After the
+# model has issued ≥ 3 tool calls this turn, the next iteration is
+# templating work (cite + format the N tool results); set thinking
+# budget to 0 to skip the redundant ~5-15s of chain-of-thought.
 
 name = "GLM-5.1 (744B.A40B)"
 
@@ -168,6 +174,16 @@ retry_on_denial = true
 # the 41k-token observed prefill on the 3-search workflow was
 # almost entirely stale tool payloads.
 compress_old_tool_results = true
+
+# v2.9.0 P3 — "final compile" thinking budget. Once the model has
+# issued >= 3 tool calls in this turn, the next iteration is the
+# summarisation step (cite + format the N tool results). That step
+# is templating, not reasoning — set thinking budget to 0 to skip
+# the redundant ~5-15s of chain-of-thought. Set
+# compile_after_tool_calls = 0 to disable; raise the threshold if
+# you want the override only for very tool-heavy turns.
+compile_after_tool_calls = 3
+compile_thinking_budget = 0
 
 # v2.9.0 P1 — parallel tool dispatch. When the model emits multiple
 # tool calls in a single assistant turn, run them concurrently via
