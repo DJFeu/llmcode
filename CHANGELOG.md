@@ -1,5 +1,92 @@
 # Changelog
 
+## v2.6.0a3 — Wave 3 of v16 (M7 + M8)
+
+Third alpha of v2.6.0. Adds expressive subagent tool policies with
+inline MCP servers (M7) and a headless GitHub Action wrapper (M8).
+
+### M7 — Subagent wildcard tools + inline MCP + per-agent policy
+
+`.llmcode/agents/<role>.md` frontmatter gains three new fields:
+
+- `tools:` may now mix literals (`read_file`), wildcards (`read_*`),
+  and per-tool args allowlists (`bash:git status,git diff`). Args
+  allowlists check the tool's primary string argument with
+  startswith semantics so locking down command families is one line
+  of frontmatter.
+- `tool_policy:` selects a prebuilt policy
+  (`read-only` / `build` / `verify` / `unrestricted`) defined in
+  `runtime.tool_policy.BUILTIN_POLICIES`.
+- `mcp_servers:` is a list of `{name, command, args}` entries that
+  spawn as `subprocess.Popen` instances when the subagent boots.
+
+`runtime.tool_policy` exports `parse_tool_entry`, `match_wildcard`,
+`args_allowlist_check`, `expand_policy`, and `resolve_tool_subset`.
+The wildcard matcher is start-anchored so `read_*` does NOT absorb
+`fake_read_thing`-style collisions (R2 in the plan).
+
+`subagent_factory.make_subagent_runtime` now:
+
+- Resolves the effective tool subset from `tool_specs` + `tool_policy`
+  before the existing multi-stage filter runs.
+- Wraps each tool with an args allowlist via `_ArgsAllowlistTool`
+  (intercepts both sync `execute` and async `execute_async`).
+- Spawns inline MCP servers via `InlineMcpRegistry`, with a SIGTERM
+  (10s grace) → SIGKILL teardown chain attached to `runtime.shutdown`.
+
+Frontmatter parsing in `tools/agent_loader.py` gains optional PyYAML
+support (already a core dep) so `mcp_servers:` arrays of dicts parse
+cleanly. The wave-1 flat-string parser is preserved as a fallback.
+
+### M8 — GitHub Action wrapper
+
+CLI gains two new flags on `cli/main.py`:
+
+- `--headless` — shorthand for `-q + --output-format json` plus
+  structured exit codes (0=success, 1=tool error, 2=model error,
+  3=auth error, 4=user cancel).
+- `--output-format text|json` — explicit format selector for one-shot
+  modes.
+
+`cli/oneshot.run_quick_mode` now returns an exit code. Headless
+mode emits a single JSON object to stdout matching
+`tests/fixtures/headless_output.schema.json`:
+
+```json
+{"output": "...", "tool_calls": [...], "tokens": {...},
+ "exit_code": 0, "error": null}
+```
+
+Three template workflows under `.github/templates/`
+(`pr-review.yml`, `issue-triage.yml`, `custom.yml`) plus the
+composite action at `.github/llmcode-action.yml`. Documentation
+walkthrough at `docs/github-action.md`.
+
+The composite action exposes the auth secret via env var (never
+argv) and exposes `exit_code` as a separate output so workflow
+steps can branch on the structured value.
+
+### Tests
+
+- 41 tests for tool policy + wildcard matching + args allowlist +
+  inline MCP lifecycle (incl. SIGTERM grace + SIGKILL fallback
+  with a process that ignores SIGTERM).
+- 10 tests for headless JSON output (one per exit code path,
+  schema validation, tool-call capture, text-mode backward compat).
+
+Suite: 8160 → ~8216 passed (+56 net new tests). v15 grep guard +
+byte-parity gate + README↔reality test all green.
+
+### Acceptance criteria covered
+
+- ✅ Wildcard tool patterns work (`read_*`, `lsp_*`, etc.)
+- ✅ Args allowlist enforced for bash and other arg-aware tools
+- ✅ Inline MCP lifecycle clean — SIGTERM grace then SIGKILL
+- ✅ Built-in policies match documented expansions
+- ✅ `llmcode --headless -q "..."` emits JSON + structured exit code
+- ✅ Composite action + 3 templates render valid YAML
+- ✅ `-q "..."` backward compat — text mode unchanged
+
 ## v2.6.0a2 — Wave 2 of v16 (M5 + M6)
 
 Second alpha of v2.6.0. Adds the formal extension manifest +

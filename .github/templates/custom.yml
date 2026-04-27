@@ -1,0 +1,32 @@
+name: 'Custom llmcode workflow'
+
+# Minimal stub for workflows that need a tailored llmcode prompt.
+# Copy this file into your repo's .github/workflows/, edit the
+# trigger + prompt to taste, and commit.
+
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: 'Prompt to send to llmcode'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: llmcode
+        uses: ./.github/llmcode-action.yml
+        with:
+          mode: custom
+          model: glm-5.1
+          auth_secret: ${{ secrets.LLMCODE_API_KEY }}
+          prompt: ${{ github.event.inputs.prompt }}
+
+      - name: Print result
+        run: 'echo "${{ steps.llmcode.outputs.result }}"'

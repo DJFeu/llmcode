@@ -1,0 +1,52 @@
+name: 'PR review (llmcode)'
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - id: llmcode
+        uses: ./.github/llmcode-action.yml
+        with:
+          mode: review
+          model: glm-5.1
+          auth_secret: ${{ secrets.LLMCODE_API_KEY }}
+          prompt: |
+            You are reviewing pull request #${{ github.event.pull_request.number }}:
+            title: "${{ github.event.pull_request.title }}"
+            body: |
+              ${{ github.event.pull_request.body }}
+
+            Run `git diff origin/${{ github.event.pull_request.base.ref }}...HEAD`
+            to see the changes; produce a concise review covering:
+            - Correctness risks
+            - Security risks
+            - Test coverage
+            Keep the review under 600 words.
+
+      - name: Post review as PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const result = JSON.parse(${{ toJson(steps.llmcode.outputs.result) }});
+            if (result.error) {
+              core.setFailed(`llmcode error: ${result.error}`);
+              return;
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `### llmcode review\n\n${result.output}`,
+            });

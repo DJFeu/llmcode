@@ -22,6 +22,20 @@ class AgentRole:
     is_builtin: bool = True
     # Whether this role runs asynchronously (background).
     is_async: bool = False
+    # v16 M7 — frontmatter ``tools:`` entries kept verbatim so the
+    # subagent factory can do wildcard expansion + args allowlist
+    # checks at spawn time (the parent's full tool surface is needed
+    # for wildcard resolution and isn't available during loading).
+    # Empty tuple = no expressive policy (use legacy ``allowed_tools``).
+    tool_specs: tuple[str, ...] = ()
+    # v16 M7 — frontmatter ``tool_policy:`` value
+    # (read-only / build / verify / unrestricted). Empty string =
+    # no policy (legacy paths only).
+    tool_policy: str = ""
+    # v16 M7 — frontmatter ``mcp_servers:`` entries. Each tuple is
+    # (name, command, args_tuple). Spawned by the subagent factory
+    # via subprocess.Popen and torn down on agent exit.
+    inline_mcp_servers: tuple[tuple[str, str, tuple[str, ...]], ...] = ()
 
 
 EXPLORE_ROLE = AgentRole(

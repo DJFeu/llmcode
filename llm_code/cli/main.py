@@ -180,6 +180,25 @@ class ReplGroup(click.Group):
     help="Quick Q&A (headless)",
 )
 @click.option(
+    "--headless", is_flag=True, default=False,
+    help=(
+        "Headless mode: combine -q + --output-format json + structured "
+        "exit codes (0=success, 1=tool error, 2=model error, 3=auth, "
+        "4=user cancel). Designed for CI / GitHub Actions."
+    ),
+)
+@click.option(
+    "--output-format",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    help=(
+        "Output format for one-shot modes (-q / --headless). text = "
+        "plain stdout (default), json = single JSON object suitable "
+        "for piping into jq."
+    ),
+)
+@click.option(
     "--config-schema", is_flag=True, default=False,
     help="Print the ConfigSchema JSON schema and exit",
 )
@@ -212,6 +231,8 @@ def main(
     yolo: bool = False,
     execute_prompt: str | None = None,
     quick_prompt: str | None = None,
+    headless: bool = False,
+    output_format: str = "text",
     config_schema: bool = False,
     preset: str | None = None,
     log_file: str | None = None,
@@ -306,12 +327,29 @@ def main(
         run_execute_mode(execute_prompt, config)
         return
 
+    # v16 M8 — --headless is shorthand for "-q + --output-format json
+    # + structured exit codes". When --headless is set without -q, we
+    # require a positional prompt or an empty quick path; the
+    # ``-q "..."`` flow stays the canonical entry point so existing
+    # invocations don't change shape.
+    if headless and not quick_prompt and prompt:
+        quick_prompt = " ".join(prompt) if isinstance(prompt, tuple) else prompt
+    if headless and output_format == "text":
+        # Default --headless to JSON when the user didn't pick a format.
+        output_format = "json"
+
     if quick_prompt:
         stdin_text = None
         if not sys.stdin.isatty():
             stdin_text = sys.stdin.read()
         from llm_code.cli.oneshot import run_quick_mode
-        run_quick_mode(quick_prompt, config, stdin_text)
+        exit_code = run_quick_mode(
+            quick_prompt, config, stdin_text,
+            output_format=output_format,
+            headless=headless,
+        )
+        if exit_code:
+            raise SystemExit(exit_code)
         return
 
     import asyncio

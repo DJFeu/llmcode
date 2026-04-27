@@ -132,9 +132,32 @@ def run_quick_mode(
     prompt: str,
     config: RuntimeConfig,
     stdin_text: str | None = None,
-) -> None:
+    *,
+    output_format: str = "text",
+    headless: bool = False,
+) -> int:
     """Quick Q&A — send prompt through the full ConversationRuntime and
     print the visible text to stdout.
+
+    v16 M8: ``output_format='json'`` + ``headless=True`` produce a
+    structured stdout payload with exit codes for CI. Schema:
+
+        {
+          "output": "...",
+          "tool_calls": [{"name": "...", "args": {...}}, ...],
+          "tokens": {"input": int, "output": int},
+          "exit_code": int,
+          "error": "..." | null
+        }
+
+    Exit codes (returned as int, raised as SystemExit by the CLI
+    wrapper):
+
+    * 0 — success
+    * 1 — tool error
+    * 2 — model / provider error
+    * 3 — auth error (provider key missing or invalid)
+    * 4 — user cancel (Ctrl-C)
 
     Before 2026-04-08 this function called the provider directly,
     bypassing the system prompt, the tool registry, the tool-call
@@ -146,12 +169,19 @@ def run_quick_mode(
         prompt: The question or instruction.
         config: Loaded runtime config.
         stdin_text: Optional text piped via stdin.
+        output_format: ``"text"`` (default) or ``"json"``.
+        headless: When True, errors yield JSON-shaped output with a
+            non-zero exit code instead of raising.
+
+    Returns:
+        Exit code suitable for ``raise SystemExit``. ``0`` on success.
     """
     full_prompt = prompt
     if stdin_text:
         full_prompt = f"{prompt}\n\n```\n{stdin_text}\n```"
 
-    from llm_code.api.types import StreamTextDelta
+    from llm_code.api.errors import ProviderAuthError, ProviderError
+    from llm_code.api.types import StreamTextDelta, StreamToolUseStart
     from llm_code.runtime.context import ProjectContext
     from llm_code.runtime.conversation import ConversationRuntime
     from llm_code.runtime.core_tools import register_core_tools
@@ -201,18 +231,65 @@ def run_quick_mode(
     # ``runtime.shutdown()`` closes every registered backend.
     runtime._sandbox_lifecycle = lifecycle
 
+    tool_calls: list[dict] = []
+
     async def _drive() -> str:
         events = await runtime.run_one_turn(full_prompt)
         parts: list[str] = []
         for ev in events:
             if isinstance(ev, StreamTextDelta):
                 parts.append(ev.text)
+            elif isinstance(ev, StreamToolUseStart):
+                tool_calls.append({
+                    "name": getattr(ev, "name", ""),
+                    "id": getattr(ev, "id", ""),
+                })
         return "".join(parts)
 
+    visible = ""
+    error_message: str | None = None
+    exit_code = 0
     try:
         visible = asyncio.run(_drive())
-        print(visible)
+    except KeyboardInterrupt:
+        exit_code = 4
+        error_message = "User cancel"
+    except ProviderAuthError as exc:
+        exit_code = 3
+        error_message = f"Auth error: {exc}"
+    except ProviderError as exc:
+        exit_code = 2
+        error_message = f"Provider error: {exc}"
+    except Exception as exc:  # noqa: BLE001
+        exit_code = 1
+        error_message = f"Tool error: {exc}"
     finally:
         # F5-wire-3: close any sandbox backend this one-shot opened.
         # No-op when nothing was registered (close_all is defensive).
         runtime.shutdown()
+
+    if output_format == "json":
+        import json as _json
+
+        cost = getattr(runtime, "_cost_tracker", None)
+        tokens = {
+            "input": getattr(cost, "total_input_tokens", 0) if cost else 0,
+            "output": getattr(cost, "total_output_tokens", 0) if cost else 0,
+        }
+        payload = {
+            "output": visible,
+            "tool_calls": tool_calls,
+            "tokens": tokens,
+            "exit_code": exit_code,
+            "error": error_message,
+        }
+        sys.stdout.write(_json.dumps(payload))
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+    else:
+        if visible:
+            print(visible)
+        elif error_message:
+            print(error_message, file=sys.stderr)
+
+    return exit_code if headless else 0

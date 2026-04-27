@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "llmcode headless output",
+  "type": "object",
+  "required": ["output", "tool_calls", "tokens", "exit_code", "error"],
+  "additionalProperties": false,
+  "properties": {
+    "output": {"type": "string"},
+    "tool_calls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": true,
+        "properties": {
+          "name": {"type": "string"},
+          "id": {"type": "string"}
+        }
+      }
+    },
+    "tokens": {
+      "type": "object",
+      "required": ["input", "output"],
+      "additionalProperties": false,
+      "properties": {
+        "input": {"type": "integer", "minimum": 0},
+        "output": {"type": "integer", "minimum": 0}
+      }
+    },
+    "exit_code": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4
+    },
+    "error": {
+      "type": ["string", "null"]
+    }
+  }
+}

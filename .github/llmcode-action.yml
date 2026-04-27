@@ -1,0 +1,84 @@
+name: 'LLMCode Agent'
+description: |
+  Run llmcode in headless mode against a prompt and capture the
+  structured JSON output. Designed for PR review, issue triage, and
+  custom CI workflows.
+
+inputs:
+  prompt:
+    description: |
+      Prompt to send to the model. Use GitHub Actions context vars
+      (e.g. ${{ github.event.pull_request.body }}) to pull in dynamic
+      content.
+    required: true
+  mode:
+    description: 'Workflow mode: review | triage | custom'
+    required: false
+    default: 'review'
+  model:
+    description: 'Model name to use (matches `--model` on the CLI)'
+    required: false
+    default: 'glm-5.1'
+  auth_secret:
+    description: |
+      API key for the configured model provider. Read from a GitHub
+      Actions secret (e.g. ${{ secrets.LLMCODE_API_KEY }}). Passed via
+      env var so it never lands in command logs.
+    required: true
+  auth_env_var:
+    description: |
+      Env var the auth_secret should be exposed under (default
+      LLM_API_KEY — the v2.5+ default name).
+    required: false
+    default: 'LLM_API_KEY'
+  llmcode_version:
+    description: 'Pinned llmcode-cli version (default: latest stable)'
+    required: false
+    default: ''
+
+outputs:
+  result:
+    description: 'JSON-encoded llmcode result (matches headless schema)'
+    value: ${{ steps.run.outputs.result }}
+  exit_code:
+    description: 'Structured exit code from headless mode'
+    value: ${{ steps.run.outputs.exit_code }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install llmcode-cli
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.llmcode_version }}" ]; then
+          pipx install "llmcode-cli==${{ inputs.llmcode_version }}"
+        else
+          pipx install llmcode-cli
+        fi
+
+    - name: Run llmcode (headless)
+      id: run
+      shell: bash
+      env:
+        # Secret is exposed via env var so it never appears in argv
+        # logs. The auth_env_var input lets callers route to whichever
+        # provider env-var their model expects (LLM_API_KEY,
+        # OPENAI_API_KEY, ANTHROPIC_API_KEY, ...).
+        LLMCODE_PROMPT: ${{ inputs.prompt }}
+      run: |
+        export "${{ inputs.auth_env_var }}=${{ inputs.auth_secret }}"
+        result=$(llmcode --headless --model "${{ inputs.model }}" -q "$LLMCODE_PROMPT")
+        # Multi-line outputs need the heredoc wrapping in Actions.
+        {
+          echo 'result<<__LLMCODE_EOF__'
+          echo "$result"
+          echo '__LLMCODE_EOF__'
+        } >> "$GITHUB_OUTPUT"
+        # Surface the structured exit code as a separate output.
+        exit_code=$(echo "$result" | python -c 'import json,sys; print(json.load(sys.stdin)["exit_code"])')
+        echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"

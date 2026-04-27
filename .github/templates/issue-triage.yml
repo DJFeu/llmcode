@@ -1,0 +1,63 @@
+name: 'Issue triage (llmcode)'
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: llmcode
+        uses: ./.github/llmcode-action.yml
+        with:
+          mode: triage
+          model: glm-5.1
+          auth_secret: ${{ secrets.LLMCODE_API_KEY }}
+          prompt: |
+            Triage GitHub issue #${{ github.event.issue.number }}.
+            Title: "${{ github.event.issue.title }}"
+            Body: |
+              ${{ github.event.issue.body }}
+
+            Output JSON with this shape (no prose around it):
+              {
+                "type": "bug" | "feature" | "question" | "docs" | "duplicate",
+                "labels": ["..."],
+                "summary": "..."
+              }
+
+      - name: Apply triage labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const raw = JSON.parse(${{ toJson(steps.llmcode.outputs.result) }});
+            if (raw.error) {
+              core.warning(`llmcode error: ${raw.error}`);
+              return;
+            }
+            let triage;
+            try {
+              triage = JSON.parse(raw.output);
+            } catch (e) {
+              core.warning(`llmcode output not parseable JSON: ${e.message}`);
+              return;
+            }
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: [triage.type, ...(triage.labels || [])],
+            });
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `### llmcode triage\n\n${triage.summary}`,
+            });

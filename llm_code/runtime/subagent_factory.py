@@ -1,5 +1,11 @@
 """Subagent runtime factory.
 
+v16 M7 — supports per-role tool subsets via wildcard expansion (the
+``tools:`` frontmatter list), prebuilt policy presets (``tool_policy:``),
+and per-tool args allowlists (``bash:git status,git diff``). Inline
+MCP servers declared on a role spawn as subprocess.Popen instances and
+tear down via SIGTERM (10s grace) → SIGKILL when the subagent exits.
+
 Builds a child ConversationRuntime for a specific AgentRole. The child:
 
 * Inherits the parent's provider, hook runner, prompt builder, permission
@@ -23,6 +29,9 @@ run_turn(task) from the caller (which is AgentTool).
 from __future__ import annotations
 
 import logging
+import signal
+import subprocess
+import time
 from pathlib import Path
 
 from llm_code.runtime.conversation import ConversationRuntime
@@ -47,8 +56,39 @@ def make_subagent_runtime(
 
     *model* overrides the parent's active model for this sub-agent.
     Pass None to inherit the parent default.
+
+    v16 M7 wiring (no behaviour change for wave-1 roles):
+
+    * When a role declares ``tool_specs`` (frontmatter ``tools:``
+      with wildcards / args allowlists) or ``tool_policy`` (one of
+      the prebuilt policies), :func:`runtime.tool_policy.resolve_tool_subset`
+      expands them against the parent's tool surface and the
+      result drives the registry filter.
+    * Inline MCP servers declared on the role (``mcp_servers:``)
+      spawn via :class:`InlineMcpRegistry` and tear down when the
+      child runtime is shut down.
     """
     effective_role = role if role is not None else BUILD_ROLE
+
+    # v16 M7 — expand wildcards / policy presets BEFORE the registry
+    # filter runs so the rest of the multi-stage filter applies to
+    # the resolved name set. Per-tool args allowlists are gathered
+    # alongside; they get enforced at call time via tool wrappers.
+    effective_allowed = effective_role.allowed_tools
+    per_tool_args: dict[str, tuple[str, ...]] = {}
+    has_dynamic_policy = bool(
+        effective_role.tool_specs or effective_role.tool_policy
+    )
+    if has_dynamic_policy:
+        from llm_code.runtime.tool_policy import resolve_tool_subset
+
+        parent_names = frozenset(parent._tool_registry._tools.keys())
+        resolved_set, per_tool_args = resolve_tool_subset(
+            parent_names,
+            explicit_tools=effective_role.tool_specs,
+            policy=effective_role.tool_policy or None,
+        )
+        effective_allowed = resolved_set
 
     # Multi-stage tool filtering:
     #   Stage 1: MCP tools bypass all checks
@@ -56,13 +96,44 @@ def make_subagent_runtime(
     #   Stage 3: ALL_AGENT_DISALLOWED global deny-list
     #   Stage 4: CUSTOM_AGENT_DISALLOWED for user-defined agents
     #   Stage 5: ASYNC_AGENT_ALLOWED positive filter (background agents)
-    #   + role.allowed_tools whitelist + role.disallowed_tools deny
+    #   + effective_allowed whitelist + role.disallowed_tools deny
     child_registry = parent._tool_registry.filtered(
-        effective_role.allowed_tools,
+        effective_allowed,
         disallowed=effective_role.disallowed_tools,
         is_builtin=effective_role.is_builtin,
         is_async=effective_role.is_async,
     )
+
+    # v16 M7 — wrap each tool that has an args allowlist so calls
+    # with mismatched args are rejected at dispatch time. Tools
+    # without an allowlist pass through unchanged.
+    if per_tool_args:
+        from llm_code.runtime.tool_policy import args_allowlist_check
+
+        for tool_name, allowlist in per_tool_args.items():
+            tool = child_registry._tools.get(tool_name)
+            if tool is None:
+                continue
+            child_registry._tools[tool_name] = _ArgsAllowlistTool(
+                tool, allowlist, args_allowlist_check,
+            )
+
+    # v16 M7 — spawn inline MCP servers declared on the role. Each
+    # server is wrapped in a process registry attached to the child
+    # runtime so ``runtime.shutdown()`` triggers the SIGTERM/SIGKILL
+    # teardown chain. Spawn failures are logged but never block the
+    # subagent boot — a missing inline MCP shouldn't crash the user
+    # mid-turn.
+    inline_mcp_registry: InlineMcpRegistry | None = None
+    if effective_role.inline_mcp_servers:
+        inline_mcp_registry = InlineMcpRegistry()
+        for name, command, args in effective_role.inline_mcp_servers:
+            try:
+                inline_mcp_registry.spawn(name, command, args)
+            except Exception as exc:  # noqa: BLE001 — log + continue
+                _logger.warning(
+                    "inline MCP server %r failed to spawn: %r", name, exc,
+                )
 
     # v16 M2: when agent memory is enabled, append the per-agent_id tool
     # surface so the subagent can read/write/list its memory cell.
@@ -168,6 +239,28 @@ def make_subagent_runtime(
     if parent_lifecycle is not None:
         child._sandbox_lifecycle = parent_lifecycle  # type: ignore[attr-defined]
 
+    # v16 M7 — attach the inline MCP registry to the runtime + extend
+    # ``shutdown`` so the subprocess teardown chain fires when the
+    # subagent exits. Wrapped in a try because some test paths build
+    # a runtime without a real shutdown method.
+    if inline_mcp_registry is not None:
+        child._inline_mcp_registry = inline_mcp_registry  # type: ignore[attr-defined]
+        original_shutdown = getattr(child, "shutdown", None)
+
+        def _shutdown_with_mcp() -> None:
+            try:
+                inline_mcp_registry.shutdown_all()
+            finally:
+                if callable(original_shutdown):
+                    try:
+                        original_shutdown()
+                    except Exception as exc:  # noqa: BLE001 — best-effort cleanup
+                        _logger.warning(
+                            "subagent shutdown after MCP teardown raised: %r", exc,
+                        )
+
+        child.shutdown = _shutdown_with_mcp  # type: ignore[assignment]
+
     return child
 
 
@@ -206,3 +299,171 @@ def _ensure_agent_memory_store(parent: ConversationRuntime):
         store = AgentMemoryStore()
         parent._agent_memory_store = store  # type: ignore[attr-defined]
     return store
+
+
+# ---------------------------------------------------------------------------
+# v16 M7 — args allowlist + inline MCP runtime
+# ---------------------------------------------------------------------------
+
+
+class _ArgsAllowlistTool:
+    """Wraps a Tool so calls with non-allowlisted args are rejected.
+
+    The wrapper preserves the underlying tool's name + definition so
+    everything the LLM sees is unchanged. Only the dispatched call's
+    args are gated. Both sync (:meth:`execute`) and async
+    (:meth:`execute_async`) entry points are intercepted because tool
+    dispatch in the runtime can pick either path.
+
+    Args allowlist semantics live in
+    :func:`runtime.tool_policy.args_allowlist_check` — empty allowlist
+    is a passthrough.
+    """
+
+    def __init__(
+        self,
+        underlying,
+        allowlist: tuple[str, ...],
+        check,
+    ) -> None:
+        self._underlying = underlying
+        self._allowlist = allowlist
+        self._check = check
+        # Mirror common Tool attributes so the registry surface matches.
+        self.name = getattr(underlying, "name", "")
+        self.description = getattr(underlying, "description", "")
+
+    def __getattr__(self, item: str):
+        # Fall back to the wrapped tool for anything we don't override.
+        return getattr(self._underlying, item)
+
+    def _denied_result(self):
+        from llm_code.tools.base import ToolResult
+
+        allowed = ", ".join(self._allowlist) if self._allowlist else ""
+        return ToolResult(
+            output=(
+                f"{self.name}: arguments not permitted by role policy. "
+                f"Allowed prefixes: {allowed}"
+            ),
+            is_error=True,
+        )
+
+    def execute(self, args: dict):
+        if not self._check(self.name, args, self._allowlist):
+            return self._denied_result()
+        return self._underlying.execute(args)
+
+    async def execute_async(self, args: dict):
+        if not self._check(self.name, args, self._allowlist):
+            return self._denied_result()
+        return await self._underlying.execute_async(args)
+
+    # Some legacy tests / call sites use ``call`` (kwargs-based) as
+    # the entry point. Keep that surface working.
+    async def call(self, **kwargs):
+        if not self._check(self.name, kwargs, self._allowlist):
+            return self._denied_result()
+        if hasattr(self._underlying, "call"):
+            return await self._underlying.call(**kwargs)
+        return await self._underlying.execute_async(kwargs)
+
+    def to_definition(self):
+        # Pass through the schema unchanged so the LLM sees the same
+        # tool signature.
+        if hasattr(self._underlying, "to_definition"):
+            return self._underlying.to_definition()
+        return None
+
+
+class InlineMcpRegistry:
+    """Tracks inline MCP server subprocesses spawned for a subagent.
+
+    The registry's only job is lifecycle: spawn / track PID / tear
+    down with SIGTERM (10s grace) → SIGKILL on shutdown. The actual
+    MCP protocol traffic flows through the child runtime's existing
+    MCP manager, which is unchanged for wave-1 inline MCP roles
+    (none) and wave-2 MCP-aware roles (M7 spec §3.7).
+
+    Spawn failures are logged + raised so the subagent factory can
+    continue without the failing server.
+    """
+
+    _SIGTERM_GRACE_SECONDS = 10.0
+
+    def __init__(self) -> None:
+        self._processes: list[tuple[str, "_MCPProc"]] = []
+
+    def spawn(self, name: str, command: str, args: tuple[str, ...]) -> None:
+        """Spawn ``command`` + ``args`` as a tracked subprocess.
+
+        The MCP stdio handshake is the consumer's responsibility (the
+        runtime's MCP manager). This method's contract is "process
+        is alive after spawn or we raise".
+        """
+        try:
+            proc = subprocess.Popen(  # noqa: S603 — command + args are role-defined
+                [command, *args],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except (FileNotFoundError, OSError) as exc:
+            raise RuntimeError(f"cannot spawn MCP server {name!r}: {exc}") from exc
+        self._processes.append((name, _MCPProc(proc)))
+        _logger.info("inline_mcp_spawned name=%s pid=%d", name, proc.pid)
+
+    def shutdown_all(self) -> None:
+        """Terminate every tracked subprocess.
+
+        SIGTERM first; if a process is still alive after the grace
+        period, send SIGKILL. Errors during teardown are logged but
+        never raised so a stuck child can't break shutdown of the
+        whole session.
+        """
+        if not self._processes:
+            return
+
+        # First pass: SIGTERM every alive child.
+        for _name, proc_wrapper in self._processes:
+            proc = proc_wrapper.proc
+            if proc.poll() is None:
+                try:
+                    proc.send_signal(signal.SIGTERM)
+                except (OSError, ProcessLookupError):
+                    pass
+
+        # Wait up to the grace period, polling each.
+        deadline = time.monotonic() + self._SIGTERM_GRACE_SECONDS
+        for _name, proc_wrapper in self._processes:
+            proc = proc_wrapper.proc
+            remaining = max(0.0, deadline - time.monotonic())
+            try:
+                proc.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                pass
+
+        # Second pass: SIGKILL anything still alive.
+        for name, proc_wrapper in self._processes:
+            proc = proc_wrapper.proc
+            if proc.poll() is None:
+                try:
+                    proc.kill()
+                except (OSError, ProcessLookupError):
+                    pass
+                try:
+                    proc.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    pass
+                except Exception:  # noqa: BLE001
+                    pass
+            _logger.info("inline_mcp_terminated name=%s exit=%s", name, proc.returncode)
+        self._processes.clear()
+
+
+class _MCPProc:
+    """Bag wrapper so the registry can keep extra metadata next to the proc."""
+
+    def __init__(self, proc) -> None:
+        self.proc = proc
+        self.pid = proc.pid
