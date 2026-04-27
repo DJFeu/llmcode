@@ -1,0 +1,5 @@
+{
+  "name": "hello-world",
+  "version": "1.0.0",
+  "description": "Minimal Claude-shaped plugin used by the converter test set"
+}

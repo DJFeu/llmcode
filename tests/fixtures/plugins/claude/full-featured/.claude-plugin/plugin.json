@@ -1,0 +1,58 @@
+{
+  "name": "full-featured",
+  "version": "2.1.0",
+  "description": "Plugin exercising every supported Claude→llmcode mapping",
+  "author": {"name": "Adam Hung", "email": "magic.music@gmail.com"},
+  "homepage": "https://example.test/full-featured",
+  "repository": "https://github.com/example/full-featured",
+  "license": "MIT",
+  "keywords": ["test", "fixture"],
+  "commands": [
+    {
+      "name": "review",
+      "description": "Review the staged diff",
+      "prompt_template": "Review this diff:\n{{git_diff}}"
+    },
+    {
+      "name": "lint",
+      "description": "Run the linter",
+      "prompt": "Run lint on cwd"
+    }
+  ],
+  "hooks": {
+    "on_pre_tool_use": [
+      {"command": "scripts/lint.sh", "matcher": "edit_*"}
+    ],
+    "on_session_start": [
+      {"command": "scripts/welcome.sh"}
+    ]
+  },
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    },
+    "weather": {
+      "command": "/usr/local/bin/weather-mcp"
+    }
+  },
+  "themes": {
+    "neon": {
+      "primary": "magenta",
+      "accent": "cyan",
+      "background": "black"
+    }
+  },
+  "variables": {
+    "PROJECT": "Example Project",
+    "VERSION": "0.1"
+  },
+  "providesTools": [
+    "fixture_pkg.tools:GreeterTool",
+    "fixture_pkg.tools:CounterTool"
+  ],
+  "permissions": {
+    "network": true,
+    "fs_write": false
+  }
+}

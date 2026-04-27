@@ -1,5 +1,92 @@
 # Changelog
 
+## v2.6.0a2 — Wave 2 of v16 (M5 + M6)
+
+Second alpha of v2.6.0. Adds the formal extension manifest +
+Claude-Code plugin converter (M5) and unified `/auth` credential
+management across providers (M6).
+
+### M5 — Extension manifest + Claude plugin converter
+
+A new `marketplace/manifest.toml` schema replaces the ad-hoc dict
+shape wave 1's installer consumed. Sections covered:
+
+- `[plugin]` — name, version, author, description, providesTools.
+- `[install]` — optional `subdir` for monorepo plugin packages.
+- `[[hooks]]` — array of (event, command, optional `tool_pattern`).
+- `[[mcp]]` — inline MCP server entries (consumed by M7).
+- `[[commands]]` — slash command definitions with prompt templates.
+- `[themes.<name>]` — Rich-style theme dicts.
+- `[variables]` — string templates substituted at hook/command
+  execution time.
+- `[permissions]` — capability envelope gated by the executor.
+
+Companion modules:
+
+- `marketplace.manifest.load_manifest(path)` — strict TOML parser
+  that raises `ManifestError` on unknown sections, missing required
+  fields, or shape errors.
+- `marketplace.validator.validate(manifest)` — semantic checks
+  (semver, hook event whitelist, name regex, duplicate detection,
+  shell-substitution rejection, known-permission gate).
+- `marketplace.converters.claude_plugin.convert(plugin_dir)` —
+  reads a Claude Code plugin's `.claude-plugin/plugin.json` and
+  emits llmcode `manifest.toml` text + warnings for the 20%
+  out-of-coverage features (`outputStyles`, `lspServers`,
+  `on_tab_complete`, etc.).
+
+`installer.install_from_local` and `install_from_github` now run
+the manifest validator BEFORE any disk write or after a clone, so
+a malformed `manifest.toml` aborts the install with no half-state.
+The legacy Claude-Code-shaped path (`PluginManifest.from_path`)
+keeps working for wave-1 plugins that ship only `plugin.json`.
+
+### M6 — `/auth` and provider credential storage
+
+A new `runtime.auth` package centralises provider login UX:
+
+- Six built-in handlers under `runtime/auth/handlers/{anthropic,
+  openai, zhipu, nvidia_nim, openrouter, deepseek}.py`. Each
+  implements the `AuthHandler` Protocol (`login`, `logout`,
+  `status`, `credentials_for_request`).
+- Storage at `~/.llmcode/auth/<provider>.json`, mode 0600 enforced
+  on write and re-checked on read (wider modes treated as absent).
+- `redact()` masks secrets to the last 4 characters everywhere
+  that surfaces them; `assert_no_credential_leak()` is the
+  test-time guard against full keys appearing in DEBUG logs.
+- Zhipu offers an OAuth device-code flow as the OAuth fallback for
+  headless / SSH sessions; URLs are env-overridable for tests.
+- NVIDIA NIM detects free-tier keys (`nvapi-` prefix) and surfaces
+  the 40 req/min cap inline in `/auth list`.
+
+`/auth list | login <provider> | logout <provider> | status` lives
+on `dispatcher._cmd_auth`. Provider construction now reads the API
+key via `auth.resolve_api_key(env_var)` so a stored credential is
+the fallback when the env var is unset; explicit env vars still
+win for power users.
+
+### Tests
+
+- 24 tests for the manifest schema + validator.
+- 17 tests for the Claude plugin converter (3 fixture plugins).
+- 4 tests for the installer's TOML manifest gate.
+- 37 tests for auth storage, handlers, env-var override, leak
+  detection, and dispatcher wiring.
+
+Suite: 8078 → 8160 passed (+82). v15 grep guard + byte-parity
+gate + README↔reality test all green.
+
+### Acceptance criteria covered
+
+- ✅ Three Claude fixture plugins convert + validate
+- ✅ Out-of-coverage Claude features emit named warnings
+- ✅ Validator rejects malformed manifests in fixture set
+- ✅ Installer routes through manifest path (no ad-hoc dict left)
+- ✅ Six auth handlers ship; OAuth falls back to device code
+- ✅ Storage file mode 0600 enforced
+- ✅ Provider HTTP clients use auth handler credentials by default;
+  env vars still override
+
 ## v2.6.0a1 — Wave 1 of v16 audit closure (M1-M4)
 
 First alpha of v2.6.0. Closes the four half-wired-feature gaps the

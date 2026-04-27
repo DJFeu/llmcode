@@ -573,3 +573,65 @@ class TestSecurityAuditLog:
         plugins = {e["plugin"] for e in entries}
         assert "source-plug-a" in plugins
         assert "source-plug-b" in plugins
+
+
+# ---------------------------------------------------------------------------
+# v16 M5 — manifest.toml validation gate
+# ---------------------------------------------------------------------------
+
+
+class TestTomlManifestGate:
+    """install_from_local must validate manifest.toml BEFORE disk write."""
+
+    def test_valid_toml_manifest_drives_install(
+        self, tmp_path: Path, installer: PluginInstaller, install_dir: Path,
+    ) -> None:
+        from llm_code.marketplace.installer import ManifestValidationError  # noqa: F401
+
+        source = tmp_path / "source-toml"
+        source.mkdir()
+        (source / "manifest.toml").write_text(
+            '[plugin]\nname = "toml-pkg"\nversion = "1.0.0"\n'
+        )
+        dest = installer.install_from_local(source)
+        # The TOML manifest's name drives the install destination.
+        assert dest == install_dir / "toml-pkg"
+        assert dest.exists()
+        assert (dest / "manifest.toml").exists()
+
+    def test_invalid_toml_raises_before_disk_write(
+        self, tmp_path: Path, installer: PluginInstaller, install_dir: Path,
+    ) -> None:
+        from llm_code.marketplace.installer import ManifestValidationError
+
+        source = tmp_path / "source-bad"
+        source.mkdir()
+        (source / "manifest.toml").write_text(
+            '[plugin]\nname = "bad"\nversion = "not-semver"\n'
+        )
+        with pytest.raises(ManifestValidationError):
+            installer.install_from_local(source)
+        # Nothing landed on disk.
+        assert not (install_dir / "bad").exists()
+
+    def test_unknown_section_in_toml_blocks_install(
+        self, tmp_path: Path, installer: PluginInstaller, install_dir: Path,
+    ) -> None:
+        from llm_code.marketplace.installer import ManifestValidationError
+
+        source = tmp_path / "source-unknown"
+        source.mkdir()
+        (source / "manifest.toml").write_text(
+            '[plugin]\nname = "x"\nversion = "1.0.0"\n\n[unknown_section]\nfoo = "bar"\n'
+        )
+        with pytest.raises(ManifestValidationError):
+            installer.install_from_local(source)
+
+    def test_legacy_claude_plugin_path_still_works(
+        self, tmp_path: Path, installer: PluginInstaller, install_dir: Path,
+    ) -> None:
+        """Wave 1 plugins (no manifest.toml) keep installing via PluginManifest.from_path."""
+        source = _make_source(tmp_path, name="legacy")
+        dest = installer.install_from_local(source)
+        assert dest.exists()
+        assert (dest / ".claude-plugin" / "plugin.json").exists()

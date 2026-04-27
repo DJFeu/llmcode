@@ -1,4 +1,13 @@
-"""Plugin installer — local copy, npm, and GitHub install strategies."""
+"""Plugin installer — local copy, npm, and GitHub install strategies.
+
+v16 M5 — when an llmcode ``manifest.toml`` is present at the source
+root, it is loaded + validated **before** any copy/clone touches the
+install directory. Bad manifests raise :class:`ManifestValidationError`
+and the install is aborted cleanly. Legacy Claude-Code-shaped plugins
+(``.claude-plugin/plugin.json``) keep working unchanged — wave 1
+shipped the ``PluginManifest.from_path`` path used by
+``list_installed`` / ``_activate_plugin_tools`` and we don't break it.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -9,7 +18,13 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from llm_code.marketplace.manifest import (
+    ManifestError,
+    PluginManifest as TomlPluginManifest,
+    load_manifest,
+)
 from llm_code.marketplace.plugin import InstalledPlugin, PluginManifest
+from llm_code.marketplace.validator import ValidationError, validate
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +35,39 @@ class SecurityScanError(Exception):
     def __init__(self, findings: list[str]) -> None:
         self.findings = findings
         super().__init__(f"Security scan found {len(findings)} issue(s): {'; '.join(findings)}")
+
+
+class ManifestValidationError(Exception):
+    """Raised when ``manifest.toml`` fails parser or validator checks.
+
+    Wraps :class:`ManifestError` and :class:`ValidationError` so the
+    dispatcher (M3) can catch a single error type without dragging
+    both modules into the slash-command's import surface.
+    """
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(f"Manifest invalid: {reason}")
+
+
+def _validate_toml_manifest_if_present(source: Path) -> TomlPluginManifest | None:
+    """Look for ``manifest.toml`` at the source root and validate it.
+
+    Returns the parsed :class:`TomlPluginManifest` when validation
+    passes, or ``None`` when no ``manifest.toml`` is present (caller
+    falls back to the legacy ``.claude-plugin/plugin.json`` path).
+    Raises :class:`ManifestValidationError` on any parser or validator
+    failure so the install never lands on disk in a bad state.
+    """
+    toml_path = source / "manifest.toml"
+    if not toml_path.exists():
+        return None
+    try:
+        manifest = load_manifest(toml_path)
+        validate(manifest)
+    except (ManifestError, ValidationError) as exc:
+        raise ManifestValidationError(str(exc)) from exc
+    return manifest
 
 
 # State file format:
@@ -136,22 +184,41 @@ class PluginInstaller:
     def install_from_local(self, source: Path) -> Path:
         """Copy a local plugin directory into the install directory.
 
+        v16 M5: when ``source/manifest.toml`` exists, the new TOML
+        manifest is parsed + validated before the security scan runs;
+        a bad manifest blocks the install with no disk write. The
+        legacy Claude-Code-shaped path
+        (``source/.claude-plugin/plugin.json``) keeps working
+        unchanged for wave-1 plugins.
+
         Returns the destination path.
-        Raises SecurityScanError if secrets or suspicious files are found.
+        Raises:
+            ManifestValidationError if ``manifest.toml`` exists but is
+                invalid.
+            SecurityScanError if secrets or suspicious files are found.
         """
+        # v16 M5 — strict manifest gate first (cheap, no I/O cost
+        # beyond a single file read), then security scan.
+        toml_manifest = _validate_toml_manifest_if_present(source)
+
         # Pre-install scan on source directory
         findings = self.scan_plugin(source)
         if findings:
             raise SecurityScanError(findings)
 
-        manifest = PluginManifest.from_path(source)
-        dest = self._install_dir / manifest.name
+        if toml_manifest is not None:
+            dest_name = toml_manifest.name
+        else:
+            manifest = PluginManifest.from_path(source)
+            dest_name = manifest.name
+
+        dest = self._install_dir / dest_name
         if dest.exists():
             shutil.rmtree(dest)
         shutil.copytree(source, dest)
 
         state = self._read_state()
-        state[manifest.name] = {"enabled": True, "installed_from": "local"}
+        state[dest_name] = {"enabled": True, "installed_from": "local"}
         self._write_state(state)
 
         return dest
@@ -208,6 +275,15 @@ class PluginInstaller:
         if findings:
             shutil.rmtree(dest, ignore_errors=True)
             raise SecurityScanError(findings)
+
+        # v16 M5: strict manifest validation. Cloned plugins are
+        # untrusted, so a bad manifest aborts the install with the
+        # cloned tree torn down — no half-installed state.
+        try:
+            _validate_toml_manifest_if_present(dest)
+        except ManifestValidationError:
+            shutil.rmtree(dest, ignore_errors=True)
+            raise
 
         state = self._read_state()
         state[name] = {"enabled": True, "installed_from": "github"}

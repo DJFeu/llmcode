@@ -43,7 +43,6 @@ Things deliberately NOT on AppState (and why):
 from __future__ import annotations
 
 import hashlib
-import os
 from dataclasses import dataclass, field
 from datetime import date as _date
 from pathlib import Path
@@ -167,7 +166,11 @@ class AppState:
         from llm_code.runtime.session import Session
         from llm_code.tools.registry import ToolRegistry
 
-        api_key = os.environ.get(config.provider_api_key_env, "")
+        # v16 M6 — env var still wins for power users, but if it's
+        # unset the auth registry's stored credentials supply the key.
+        # Env var override is checked first inside resolve_api_key.
+        from llm_code.runtime.auth import resolve_api_key
+        api_key = resolve_api_key(config.provider_api_key_env)
         base_url = config.provider_base_url or ""
 
         resolved_model = resolve_model(

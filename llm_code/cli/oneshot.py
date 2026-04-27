@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -30,8 +29,14 @@ def _extract_text(response: MessageResponse) -> str:
 
 
 def _create_provider(config: RuntimeConfig) -> ProviderClient:
-    """Build an LLMProvider from RuntimeConfig."""
-    api_key = os.environ.get(config.provider_api_key_env, "")
+    """Build an LLMProvider from RuntimeConfig.
+
+    v16 M6 — auth registry supplies the API key when the configured
+    env var is unset; env var still wins for explicit overrides.
+    """
+    from llm_code.runtime.auth import resolve_api_key
+
+    api_key = resolve_api_key(config.provider_api_key_env)
     base_url = config.provider_base_url or ""
     resolved_model = resolve_model(
         config.model, custom_aliases=config.model_aliases,

@@ -2230,6 +2230,110 @@ class CommandDispatcher:
         )
         self._view.print_info("\n".join(lines))
 
+    def _cmd_auth(self, args: str) -> None:
+        """v16 M6 — manage provider credentials.
+
+        Subcommands:
+
+        * ``list``                  — table of providers + status.
+        * ``status``                — verbose dump (env-var override
+          + stored credentials, both redacted).
+        * ``login <provider>``      — invoke handler.login(); for
+          OAuth, prints the device-code URL.
+        * ``logout <provider>``     — clear stored credentials.
+
+        Default (no args) shows ``list``.
+        """
+        from llm_code.runtime.auth import (
+            AuthError,
+            UnknownProviderError,
+            get_handler,
+            list_providers,
+        )
+
+        parts = args.strip().split(None, 1)
+        sub = parts[0] if parts else ""
+        subargs = parts[1] if len(parts) > 1 else ""
+
+        if sub in ("", "list"):
+            lines = ["Provider auth status:"]
+            for name in list_providers():
+                handler = get_handler(name)
+                status = handler.status()
+                tag = "logged-in" if status.logged_in else "not-logged-in"
+                method = f" via {status.method}" if status.method else ""
+                redacted = (
+                    f" [{status.redacted_token}]"
+                    if status.redacted_token else ""
+                )
+                note = f" — {status.note}" if status.note else ""
+                lines.append(f"  {name:<14s} {tag}{method}{redacted}{note}")
+            lines.append("")
+            lines.append(
+                "Usage: /auth login <provider> | logout <provider> | "
+                "status | list"
+            )
+            self._view.print_info("\n".join(lines))
+            return
+
+        if sub == "status":
+            # Same as ``list`` but verbose: include the help URL when
+            # available so users know where to land for paid keys.
+            lines = ["Provider auth detailed status:"]
+            for name in list_providers():
+                handler = get_handler(name)
+                status = handler.status()
+                tag = "logged-in" if status.logged_in else "not-logged-in"
+                lines.append(f"  {name}: {tag}")
+                if status.method:
+                    lines.append(f"    method: {status.method}")
+                if status.redacted_token:
+                    lines.append(f"    token : {status.redacted_token}")
+                env_var = getattr(handler, "env_var", "")
+                if env_var:
+                    lines.append(f"    env   : {env_var}")
+                help_url = getattr(handler, "api_key_help_url", "")
+                if help_url:
+                    lines.append(f"    help  : {help_url}")
+                if status.note:
+                    lines.append(f"    note  : {status.note}")
+            self._view.print_info("\n".join(lines))
+            return
+
+        if sub == "login" and subargs:
+            try:
+                handler = get_handler(subargs.strip())
+            except UnknownProviderError as exc:
+                self._view.print_error(str(exc))
+                return
+            try:
+                result = handler.login()
+            except AuthError as exc:
+                self._view.print_error(f"Login failed: {exc}")
+                return
+            note = f" ({result.note})" if result.note else ""
+            self._view.print_info(
+                f"Logged in to {handler.display_name} via {result.method}.{note}"
+            )
+            return
+
+        if sub == "logout" and subargs:
+            try:
+                handler = get_handler(subargs.strip())
+            except UnknownProviderError as exc:
+                self._view.print_error(str(exc))
+                return
+            handler.logout()
+            self._view.print_info(
+                f"Logged out of {handler.display_name}."
+            )
+            return
+
+        self._view.print_error(
+            "Usage: /auth login <provider> | logout <provider> | "
+            "status | list"
+        )
+
     def _cmd_voice(self, args: str) -> None:
         """Voice sub-command router: on / off / status.
 
