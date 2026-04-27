@@ -1,5 +1,93 @@
 # Changelog
 
+## v2.8.0a1 — RAG pipeline foundation (rerank backends + health-aware fallback)
+
+First wave of v17 (the v2.8.0 RAG pipeline deepening). Closes the
+"naive top-N take" gap from v2.7.0 with a rerank Protocol + 3
+backends, and replaces the static fallback chain with a circuit-
+breaker that demotes unhealthy backends to the end of the chain
+instead of paying retry latency on every call.
+
+Profile schema additions are landed all at once (M1 commit) so M2-M6
+in subsequent waves don't double-bump the dataclass — see
+`llm_code/runtime/model_profile.py::ModelProfile` for the seven new
+v2.8.0 fields.
+
+### M1 — Rerank backends
+
+New `llm_code/tools/rerank/` package with a `RerankBackend` Protocol
+and 3 implementations:
+
+* `LocalRerankBackend` — `sentence-transformers/ms-marco-MiniLM-L-6-v2`
+  cross-encoder (default, free, runs on CPU). Lazy-loads the model
+  once per process; cached at module level so successive calls reuse
+  the hot model. Requires the `[memory]` extra; without it the first
+  `rerank()` call raises a clear `ImportError("install llmcode-cli[memory] ...")`.
+* `CohereRerankBackend` — `rerank-multilingual-v3.0` via the Cohere
+  REST API. Free tier 1000/mo. `COHERE_API_KEY` env var. Empty key
+  raises `AuthError` eagerly so misconfigured deployments fail loudly
+  instead of silently consuming nothing.
+* `JinaRerankBackend` — `jina-reranker-v2-base-multilingual` via
+  Jina's REST API. Anonymous tier supported (rate-limited);
+  `JINA_API_KEY` raises the limit.
+* `IdentityRerankBackend` (`name="none"`) — passthrough used when
+  `profile.rerank_backend == "none"` so callers never branch on
+  "is reranking enabled?".
+
+A new `RerankTool` (`name="rerank"`) exposes the same capability as a
+first-class LLM tool — input `{query, documents, top_k}`, output
+markdown ranked list with scores. Auto-resolves the backend from
+`profile.rerank_backend`.
+
+Disk-space note: the local backend's first use downloads the ~80MB
+cross-encoder into `~/.cache/huggingface/hub/`. Cached afterwards.
+
+### M4 — Backend health-check + smart fallback
+
+New `llm_code/tools/search_backends/health.py` adds per-process
+circuit-breaker tracking for each search backend. Three consecutive
+failures (rate-limit / timeout / generic error) opens the circuit for
+5 minutes; any successful call resets the failure counter immediately.
+
+`_search_with_fallback` now calls `sort_chain()` once at the start of
+each search, demoting unhealthy backends to the end (preserving their
+relative priority among other unhealthy backends). On exception it
+records the failure kind and continues; on success it records the
+success and returns when results are non-empty.
+
+Concurrency: the module-level `_health` dict is guarded by a
+`threading.Lock` so concurrent `record_failure` calls from
+`asyncio.gather` (e.g. M5's research pipeline) don't race.
+
+The `backend_health_check_enabled` profile flag (default True) lets
+deterministic test scenarios opt out of the smart-fallback ordering.
+
+### Profile schema additions (declared upfront, M2-M6 will populate)
+
+* `rerank_backend: str = "local"` (M1)
+* `research_query_expansion: str = "template"` (M2 — wave 2)
+* `research_max_subqueries: int = 3` (M2 — wave 2)
+* `research_default_depth: str = "standard"` (M5 — wave 3)
+* `research_max_concurrency: int = 5` (M5 — wave 3)
+* `linkup_default_mode: str = "searchResults"` (M3 — wave 2)
+* `backend_health_check_enabled: bool = True` (M4)
+
+`WebSearchConfig` gains `cohere_api_key_env = "COHERE_API_KEY"` (M1)
+and `firecrawl_api_key_env = "FIRECRAWL_API_KEY"` (declared in M1 to
+avoid a schema double-bump when M6 lands in wave 3).
+
+### Tests + guard rails
+
+* 86 new tests across rerank backends, factory, RerankTool, and
+  health-check / fallback integration.
+* Local backend tests inject a fake `CrossEncoder` via `sys.modules`
+  so CI doesn't pay the model download cost; manual smoke against
+  the real model documented in spec §8.
+* All cloud backend tests use `respx` mocks — no real Cohere / Jina
+  calls in CI.
+* v15 grep guard, v15 byte-parity, README↔reality, and v2.6.1
+  system-prompt parity gates all stay green.
+
 ## v2.7.0 — RAG free-tier search backends GA
 
 Promotes v2.7.0a1 to GA. 71 new tests across 3 backends + the

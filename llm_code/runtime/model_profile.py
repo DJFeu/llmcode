@@ -227,6 +227,59 @@ class ModelProfile:
     #     dedupe_with_template = true
     prompt_dedupe_with_template: bool = False
 
+    # ── v2.8.0 — RAG pipeline ────────────────────────────────────────
+    # All seven flags introduced in v17 M1's commit so M2-M6 don't
+    # double-bump the dataclass schema (see spec §4):
+    #
+    # * ``rerank_backend`` (M1) — selects the rerank implementation
+    #   ``"local"`` (sentence-transformers cross-encoder, default),
+    #   ``"cohere"``, ``"jina"``, or ``"none"`` (identity passthrough).
+    # * ``research_query_expansion`` (M2) — controls multi-query
+    #   expansion strategy for the ``research`` tool.
+    #     ``"off"``      → single-shot, no expansion.
+    #     ``"template"`` → pattern-rule expansion (free, default).
+    #     ``"llm"``      → tier_c_model round-trip; falls back to
+    #                      template on parse error.
+    # * ``research_max_subqueries`` (M2) — cap on expanded sub-queries.
+    # * ``research_default_depth`` (M5) — default depth for the
+    #   ``research`` tool when the LLM omits it.
+    #     ``"fast"``     → 1 sub-query, K=3, no rerank.
+    #     ``"standard"`` → 3 sub-queries, K=5, rerank.
+    #     ``"deep"``     → 3 sub-queries, K=10, rerank.
+    # * ``research_max_concurrency`` (M5) — semaphore cap on in-flight
+    #   HTTP during ``research`` pipeline gather() phases.
+    # * ``linkup_default_mode`` (M3) — ``"searchResults"`` (default,
+    #   matches v2.7.0 behaviour) or ``"sourcedAnswer"`` (Linkup
+    #   returns a citation-grounded answer in one round-trip; the
+    #   research tool short-circuits to it when healthy).
+    # * ``backend_health_check_enabled`` (M4) — flip to False to
+    #   disable circuit-breaker fallback ordering for deterministic
+    #   tests / CI scenarios.
+    #
+    # TOML authoring (matches the existing flat-section convention):
+    #
+    #     [research]
+    #     query_expansion = "template"
+    #     max_subqueries = 3
+    #     default_depth = "standard"
+    #     max_concurrency = 5
+    #
+    #     [rerank]
+    #     backend = "local"
+    #
+    #     [linkup]
+    #     default_mode = "searchResults"
+    #
+    #     [backend_health]
+    #     check_enabled = true
+    rerank_backend: str = "local"
+    research_query_expansion: str = "template"
+    research_max_subqueries: int = 3
+    research_default_depth: str = "standard"
+    research_max_concurrency: int = 5
+    linkup_default_mode: str = "searchResults"
+    backend_health_check_enabled: bool = True
+
 
 # ── Built-in profiles ─────────────────────────────────────────────────
 
@@ -659,6 +712,18 @@ def _profile_from_dict(data: dict[str, Any], base: ModelProfile | None = None) -
         "mcp": ("mcp_approval_granularity",),
         # v16 M4 — UI surfaces (theme + vim mode) on a dedicated section.
         "ui": ("ui_theme", "vim_mode"),
+        # v2.8.0 — RAG pipeline. Seven flags spread across four
+        # sections so each mechanism owns its own TOML namespace
+        # without colliding with existing sections.
+        "rerank": ("rerank_backend",),
+        "research": (
+            "research_query_expansion",
+            "research_max_subqueries",
+            "research_default_depth",
+            "research_max_concurrency",
+        ),
+        "linkup": ("linkup_default_mode",),
+        "backend_health": ("backend_health_check_enabled",),
     }
     for key, value in data.items():
         if isinstance(value, dict):

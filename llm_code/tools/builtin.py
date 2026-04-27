@@ -38,6 +38,7 @@ def get_builtin_tools() -> dict[str, type["Tool"]]:
     from llm_code.tools.notebook_edit import NotebookEditTool
     from llm_code.tools.notebook_read import NotebookReadTool
     from llm_code.tools.read_file import ReadFileTool
+    from llm_code.tools.rerank_tool import RerankTool
     from llm_code.tools.web_fetch import WebFetchTool
     from llm_code.tools.web_search import WebSearchTool
     from llm_code.tools.write_file import WriteFileTool
@@ -58,6 +59,8 @@ def get_builtin_tools() -> dict[str, type["Tool"]]:
         # Web
         "web_fetch": WebFetchTool,
         "web_search": WebSearchTool,
+        # RAG (v2.8.0 M1)
+        "rerank": RerankTool,
         # Git
         "git_status": GitStatusTool,
         "git_diff": GitDiffTool,

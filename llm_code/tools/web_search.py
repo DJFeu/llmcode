@@ -8,10 +8,12 @@ import re
 from datetime import date
 from urllib.parse import urlparse
 
+import httpx
 from pydantic import BaseModel
 
 from llm_code.tools.base import PermissionLevel, Tool, ToolResult
 from llm_code.tools.search_backends import RateLimitError, SearchResult, create_backend
+from llm_code.tools.search_backends import health as _health
 
 logger = logging.getLogger(__name__)
 
@@ -376,16 +378,54 @@ class WebSearchTool(Tool):
             if serper_key:
                 chain.append(("serper", {"api_key": serper_key}))
 
+        # v2.8.0 M4 — sort chain by backend health. Demoted backends
+        # walk last (preserving their relative priority among other
+        # demoted backends) so a session-long 429 stops paying retry
+        # latency on every call.
+        if self._health_check_enabled():
+            ordered_names = _health.sort_chain(tuple(name for name, _ in chain))
+            kwargs_by_name = {name: kw for name, kw in chain}
+            chain = [(name, kwargs_by_name[name]) for name in ordered_names]
+
         for backend_name, kwargs in chain:
             try:
                 backend = create_backend(backend_name, **kwargs)
                 results = backend.search(query, max_results=max_results)
-                if results:
-                    return results
             except RateLimitError:
                 logger.warning("Search backend %s rate-limited, trying next", backend_name)
+                _health.record_failure(backend_name, kind="rate_limit")
+                continue
+            except httpx.TimeoutException:
+                logger.warning("Search backend %s timed out, trying next", backend_name)
+                _health.record_failure(backend_name, kind="timeout")
                 continue
             except Exception:
+                _health.record_failure(backend_name, kind="error")
                 continue
+            # Either non-empty success or an empty-result success — both
+            # count as the backend being healthy (no exception). Empty
+            # results are a UX outcome, not a backend failure.
+            _health.record_success(backend_name)
+            if results:
+                return results
 
         return ()
+
+    def _health_check_enabled(self) -> bool:
+        """Resolve ``profile.backend_health_check_enabled`` (default True).
+
+        Falls back to True when the profile lookup fails so the
+        smart-fallback ordering ships on by default — disabling it is
+        the explicit opt-out path for deterministic test ordering.
+        """
+        try:
+            from llm_code.runtime.config import RuntimeConfig
+            cfg = RuntimeConfig()
+            model = cfg.model
+            if not model:
+                return True
+            from llm_code.runtime.model_profile import get_profile
+            profile = get_profile(model)
+            return bool(getattr(profile, "backend_health_check_enabled", True))
+        except Exception:
+            return True

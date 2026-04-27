@@ -195,6 +195,14 @@ class WebSearchConfig:
     jina_api_key_env: str = "JINA_API_KEY"
     # v2.7.0a1 M3 — Linkup AI-native search (free 1000/mo).
     linkup_api_key_env: str = "LINKUP_API_KEY"
+    # v2.8.0 M1 — Cohere rerank (free 1000/mo). Used by the rerank
+    # backend factory when ``profile.rerank_backend == "cohere"``.
+    cohere_api_key_env: str = "COHERE_API_KEY"
+    # v2.8.0 M6 — Firecrawl extraction (free 500/mo). Declared in M1
+    # to avoid a schema double-bump when M6 lands. Optional: when the
+    # env var is unset, the firecrawl path is silently skipped and
+    # web_fetch falls through to Jina + readability.
+    firecrawl_api_key_env: str = "FIRECRAWL_API_KEY"
     searxng_base_url: str = ""
     max_results: int = 10
     domain_allowlist: tuple[str, ...] = ()
