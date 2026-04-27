@@ -14,6 +14,7 @@ output also fails CI.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,24 @@ import pytest
 
 from llm_code.runtime.context import ProjectContext
 from llm_code.runtime.prompt import SystemPromptBuilder
+
+# v2.7.0a2 — the captured fixture necessarily froze the host platform
+# (``Darwin`` / ``Linux`` / ``Windows``) and the capture date into the
+# Environment section. Both vary across CI runs and across days, so a
+# raw byte compare fails on Linux CI for a fixture captured on macOS,
+# and again tomorrow regardless of host. Normalise both at compare
+# time — the gate's purpose is "no NEW drift", not "every byte
+# including platform / date stays frozen forever".
+_PLATFORM_RE = re.compile(r"^- Platform:\s+\S+\s*$", re.MULTILINE)
+_DATE_RE = re.compile(r"^- Date:\s+\d{4}-\d{2}-\d{2}\s*$", re.MULTILINE)
+
+
+def _normalize_environment(s: str) -> str:
+    """Replace platform / date lines with stable placeholders so the
+    byte-parity gate is host- and day-independent."""
+    s = _PLATFORM_RE.sub("- Platform: <PLATFORM>", s)
+    s = _DATE_RE.sub("- Date: <DATE>", s)
+    return s
 
 _FIXTURE_DIR = (
     Path(__file__).resolve().parent.parent.parent
@@ -74,10 +93,12 @@ def test_system_prompt_byte_parity_v260(scenario: dict[str, Any]) -> None:
     )
     expected_path = _FIXTURE_DIR / f"{scenario['name']}.txt"
     expected = expected_path.read_text(encoding="utf-8")
-    assert actual == expected, (
+    actual_norm = _normalize_environment(actual)
+    expected_norm = _normalize_environment(expected)
+    assert actual_norm == expected_norm, (
         f"system prompt drift on scenario {scenario['name']!r} "
-        f"(profile not opted in to dedupe).\n"
-        f"  expected_len={len(expected)} actual_len={len(actual)}\n"
+        f"(profile not opted in to dedupe; platform/date normalised).\n"
+        f"  expected_len={len(expected_norm)} actual_len={len(actual_norm)}\n"
         f"  fixture: {expected_path}"
     )
 
