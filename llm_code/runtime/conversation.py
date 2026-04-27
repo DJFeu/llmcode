@@ -255,6 +255,26 @@ def build_thinking_extra_body(
             and profile_budget > 0
         )
         if compile_engaged:
+            # v2.9.2 runtime safeguard. Profiles that route compile
+            # output through a separate ``reasoning_content`` channel
+            # (GLM-5.1, DeepSeek-R1 family on llama.cpp) need a
+            # non-zero floor. Setting the budget to 0 fully disables
+            # that channel and the model emits only a tool_call
+            # wrapper instead of summary text — verified against a
+            # real GLM-5.1 smoke test that tripped llmcode's
+            # "empty response fallback". The example profile shipped
+            # in v2.9.1 set the floor to 512, but the example file is
+            # NOT in the wheel — users with a locally-customised
+            # profile copy from v2.9.0 still have ``compile_thinking
+            # _budget = 0``. Clamp here so the wheel ships the fix.
+            reasoning_field = (
+                getattr(profile, "reasoning_field", "") or ""
+            )
+            if (
+                reasoning_field == "reasoning_content"
+                and 0 <= compile_budget < 512
+            ):
+                compile_budget = 512
             if compile_budget <= 0:
                 # Disable thinking entirely for the compile turn.
                 return _wrap(False)

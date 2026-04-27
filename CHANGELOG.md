@@ -1,5 +1,62 @@
 # Changelog
 
+## v2.9.2 — Runtime safeguard for reasoning_content compile floor (hotfix)
+
+Codex stop-time review caught a packaging gap in v2.9.1: the fix
+only edited ``examples/model_profiles/65-glm-5.1.toml``, but
+``examples/`` is **not** included in the wheel
+(``[tool.hatch.build.targets.wheel] packages = ["llm_code"]`` only
+ships the ``llm_code/`` package). Users who already copied the
+profile from v2.9.0 into ``~/.llmcode/model_profiles/glm-5.1.toml``
+still have ``compile_thinking_budget = 0`` after ``pip install -U
+llmcode-cli==2.9.1`` — the runtime stays broken even though the
+release shipped.
+
+### Fix — runtime clamp (ships in the wheel)
+
+``llm_code/runtime/conversation.py::build_thinking_extra_body`` gains
+a defensive clamp: when the resolved compile path engages **and**
+the profile uses a separate ``reasoning_content`` channel
+(``profile.reasoning_field == "reasoning_content"``) **and** the
+compile budget is below 512, force it to 512.
+
+This:
+
+* **Ships in the wheel** — no profile copy required.
+* **Targets only the broken combination** — Anthropic/OpenAI native
+  thinking profiles (``reasoning_field = ""``) still respect a 0
+  budget as "fully disable thinking entirely".
+* **Behaves as a floor, not a cap** — non-zero compile budgets ≥ 512
+  pass through unchanged. Users who explicitly set 768 or 2048 for
+  some experimental tuning still get those values.
+
+### Regression coverage
+
+``tests/test_runtime/test_compile_thinking_v290.py::TestV292ReasoningContentRuntimeFloor``
+adds 5 new tests:
+
+* `test_zero_budget_clamped_to_512_for_reasoning_content`
+* `test_partial_budget_clamped_to_512`
+* `test_512_budget_unchanged`
+* `test_high_budget_not_clamped_down`
+* `test_non_reasoning_content_profile_still_disables_at_zero`
+
+The four pre-existing v2.9.0 P3 tests that previously asserted
+"compile_budget=0 → fully disabled" on the GLM helper were updated
+to assert the new clamped shape (512 floor) — the original disable
+semantic remains covered for non-reasoning_content profiles via
+``test_anthropic_disabled_block``.
+
+### Why not just embed examples/ in the wheel?
+
+Two reasons. First, the runtime clamp is a real defense-in-depth
+move — it protects users who customise their profile copy (for
+instance, raising ``default_thinking_budget`` while leaving the
+compile floor at 0 by accident). Second, embedding example
+profiles would change the install footprint and require a separate
+``llmcode profiles update`` UX to refresh user copies on upgrade;
+that's a v2.10 feature, not a hotfix.
+
 ## v2.9.1 — P3 compile thinking floor (hotfix)
 
 A real GLM-5.1 smoke test on `查詢今日熱門新聞三則` went 218s → 171s

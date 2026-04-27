@@ -105,6 +105,12 @@ class TestCompileActivation:
     def test_threshold_exactly_reached(self) -> None:
         """``compile_after_tool_calls=3, tool_calls_this_turn=3`` —
         the comparison is ``>=``, so the lever fires here.
+
+        v2.9.2: GLM-style profiles (``reasoning_field =
+        "reasoning_content"``) get clamped to 512 floor when compile
+        budget is below 512; setting 0 no longer fully disables on
+        these profiles. See ``TestV292ReasoningContentRuntimeFloor``
+        for the safeguard tests.
         """
         cfg = ThinkingConfig(mode="enabled", budget_tokens=10000)
         profile = _glm_profile_with_compile_lever(
@@ -120,9 +126,9 @@ class TestCompileActivation:
             tool_calls_this_turn=3,  # threshold met
         )
         assert body is not None
-        # compile_thinking_budget=0 → fully disabled thinking shape.
-        assert body["chat_template_kwargs"]["enable_thinking"] is False
-        assert "thinking_budget" not in body["chat_template_kwargs"]
+        # v2.9.2 — clamped to 512 floor (GLM reasoning_content profile).
+        assert body["chat_template_kwargs"]["enable_thinking"] is True
+        assert body["chat_template_kwargs"]["thinking_budget"] == 512
 
     def test_iteration_zero_unaffected(self) -> None:
         """Iteration 0 (decision phase) keeps full reasoning even
@@ -153,7 +159,13 @@ class TestCompileActivation:
 class TestCompileBudgetShape:
     """``compile_thinking_budget = 0`` → disabled config, not enabled-with-zero."""
 
-    def test_zero_compile_budget_disables_thinking(self) -> None:
+    def test_zero_compile_budget_clamped_for_reasoning_content(self) -> None:
+        """v2.9.2: GLM-style profiles get a 512 floor.
+
+        The original v2.9.0 semantic — "compile_budget=0 fully
+        disables thinking" — is preserved for non-reasoning_content
+        profiles via ``test_anthropic_disabled_block`` below.
+        """
         cfg = ThinkingConfig(mode="enabled", budget_tokens=10000)
         profile = _glm_profile_with_compile_lever(
             compile_after=3, compile_budget=0,
@@ -168,18 +180,18 @@ class TestCompileBudgetShape:
             tool_calls_this_turn=3,
         )
         assert body is not None
-        # Disabled-shape: openai-compat → enable_thinking=false, no budget key.
+        # v2.9.2 clamp — 0 → 512 for reasoning_content profiles.
         ctk = body["chat_template_kwargs"]
-        assert ctk == {"enable_thinking": False}
+        assert ctk == {"enable_thinking": True, "thinking_budget": 512}
 
-    def test_nonzero_compile_budget_still_enables_thinking(self) -> None:
-        """If a profile sets ``compile_thinking_budget = 256`` (some
-        reasoning, less than the 1024 post-tool budget), the lever
-        engages but thinking is still on with that smaller budget.
+    def test_nonzero_compile_budget_above_floor_unchanged(self) -> None:
+        """If a profile sets ``compile_thinking_budget = 768`` (above
+        the 512 floor, below the 1024 post-tool budget), the lever
+        engages and the budget passes through verbatim.
         """
         cfg = ThinkingConfig(mode="enabled", budget_tokens=10000)
         profile = _glm_profile_with_compile_lever(
-            compile_after=3, compile_budget=256,
+            compile_after=3, compile_budget=768,
         )
         body = build_thinking_extra_body(
             cfg,
@@ -192,7 +204,7 @@ class TestCompileBudgetShape:
         )
         assert body is not None
         assert body["chat_template_kwargs"]["enable_thinking"] is True
-        assert body["chat_template_kwargs"]["thinking_budget"] == 256
+        assert body["chat_template_kwargs"]["thinking_budget"] == 768
 
 
 # ── Anthropic shape ──────────────────────────────────────────────────
@@ -238,7 +250,12 @@ class TestCompileSupersedePostTool:
 
     def test_compile_engaged_overrides_post_tool_budget(self) -> None:
         """At the threshold, compile_thinking_budget wins. v2.8.1's
-        post_tool_thinking_budget is ignored even though it's set."""
+        post_tool_thinking_budget is ignored even though it's set.
+
+        v2.9.2: on GLM-style profiles, compile_budget=0 is clamped
+        to 512, but the supersede semantic still holds — 512 is
+        still ≠ post_tool_budget=1024, proving compile won.
+        """
         cfg = ThinkingConfig(mode="enabled", budget_tokens=10000)
         profile = _glm_profile_with_compile_lever(
             post_tool_budget=1024,
@@ -255,8 +272,11 @@ class TestCompileSupersedePostTool:
             tool_calls_this_turn=5,  # well past threshold
         )
         assert body is not None
-        # Disabled shape, not 1024, not 16384.
-        assert body["chat_template_kwargs"] == {"enable_thinking": False}
+        # 512 (clamped compile floor), NOT 1024 (post-tool) and NOT 16384 (default).
+        assert body["chat_template_kwargs"] == {
+            "enable_thinking": True,
+            "thinking_budget": 512,
+        }
 
 
 # ── Backwards compat ─────────────────────────────────────────────────
@@ -381,3 +401,108 @@ class TestV291CompileBudgetFloor:
             data = tomllib.load(fh)
 
         assert data["tool_consumption"]["compile_after_tool_calls"] == 3
+
+
+# ── v2.9.2 hotfix — runtime safeguard ──────────────────────────────
+
+
+class TestV292ReasoningContentRuntimeFloor:
+    """v2.9.2 — runtime clamp for ``reasoning_content`` profiles.
+
+    The v2.9.1 fix only edited the *example* profile under
+    ``examples/model_profiles/``, which is **not packaged into the
+    wheel**. Users on v2.9.0 who already copied the example to
+    ``~/.llmcode/model_profiles/glm-5.1.toml`` would still have
+    ``compile_thinking_budget = 0`` after ``pip install -U
+    llmcode-cli==2.9.1`` — runtime stays broken.
+
+    v2.9.2 adds a defensive clamp inside ``build_thinking_extra_body``:
+    when the profile uses a separate ``reasoning_content`` channel
+    AND the resolved compile budget is below 512, force it to 512.
+    Other models (Anthropic, OpenAI, etc.) still respect a 0 budget
+    as "disable thinking entirely".
+    """
+
+    def _glm_profile(self, *, compile_budget: int) -> ModelProfile:
+        """GLM-shaped profile with the given compile budget."""
+        return ModelProfile(
+            name="GLM-5.1",
+            provider_type="openai-compat",
+            native_tools=False,
+            supports_reasoning=True,
+            force_xml_tools=True,
+            implicit_thinking=False,
+            reasoning_field="reasoning_content",
+            thinking_extra_body_format="chat_template_kwargs",
+            default_thinking_budget=16384,
+            post_tool_thinking_budget=1024,
+            compile_after_tool_calls=3,
+            compile_thinking_budget=compile_budget,
+            default_temperature=0.6,
+            is_local=True,
+            max_output_tokens=8192,
+        )
+
+    def _generic_profile(self, *, compile_budget: int) -> ModelProfile:
+        """Profile WITHOUT reasoning_content — Anthropic-style."""
+        return ModelProfile(
+            name="Generic",
+            provider_type="anthropic",
+            native_tools=True,
+            supports_reasoning=True,
+            reasoning_field="",  # default — single channel
+            default_thinking_budget=16384,
+            post_tool_thinking_budget=1024,
+            compile_after_tool_calls=3,
+            compile_thinking_budget=compile_budget,
+            max_output_tokens=8192,
+        )
+
+    def _build(self, profile: ModelProfile) -> dict | None:
+        cfg = ThinkingConfig(mode="enabled", budget_tokens=8192)
+        return build_thinking_extra_body(
+            cfg,
+            is_local=True,
+            provider_supports_reasoning=True,
+            max_output_tokens=8192,
+            profile=profile,
+            post_tool_iteration=True,
+            tool_calls_this_turn=3,
+        )
+
+    def test_zero_budget_clamped_to_512_for_reasoning_content(self) -> None:
+        """compile_budget=0 + reasoning_content → clamped to 512."""
+        body = self._build(self._glm_profile(compile_budget=0))
+        assert body is not None, "thinking should NOT be fully disabled"
+        assert body["chat_template_kwargs"]["thinking_budget"] == 512
+
+    def test_partial_budget_clamped_to_512(self) -> None:
+        """compile_budget=256 + reasoning_content → clamped to 512."""
+        body = self._build(self._glm_profile(compile_budget=256))
+        assert body is not None
+        assert body["chat_template_kwargs"]["thinking_budget"] == 512
+
+    def test_512_budget_unchanged(self) -> None:
+        """compile_budget=512 → not clamped (already at floor)."""
+        body = self._build(self._glm_profile(compile_budget=512))
+        assert body is not None
+        assert body["chat_template_kwargs"]["thinking_budget"] == 512
+
+    def test_high_budget_not_clamped_down(self) -> None:
+        """compile_budget=2048 → preserved (clamp is a floor, not a cap)."""
+        body = self._build(self._glm_profile(compile_budget=2048))
+        assert body is not None
+        assert body["chat_template_kwargs"]["thinking_budget"] == 2048
+
+    def test_non_reasoning_content_profile_still_disables_at_zero(self) -> None:
+        """Anthropic-style (single channel) → 0 still disables."""
+        body = self._build(self._generic_profile(compile_budget=0))
+        # The wrap shape varies by provider, but disabled thinking
+        # should produce ``None`` or a ``"disabled"`` shape — never
+        # a 512 budget.
+        if body is not None:
+            budget = body.get("chat_template_kwargs", {}).get("thinking_budget", 0)
+            assert budget == 0, (
+                "non-reasoning_content profiles must still respect "
+                "compile_budget=0 as 'disable thinking entirely'"
+            )
