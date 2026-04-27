@@ -291,6 +291,24 @@ class ModelProfile:
     linkup_default_mode: str = "searchResults"
     backend_health_check_enabled: bool = True
 
+    # ── v2.9.0 P1 — parallel tool dispatch ───────────────────────────
+    # When the model emits multiple tool_calls in a single assistant
+    # turn, dispatch them via ``asyncio.gather`` instead of the legacy
+    # sequential ``for`` loop. Tool results return in the original
+    # ``tool_call_id`` order so the model sees a deterministic shape
+    # regardless of completion order. Default ``True`` — safe
+    # everywhere because v2.8.1 was already running read-only tools
+    # concurrently via ``StreamingToolExecutor``; this lever extends
+    # the same model to write-pending and non-pre-computed calls.
+    # Profiles can pin ``False`` as a safety valve when a server has
+    # known concurrency issues.
+    #
+    # TOML authoring (matches the existing flat-section convention):
+    #
+    #     [parallel_tools]
+    #     enable_parallel_tools = true
+    enable_parallel_tools: bool = True
+
 
 # ── Built-in profiles ─────────────────────────────────────────────────
 
@@ -715,6 +733,10 @@ def _profile_from_dict(data: dict[str, Any], base: ModelProfile | None = None) -
             "strip_prior_reasoning",
             "retry_on_denial",
         ),
+        # v2.9.0 P1 — parallel tool dispatch lever lives in its own
+        # section so opting in / out doesn't require touching the
+        # tool_consumption block.
+        "parallel_tools": ("enable_parallel_tools",),
         # v15 — borrow from free-claude-code; v16 extends with agent_memory.
         "runtime": (
             "enable_request_optimizations",

@@ -2043,7 +2043,30 @@ class ConversationRuntime:
             # call, burning the full max_turn_iterations budget.
             _turn_aborted_by_retry_loop = False
 
-            # Non-agent calls: use pre-computed result if available, else execute normally
+            # v2.9.0 P1 — when the profile opts in AND the model emitted
+            # multiple non-agent tool calls in this assistant turn, run
+            # the executions concurrently via ``asyncio.gather``. The
+            # legacy sequential path stays the default (and the only
+            # path when ``enable_parallel_tools=False`` or there's only
+            # one call) so single-call turns and profiles that have
+            # opted out remain byte-parity with v2.8.1. Tool results
+            # are appended in original ``parsed_calls`` order so the
+            # downstream provider always sees ``tool_call_id``s in the
+            # same sequence the model emitted them.
+            #
+            # The dispatch loop has two phases:
+            # 1. Run the idempotent-retry tracker sequentially over
+            #    non_agent_calls. Calls flagged as a retry loop trip
+            #    the recovery path and abort the turn — same behaviour
+            #    as v2.8.1. Surviving calls are recorded on the tracker
+            #    and queued for execution.
+            # 2. If parallel dispatch is enabled and the queue has > 1
+            #    entry, gather() the executions; otherwise fall back
+            #    to the sequential ``async for`` loop below.
+            _enable_parallel = bool(
+                getattr(self._model_profile, "enable_parallel_tools", True)
+            )
+            _exec_queue: list[ParsedToolCall] = []
             for call in non_agent_calls:
                 if _retry_tracker.is_idempotent_retry(call.name, call.args):
                     logger.warning(
@@ -2069,28 +2092,77 @@ class ConversationRuntime:
                     _turn_aborted_by_retry_loop = True
                     break  # Stop dispatching any more calls from this batch
                 _retry_tracker.record(call.name, call.args)
-                if call.id in _precomputed_by_id:
-                    # Read-only tool already executed concurrently — emit events and reuse result
-                    precomputed = _precomputed_by_id[call.id]
-                    yield StreamToolExecStart(
-                        tool_name=call.name,
-                        args_summary=repr(call.args),
-                        tool_id=call.id,
-                    )
-                    yield StreamToolExecResult(
-                        tool_name=call.name,
-                        output=precomputed.content[:200],
-                        is_error=precomputed.is_error,
-                        metadata=None,
-                        tool_id=call.id,
-                    )
-                    tool_result_blocks.append(precomputed)
-                else:
-                    async for event in self._execute_tool_with_streaming(call):
-                        if isinstance(event, ToolResultBlock):
-                            tool_result_blocks.append(event)
+                _exec_queue.append(call)
+
+            if _enable_parallel and len(_exec_queue) > 1:
+                # Parallel path — collect each call's events in a
+                # local buffer so we can replay them in tool_call_id
+                # order after gather() completes. Buffers also hold
+                # the produced ToolResultBlock so the result list and
+                # the visible events stay aligned per call.
+                async def _run_call(c: ParsedToolCall) -> tuple[
+                    list[StreamEvent | ToolResultBlock], ToolResultBlock | None,
+                ]:
+                    captured: list[StreamEvent | ToolResultBlock] = []
+                    result_block: ToolResultBlock | None = None
+                    if c.id in _precomputed_by_id:
+                        precomputed = _precomputed_by_id[c.id]
+                        captured.append(StreamToolExecStart(
+                            tool_name=c.name,
+                            args_summary=repr(c.args),
+                            tool_id=c.id,
+                        ))
+                        captured.append(StreamToolExecResult(
+                            tool_name=c.name,
+                            output=precomputed.content[:200],
+                            is_error=precomputed.is_error,
+                            metadata=None,
+                            tool_id=c.id,
+                        ))
+                        result_block = precomputed
+                        return captured, result_block
+                    async for ev in self._execute_tool_with_streaming(c):
+                        if isinstance(ev, ToolResultBlock):
+                            result_block = ev
                         else:
-                            yield event  # StreamToolProgress
+                            captured.append(ev)
+                    return captured, result_block
+
+                _gather_results = await asyncio.gather(
+                    *[_run_call(c) for c in _exec_queue]
+                )
+                for idx, (events, result_block) in enumerate(_gather_results):
+                    for ev in events:
+                        yield ev
+                    if result_block is not None:
+                        tool_result_blocks.append(result_block)
+            else:
+                # Sequential path — preserves v2.8.1 behaviour exactly
+                # for single-call turns and for profiles with the
+                # parallel-tools lever pinned off.
+                for call in _exec_queue:
+                    if call.id in _precomputed_by_id:
+                        # Read-only tool already executed concurrently — emit events and reuse result
+                        precomputed = _precomputed_by_id[call.id]
+                        yield StreamToolExecStart(
+                            tool_name=call.name,
+                            args_summary=repr(call.args),
+                            tool_id=call.id,
+                        )
+                        yield StreamToolExecResult(
+                            tool_name=call.name,
+                            output=precomputed.content[:200],
+                            is_error=precomputed.is_error,
+                            metadata=None,
+                            tool_id=call.id,
+                        )
+                        tool_result_blocks.append(precomputed)
+                    else:
+                        async for event in self._execute_tool_with_streaming(call):
+                            if isinstance(event, ToolResultBlock):
+                                tool_result_blocks.append(event)
+                            else:
+                                yield event  # StreamToolProgress
 
             # Agent calls: run in parallel when there are multiple
             if len(agent_calls) > 1:

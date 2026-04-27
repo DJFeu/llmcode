@@ -7,6 +7,11 @@
 # To activate: copy this file to ~/.llmcode/model_profiles/glm-5.1.toml
 # (file name without .toml is matched against the `model` value in
 # ~/.llmcode/config.json — case-insensitive prefix match).
+#
+# v2.9.0 P1 — parallel tool dispatch via the [parallel_tools] section
+# below. GLM-5.1 reliably emits multi-call assistant turns through the
+# harmony_kv / glm_brace parser variants; opting in directly cuts the
+# wall-clock cost of multi-search workflows by N-1 round-trips.
 
 name = "GLM-5.1 (744B.A40B)"
 
@@ -146,3 +151,15 @@ strip_prior_reasoning = true
 # news/realtime queries — observe the
 # llmcode.tool_consumption.denial_retries_total counter).
 retry_on_denial = true
+
+# v2.9.0 P1 — parallel tool dispatch. When the model emits multiple
+# tool calls in a single assistant turn, run them concurrently via
+# asyncio.gather instead of a sequential for-loop. GLM-5.1 reliably
+# emits multi-call payloads via the harmony_kv / glm_brace variants
+# (separated by the U+2192 → arrow that the parser already strips),
+# so opting in directly translates to wall-clock savings on every
+# multi-call turn. Tool results return in the original tool_call_id
+# order so the model sees a deterministic sequence regardless of
+# completion order.
+[parallel_tools]
+enable_parallel_tools = true
