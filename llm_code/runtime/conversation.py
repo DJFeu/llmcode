@@ -164,6 +164,17 @@ def build_thinking_extra_body(
     ``thinking_extra_body_format``:
     - ``"chat_template_kwargs"`` → ``{"chat_template_kwargs": {...}}``
     - ``"anthropic_native"`` → ``{"thinking": {"type": ..., "budget_tokens": ...}}``
+
+    v2.6.1 M1 — when ``profile.default_thinking_budget`` is non-zero
+    the profile is treated as the source of truth: that value becomes
+    the budget ceiling, the legacy local-mode ``max(_, 131072)`` bump
+    is bypassed, and the ``max_output_tokens / 2`` cap is skipped. The
+    quality knobs (``reasoning_effort`` scale + ``is_small_model``
+    cap + thinking-boost flag) still apply, so a profile that asks
+    for 16384 tokens lands as 16384 (or smaller after effort
+    scaling), never silently clipped to ``max_output_tokens / 2``.
+    Profiles with ``default_thinking_budget == 0`` (the dataclass
+    default value) fall through to the v2.6.0 adaptive path.
     """
     fmt = "chat_template_kwargs"
     if profile is not None:
@@ -179,8 +190,34 @@ def build_thinking_extra_body(
             return {"chat_template_kwargs": {"enable_thinking": True, "thinking_budget": budget}}
         return {"chat_template_kwargs": {"enable_thinking": False}}
 
+    profile_budget = (
+        int(getattr(profile, "default_thinking_budget", 0) or 0)
+        if profile is not None
+        else 0
+    )
+
+    def _budget_from_profile() -> int:
+        """Build the effective budget when the profile pins it.
+
+        Skips the legacy local-mode ``max(_, 131072)`` bump and the
+        ``max_output_tokens / 2`` cap so a profile that explicitly
+        asks for, say, 16384 thinking tokens lands as 16384 even
+        when ``max_tokens=4096``. Quality-shaping knobs (boost flag,
+        reasoning_effort scaling, small-model cap) still apply on top.
+        """
+        budget = profile_budget
+        budget = _apply_thinking_boost(
+            runtime,
+            base_budget=budget,
+            max_budget=profile_budget,
+        )
+        budget = _apply_profile_budget_adjustments(budget, profile)
+        return budget
+
     mode = thinking_config.mode
     if mode == "enabled":
+        if profile_budget > 0:
+            return _wrap(True, _budget_from_profile())
         budget = thinking_config.budget_tokens
         if is_local:
             budget = max(budget, 131072)
@@ -198,6 +235,8 @@ def build_thinking_extra_body(
     # disable for those that don't (prevents thinking text leak)
     if is_local:
         if provider_supports_reasoning:
+            if profile_budget > 0:
+                return _wrap(True, _budget_from_profile())
             budget = max(thinking_config.budget_tokens, 131072)
             budget = _apply_thinking_boost(
                 runtime,
