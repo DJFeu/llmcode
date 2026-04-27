@@ -1,5 +1,161 @@
 # Changelog
 
+## v2.7.0a1 — RAG free-tier search backends
+
+Adds three new search backends with generous free tiers to close the
+research-style query gap left by keyword-only engines, plus wires
+Jina Reader into the `web_fetch` extraction path so JavaScript-
+heavy pages stop returning empty markdown for users without
+Playwright installed locally.
+
+### M1 — Exa semantic search backend (free 1000/mo)
+
+Exa is a semantic / neural search engine — it embeds queries +
+documents and ranks by vector similarity rather than keyword
+overlap. That makes it a strong complement to the existing keyword
+backends (DuckDuckGo, Brave) for research-style asks (papers,
+long-form documentation, blog posts) where the right page does NOT
+necessarily contain the literal query terms.
+
+* New `llm_code/tools/search_backends/exa.py` (~120 LOC).
+* `Authorization: Bearer <key>` (canonical Exa header).
+* Body: `{"query": ..., "numResults": N, "type": "auto",
+  "contents": {"text": {"maxCharacters": 1000}}}`. `type=auto` lets
+  Exa pick neural vs keyword per query.
+* HTTP 429 → `RateLimitError`; 401 / 403 → `ValueError` mentioning
+  `EXA_API_KEY` so misconfigured deployments fail loudly instead
+  of silently burning free-tier quota.
+* New env var: `EXA_API_KEY`. Config field:
+  `WebSearchConfig.exa_api_key_env`.
+
+### M2 — Jina Reader (search + extraction)
+
+Jina Reader is a hosted browser-render-and-extract service —
+completely free for anonymous use (rate-limited but generous), and
+key-tier rates are ~10x. Wired into TWO surfaces:
+
+**M2a — search backend (`s.jina.ai/<query>`).** New
+`llm_code/tools/search_backends/jina.py`. Anonymous-friendly:
+empty / whitespace key is normalised to no-Authorization-header.
+Defensive JSON shape handling — accepts both `{"data": [...]}`
+and a bare list.
+
+**M2b — extraction path (`r.jina.ai/<url>`).**
+`fetch_via_jina_reader(url, *, api_key, timeout)` and its async
+sibling live at module scope in `web_fetch.py`. Jina handles JS
+rendering itself, so it replaces `readability-lxml + html2text`
+on JavaScript-heavy pages where the local extractor used to
+produce ~empty text.
+
+New `WebFetchConfig.extraction_backend` field selects the
+pipeline:
+
+* `"auto"` (default): try Jina first, fall back to local
+  `readability-lxml + html2text` on any Jina failure (rate-limit,
+  region-block, network error, empty body).
+* `"jina"`: Jina only — return error if Jina fails.
+* `"local"`: Skip Jina entirely; preserve v2.6.x behaviour
+  byte-for-byte for users who prefer no outbound dependency on
+  jina.ai for every fetch.
+
+`raw=True` callers and explicit `renderer="browser"` requests
+bypass Jina deliberately. `ToolResult.metadata["extraction_backend"]`
+records `"jina"` / `"local"` so callers can observe which path
+served their content.
+
+* New env var: `JINA_API_KEY` (optional — anonymous works).
+  Config fields: `WebSearchConfig.jina_api_key_env`,
+  `WebFetchConfig.extraction_backend`,
+  `WebFetchConfig.jina_api_key_env`.
+
+### M3 — Linkup AI-native search (free 1000/mo)
+
+Linkup is an AI-native search API — it treats search as a RAG step
+and can return either raw results or a sourced answer with
+citations. For v2.7.0a1 we wire only the raw-results mode
+(`outputType: "searchResults"`) so Linkup behaves as a normal
+search backend. The sourced-answer mode is a v2.7.0 GA candidate.
+
+* New `llm_code/tools/search_backends/linkup.py` (~130 LOC).
+* `Authorization: Bearer <key>`.
+* Body: `{"q": ..., "depth": "standard",
+  "outputType": "searchResults", "includeImages": false}`.
+* Defensive field extraction: canonical `name` / `content` plus
+  legacy `title` / `snippet` shapes both work.
+* HTTP 429 → `RateLimitError`; 401 / 403 → `ValueError` mentioning
+  `LINKUP_API_KEY`.
+* New env var: `LINKUP_API_KEY`. Config field:
+  `WebSearchConfig.linkup_api_key_env`.
+
+### Final auto-fallback chain
+
+```
+duckduckgo  ->  brave  ->  exa  ->  jina  ->  linkup
+            ->  searxng  ->  tavily  ->  serper
+```
+
+Free / no-key (DuckDuckGo) first. Keyword-paid (Brave) second.
+Free-tier semantic / RAG-style (Exa, Jina, Linkup) next. Self-host
+(SearXNG) and keyword paid (Tavily, Serper) as last-resort
+fallbacks. Backends without an API key configured (or, for SearXNG,
+without `searxng_base_url`) are skipped entirely. Jina is the
+exception — its anonymous tier means it's always tried once `cfg`
+is loaded.
+
+### Manual smoke tests
+
+After installing v2.7.0a1, set the env var(s) you want active and run:
+
+```bash
+# Exa — semantic / research queries
+export EXA_API_KEY=...
+llmcode -p "search exa for 'transformers attention mechanism papers 2024'"
+
+# Jina — completely free, no setup needed
+llmcode -p "search jina for 'rust async ecosystem'"
+
+# Jina Reader — JS-heavy pages
+llmcode -p "fetch https://example-spa.com/page  # uses jina extraction by default"
+
+# Linkup — AI-native sourced search
+export LINKUP_API_KEY=...
+llmcode -p "search linkup for 'climate policy 2026'"
+```
+
+To opt out of Jina extraction for `web_fetch`:
+
+```json
+// settings.json
+{
+  "web_fetch": {
+    "extraction_backend": "local"
+  }
+}
+```
+
+### Tests
+
+Suite: 8349 → 8420 passed (+71 net new across M1+M2+M3, including
+18 + 33 + 20 dedicated tests).
+
+* M1 — 18 Exa tests (construction, success, headers, body, 429,
+  401, 403, 500, ConnectError, parse-robust, URL filter, max_results,
+  truncation, factory).
+* M2 — 16 Jina-search + 17 Jina-fetch tests (sync + async, 429,
+  500, ConnectError, empty-body, short-body, raw=True bypass,
+  extraction_backend modes, defensive unknown-backend fallback).
+* M3 — 20 Linkup tests (canonical + legacy field shapes, 429,
+  401, 403, 500, ConnectError, invalid JSON, unexpected top-level
+  shape, factory).
+
+Guard rails (all green):
+
+* v15 grep guard (`tests/test_no_model_branch_in_core.py`) — 5/5.
+* v15 byte-parity (`tests/test_api/parity/`) — 98/98.
+* README ↔ reality (`tests/test_readme_claims_match_runtime.py`) — 34/34.
+* v2.6.1 byte-parity (`tests/test_runtime/parity/`) — green.
+* `ruff check llm_code/ tests/` — clean.
+
 ## v2.6.1 — Performance hotfix (no quality loss)
 
 Three quality-neutral or quality-positive fixes that surfaced from a
