@@ -947,8 +947,14 @@
         "content": []
       },
       {
-        "role": "user",
-        "content": []
+        "role": "tool",
+        "tool_call_id": "t1",
+        "content": "A"
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "t2",
+        "content": "B"
       }
     ]
   },
@@ -3185,8 +3191,19 @@
         "content": []
       },
       {
-        "role": "user",
-        "content": []
+        "role": "tool",
+        "tool_call_id": "px1",
+        "content": "A"
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "px2",
+        "content": "B"
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "px3",
+        "content": "C"
       }
     ]
   },

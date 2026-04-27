@@ -360,3 +360,136 @@ class TestReasoningReplayMode:
         assert modes == {
             "disabled", "think_tags", "reasoning_content", "native_thinking",
         }
+
+
+class TestSplitBundledToolResults:
+    """v2.5.1 regression — bundled ToolResultBlocks must split so each
+    becomes a ``role: tool`` message in OpenAI shape. Before the fix,
+    multi-block bundles silently dropped every ToolResult, which
+    caused GLM-5.1 to reject v14 mech-A reminders as injections."""
+
+    def test_two_bundled_results_split_into_two_role_tool_messages(self) -> None:
+        from llm_code.api.conversion import (
+            ConversionContext, ReasoningReplayMode, serialize_messages,
+        )
+
+        bundled = Message(
+            role="user",
+            content=(
+                ToolResultBlock(tool_use_id="call_a", content="result A"),
+                ToolResultBlock(tool_use_id="call_b", content="result B"),
+            ),
+        )
+        ctx = ConversionContext(
+            target_shape="openai",
+            reasoning_replay=ReasoningReplayMode.DISABLED,
+            strip_prior_reasoning=False,
+        )
+        out = serialize_messages((bundled,), ctx)
+
+        assert len(out) == 2
+        assert out[0] == {
+            "role": "tool", "tool_call_id": "call_a", "content": "result A",
+        }
+        assert out[1] == {
+            "role": "tool", "tool_call_id": "call_b", "content": "result B",
+        }
+
+    def test_three_bundled_results_split_into_three(self) -> None:
+        from llm_code.api.conversion import (
+            ConversionContext, ReasoningReplayMode, serialize_messages,
+        )
+
+        bundled = Message(
+            role="user",
+            content=tuple(
+                ToolResultBlock(tool_use_id=f"id_{i}", content=f"r{i}")
+                for i in range(3)
+            ),
+        )
+        ctx = ConversionContext(
+            target_shape="openai",
+            reasoning_replay=ReasoningReplayMode.DISABLED,
+            strip_prior_reasoning=False,
+        )
+        out = serialize_messages((bundled,), ctx)
+
+        assert len(out) == 3
+        assert [m["tool_call_id"] for m in out] == ["id_0", "id_1", "id_2"]
+        assert all(m["role"] == "tool" for m in out)
+
+    def test_single_block_unchanged(self) -> None:
+        from llm_code.api.conversion import (
+            ConversionContext, ReasoningReplayMode, serialize_messages,
+        )
+
+        single = Message(
+            role="user",
+            content=(ToolResultBlock(tool_use_id="x", content="r"),),
+        )
+        ctx = ConversionContext(
+            target_shape="openai",
+            reasoning_replay=ReasoningReplayMode.DISABLED,
+            strip_prior_reasoning=False,
+        )
+        out = serialize_messages((single,), ctx)
+
+        assert len(out) == 1
+        assert out[0] == {"role": "tool", "tool_call_id": "x", "content": "r"}
+
+    def test_mixed_content_left_untouched(self) -> None:
+        """Mixed content (TextBlock + ToolResultBlock) does NOT split —
+        the runtime never produces this shape today, and preserving v14
+        behaviour keeps the M3 parity gate green."""
+        from llm_code.api.conversion import (
+            ConversionContext, ReasoningReplayMode, serialize_messages,
+        )
+
+        mixed = Message(
+            role="user",
+            content=(
+                TextBlock(text="note"),
+                ToolResultBlock(tool_use_id="x", content="r"),
+            ),
+        )
+        ctx = ConversionContext(
+            target_shape="openai",
+            reasoning_replay=ReasoningReplayMode.DISABLED,
+            strip_prior_reasoning=False,
+        )
+        out = serialize_messages((mixed,), ctx)
+
+        # Single message, parts-array path — ToolResultBlock dropped
+        # silently as before. Documented limitation.
+        assert len(out) == 1
+        assert out[0]["role"] == "user"
+        assert isinstance(out[0]["content"], list)
+
+    def test_anthropic_path_does_not_split(self) -> None:
+        """The split is OpenAI-only; Anthropic path keeps the bundled
+        shape (Anthropic's API accepts multi-block tool_result user
+        messages natively)."""
+        from llm_code.api.conversion import (
+            ConversionContext, ReasoningReplayMode, serialize_messages,
+        )
+
+        bundled = Message(
+            role="user",
+            content=(
+                ToolResultBlock(tool_use_id="a", content="r1"),
+                ToolResultBlock(tool_use_id="b", content="r2"),
+            ),
+        )
+        ctx = ConversionContext(
+            target_shape="anthropic",
+            reasoning_replay=ReasoningReplayMode.NATIVE_THINKING,
+            strip_prior_reasoning=False,
+        )
+        out = serialize_messages((bundled,), ctx)
+
+        # Anthropic path emits one user message with both blocks.
+        assert len(out) == 1
+        assert out[0]["role"] == "user"
+        # Anthropic-shaped tool_result blocks live in the content list.
+        block_types = [b.get("type") for b in out[0]["content"]]
+        assert block_types == ["tool_result", "tool_result"]

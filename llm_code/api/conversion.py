@@ -394,6 +394,44 @@ def _strip_reasoning_keys(out: dict[str, Any]) -> int:
     return removed_bytes
 
 
+def _split_bundled_tool_results(
+    messages: tuple[Message, ...],
+) -> tuple[Message, ...]:
+    """v2.5.1 fix — explode multi-ToolResultBlock user messages into
+    one ``role: "tool"``-shaped message per block.
+
+    ``conversation.py:2069`` bundles every ToolResultBlock from a
+    single turn into one ``Message(role="user", content=tuple(...))``.
+    OpenAI-compat servers expect one ``role: tool`` message per
+    ``tool_call_id`` though, and ``_openai_convert_message`` only maps
+    bundled (len > 1) inputs to a parts-array which has no place for
+    ToolResultBlocks — they would be silently dropped, leaving the
+    model without the result it just produced. The v14 mech-A
+    post-tool reminder then lies ("You just called web_search and
+    received the result above") and the model — correctly — rejects
+    it as an injection. Observed against GLM-5.1 in v2.5.0; root
+    cause traces to v14 + v15 stacked on the bundled-message shape.
+
+    The split converts ``Message(role=..., content=(R1, R2))`` into
+    ``Message(role=..., content=(R1,)), Message(role=..., content=(R2,))``
+    so each downstream message hits the existing single-block path
+    that maps to ``role: tool`` correctly. Mixed content (a
+    ToolResultBlock alongside a TextBlock in one user message) is
+    left untouched — that path was never used by the runtime and
+    keeping it stable preserves the M3 byte-parity gate.
+    """
+    expanded: list[Message] = []
+    for msg in messages:
+        if len(msg.content) > 1 and all(
+            isinstance(b, ToolResultBlock) for b in msg.content
+        ):
+            for block in msg.content:
+                expanded.append(Message(role=msg.role, content=(block,)))
+        else:
+            expanded.append(msg)
+    return tuple(expanded)
+
+
 def _serialize_openai(
     messages: tuple[Message, ...],
     *,
@@ -405,6 +443,11 @@ def _serialize_openai(
     Mirrors v2.4.0 ``openai_compat._build_messages`` byte-for-byte,
     including the optional ``system`` prepend and the v14 mech B
     reasoning-content history filter.
+
+    v2.5.1: pre-pass via :func:`_split_bundled_tool_results` to
+    expand bundled ToolResultBlock user messages into one message per
+    block before per-message conversion. Required for OpenAI-compat
+    servers that map each result to a separate ``role: tool`` entry.
     """
     result: list[dict[str, Any]] = []
 
@@ -414,6 +457,7 @@ def _serialize_openai(
     reasoning_strip_count = 0
     reasoning_strip_bytes = 0
 
+    messages = _split_bundled_tool_results(messages)
     for msg in messages:
         converted = _openai_convert_message(msg)
         if (

@@ -1,5 +1,88 @@
 # Changelog
 
+## v2.5.1 — Hotfix: bundled ToolResultBlock silently dropped on OpenAI-compat path
+
+Critical correctness bug exposed by GLM-5.1 in v2.5.0 GA smoke testing.
+
+### Symptom
+
+User asks `顯示今日熱門新聞三則`. Model emits two parallel `web_search`
+tool calls in one turn. Both return valid results. Then in
+`reasoning_content` the model writes:
+
+> "The system reminders say 'You just called web_search and received
+> the result above' but there's no actual web_search tool call or
+> result visible to me. This seems like a confusing situation. Let me
+> just be honest — I don't have real-time web access."
+
+…and the visible `content` becomes a denial of capability — the
+opposite of what v14 + v15 were designed to prevent.
+
+### Root cause
+
+`runtime/conversation.py:2069` bundles every `ToolResultBlock` from
+one turn into a single `Message(role="user", content=tuple(blocks))`.
+
+`api/conversion._openai_convert_message` only routes a tool-result
+message to `role: "tool"` when **`len(content) == 1`**. With two
+bundled results, it falls through to the parts-array path — which
+has branches for `TextBlock`, `ImageBlock`, `ThinkingBlock`, but NO
+branch for `ToolResultBlock`. The blocks are silently dropped, the
+outbound user message is empty, and the v14 mech-A
+`<system-reminder>` blocks placed after it lie about a result that
+was never sent. GLM-5.1 catches the mismatch and refuses to play
+along — correct reasoning under broken inputs.
+
+The bug pre-dates v15 (the same shape exists in v2.4.0
+`openai_compat._convert_message`), but v14 mech-A made it
+user-visible by adding reminders that explicitly reference the
+missing result. Anthropic-shape providers were unaffected — that
+path natively supports multi-block tool_result user messages.
+
+### Fix
+
+`api/conversion._split_bundled_tool_results` runs as a pre-pass
+inside `OpenAICompatProvider._build_messages`. Multi-block
+ToolResultBlock-only messages explode into one
+`Message(role="user", content=(block,))` per result; each then
+hits the existing `len == 1` branch and serializes correctly to
+`{"role": "tool", "tool_call_id": ..., "content": ...}`.
+
+Mixed content (TextBlock + ToolResultBlock in one user message) is
+left unchanged — that shape is unused by the runtime today, and
+preserving the v2.4.0 behaviour keeps the M3 byte-parity gate
+honest for the surfaces that DO exist.
+
+### Tests
+
+5 new tests in `tests/test_api/test_conversion.py::TestSplitBundledToolResults`:
+
+- Two bundled results → two `role: tool` messages with correct
+  `tool_call_id`s
+- Three bundled results → three messages
+- Single block unchanged (regression guard)
+- Mixed content left untouched (intentional limitation)
+- Anthropic path does not split (one user message, two `tool_result`
+  content blocks)
+
+The conversion corpus (`tests/fixtures/conversion_corpus.json`) was
+re-captured to lock in the corrected wire shape for the two
+affected scenarios (`multi_tool_use_one_msg`,
+`parallel_tool_calls_one_assistant`). The parity gate is now a
+gate against future regressions of the v2.5.1 fix, not the v2.4.0
+broken behaviour.
+
+Suite: 7949 → 7954 passed (+5).
+
+### Manual smoke
+
+GLM-5.1 + `顯示今日熱門新聞三則` against the editable install with
+all `[tool_consumption]` flags on: model now successfully consumes
+both `web_search` results and produces three headlines + URLs in
+`content` instead of the denial.
+
+---
+
 ## v2.5.0 — Borrow audit adoption GA (M1–M5)
 
 GA of the v15 borrow-audit adoption: five mechanisms ported / adapted

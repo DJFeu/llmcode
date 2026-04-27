@@ -258,6 +258,22 @@ class OpenAICompatProvider(LLMProvider):
         # (``tests/test_api/parity/test_provider_conversion_parity_v15.py``)
         # verifies byte-identical output against a corpus captured
         # from v2.4.0.
+        #
+        # v2.5.1 — split bundled ToolResultBlock messages BEFORE per-
+        # message conversion. ``conversation.py`` bundles N tool
+        # results from one turn into a single ``Message`` with
+        # ``len(content) > 1``; ``_convert_message`` then takes the
+        # parts-array path which has no place for ToolResultBlocks
+        # and silently drops them. Splitting first ensures every
+        # bundled result becomes its own ``role: tool`` entry on the
+        # wire — the shape OpenAI-compat servers expect. Without this
+        # the model receives an empty user message followed by
+        # mech-A ``<system-reminder>`` blocks claiming a tool result
+        # exists "above", which GLM-5.1 correctly identifies as an
+        # injection and refuses to act on (observed in v2.5.0 GA).
+        from llm_code.api.conversion import _split_bundled_tool_results
+        messages = _split_bundled_tool_results(messages)
+
         result: list[dict] = []
         if system:
             result.append({"role": "system", "content": system})
