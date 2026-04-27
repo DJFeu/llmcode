@@ -67,12 +67,22 @@ tier_c_model = ""
 # tokens replace the legacy if-ladder in ``runtime/prompt.py``; the
 # ``[parser]`` variants + ``[parser_hints]`` replace the GLM-specific
 # defaults that used to live in ``view/stream_parser.py``.
+#
+# v2.6.1 M2 — ``dedupe_with_template = true`` opts the GLM profile in
+# to the prompt-snippet dedupe gate. ``glm.j2`` already restates the
+# generic intro / behaviour / tool-result-nudge guidance in
+# GLM-tuned voice; the sidecar ``glm.metadata.toml`` declares those
+# semantic categories under ``provides_tags``, and the prompt
+# builder drops any matching snippets to save ~1500 chars per turn.
+# XML tool format + agent-tool-warning still render because the
+# template doesn't cover those tags.
 [prompt]
 template = "glm"
 # Substring-matched against ``model_id.lower()``; first match wins so
 # numeric filename prefix decides ordering. ``zhipu`` covers the
 # original vendor brand (e.g. ``zhipu-chatglm``).
 match = ["glm", "zhipu"]
+dedupe_with_template = true
 
 [parser]
 # Full default order — GLM streams emit any of the six variants

@@ -211,6 +211,22 @@ class ModelProfile:
     ui_theme: str = "default"
     vim_mode: bool = False
 
+    # ── v2.6.1 M2 — prompt-dedupe with template ──────────────────────
+    # When True, the prompt builder skips generic snippets whose
+    # ``tags`` are fully covered by the active model template's
+    # ``provides_tags`` (declared in ``<template>.metadata.toml``
+    # alongside the ``.j2`` file).  Eliminates ~1500 chars of
+    # duplicate guidance per turn for models like GLM-5.1 whose
+    # custom template already expresses the rules. Default ``False``
+    # preserves v2.6.0 byte-parity for every profile that doesn't
+    # explicitly opt in.
+    #
+    # TOML authoring:
+    #
+    #     [prompt]
+    #     dedupe_with_template = true
+    prompt_dedupe_with_template: bool = False
+
 
 # ── Built-in profiles ─────────────────────────────────────────────────
 
@@ -616,8 +632,12 @@ def _profile_from_dict(data: dict[str, Any], base: ModelProfile | None = None) -
         "sampling": ("default_temperature", "reasoning_effort"),
         "deployment": ("is_local", "unlimited_token_upgrade", "is_small_model"),
         "routing": ("tier_c_model",),
-        # v13 Phase A sections.
-        "prompt": ("prompt_template", "prompt_match"),
+        # v13 Phase A sections; v2.6.1 M2 extends with ``dedupe_with_template``.
+        "prompt": (
+            "prompt_template",
+            "prompt_match",
+            "prompt_dedupe_with_template",
+        ),
         "parser": ("parser_variants",),
         "parser_hints": ("custom_close_tags", "call_separator_chars"),
         # v14 — tool consumption compat layer.

@@ -1,0 +1,28 @@
+# Sidecar metadata for ``glm.j2``.
+#
+# v2.6.1 M2 — when a profile sets ``prompt_dedupe_with_template = true``
+# the system prompt builder reads this file and drops any generic
+# ``PromptSnippet`` whose ``tags`` are fully covered by ``provides_tags``.
+#
+# The GLM-5.1 template (``glm.j2``) intentionally re-states the same
+# guidance the generic snippets would emit, in voice tuned for the
+# GLM model — so emitting both wastes ~1500 chars per turn without
+# improving instruction following. ``provides_tags`` lists the
+# semantic categories the template already covers; everything else
+# (e.g. XML tool format, agent-tool warnings) still renders through
+# the standard snippet path.
+#
+# Tag vocabulary (matches ``llm_code.runtime.prompt_snippets`` tag
+# values):
+#   * ``intro`` — "You are a coding assistant…" identity sentence
+#   * ``behavior_rules`` — generic do/don't list (truth, honesty,
+#       conciseness, no-feature-creep)
+#   * ``tool_result_nudge`` — "tool results are ground truth" reminder
+#   * ``local_model_rules`` — "do not use the agent tool unless asked"
+#   * ``xml_tools`` — concrete <tool_call>{...}</tool_call> format spec
+#
+# The GLM template covers the first three. It does NOT supply the
+# XML tool format spec or the agent-tool warning, so those snippets
+# still render to keep functional coverage.
+
+provides_tags = ["intro", "behavior_rules", "tool_result_nudge"]

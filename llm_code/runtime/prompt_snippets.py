@@ -29,15 +29,30 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class PromptSnippet:
-    """A conditional segment of the system prompt."""
+    """A conditional segment of the system prompt.
+
+    ``tags`` (v2.6.1 M2) is a tuple of semantic identifiers describing
+    *what* this snippet provides. When a model template declares
+    ``provides_tags`` (via the sidecar ``<template>.metadata.toml``)
+    and the active profile opts in to ``prompt_dedupe_with_template``,
+    ``compose_system_prompt`` skips any snippet whose ``tags`` are a
+    subset of the template's ``provides_tags`` — eliminating
+    duplicate guidance the model has already been told once.
+
+    Snippets without tags (legacy default) never participate in the
+    dedupe path, preserving v2.6.0 byte-parity.
+    """
     key: str
     content: str
     condition: Callable[..., bool] | None = None
     priority: int = 50
+    tags: tuple[str, ...] = ()
 
 
 def compose_system_prompt(
     snippets: list[PromptSnippet],
+    *,
+    provides_tags: tuple[str, ...] = (),
     **context: Any,
 ) -> str:
     """Evaluate conditions, deduplicate, sort by priority, and join.
@@ -46,6 +61,12 @@ def compose_system_prompt(
     ----------
     snippets:
         All registered snippets (may include disabled ones).
+    provides_tags:
+        Semantic tags the active model template already supplies. Any
+        snippet whose ``tags`` are a non-empty subset of
+        ``provides_tags`` is dropped — the template already conveys
+        the same guidance and re-rendering would burn tokens. Default
+        ``()`` preserves v2.6.0 behavior (every snippet renders).
     **context:
         Keyword arguments passed to each snippet's ``condition()``.
 
@@ -61,9 +82,21 @@ def compose_system_prompt(
             logger.debug("Prompt snippet '%s' overridden", s.key)
         by_key[s.key] = s
 
+    provided = set(provides_tags)
+
     # Evaluate conditions and filter
     active: list[PromptSnippet] = []
     for s in by_key.values():
+        # v2.6.1 M2 — drop snippets whose tags are fully covered by
+        # the active template. ``s.tags`` is non-empty AND
+        # ``set(s.tags) <= provided`` ⇒ the template already says
+        # everything this snippet would say.
+        if s.tags and provided and set(s.tags).issubset(provided):
+            logger.debug(
+                "Prompt snippet '%s' dropped — template provides %s",
+                s.key, sorted(s.tags),
+            )
+            continue
         if s.condition is not None:
             try:
                 if not s.condition(**context):
@@ -92,6 +125,7 @@ INTRO = PromptSnippet(
         "search code, and run shell commands."
     ),
     priority=10,
+    tags=("intro",),
 )
 
 BEHAVIOR_RULES = PromptSnippet(
@@ -112,6 +146,7 @@ Rules:
 - Keep responses concise — lead with the answer, not the reasoning
 - For code changes, show the minimal diff needed""",
     priority=20,
+    tags=("behavior_rules",),
 )
 
 LOCAL_MODEL_RULES = PromptSnippet(
@@ -123,6 +158,7 @@ LOCAL_MODEL_RULES = PromptSnippet(
     ),
     condition=lambda is_local=False, **_: is_local,
     priority=25,
+    tags=("local_model_rules",),
 )
 
 XML_TOOL_INSTRUCTIONS = PromptSnippet(
@@ -136,6 +172,7 @@ of parameters). Example:
 Wait for the tool result before continuing.""",
     condition=lambda force_xml=False, **_: force_xml,
     priority=30,
+    tags=("xml_tools",),
 )
 
 TOOL_RESULT_NUDGE = PromptSnippet(
@@ -147,6 +184,7 @@ TOOL_RESULT_NUDGE = PromptSnippet(
     ),
     condition=lambda is_local=False, **_: is_local,
     priority=35,
+    tags=("tool_result_nudge",),
 )
 
 # Collect all built-in snippets

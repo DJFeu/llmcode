@@ -29,6 +29,43 @@ _ENGINE_PROMPTS_DIR = (
 )
 
 
+def load_template_provides_tags(profile: ModelProfile) -> tuple[str, ...]:
+    """Read ``<template>.metadata.toml`` and return its ``provides_tags``.
+
+    v2.6.1 M2 — sidecar metadata that lives next to a ``.j2`` template
+    in ``engine/prompts/models/``. Declares the semantic categories
+    the template already covers so the prompt builder can drop the
+    duplicate generic snippets when the profile opts in to
+    ``prompt_dedupe_with_template``.
+
+    Returns an empty tuple when the profile has no template path,
+    when the sidecar is missing, when TOML parsing fails, or when
+    ``provides_tags`` is missing/empty. Empty result disables dedupe
+    for the calling profile so behavior degrades gracefully to v2.6.0.
+    """
+    template = (profile.prompt_template or "").strip()
+    if not template:
+        return ()
+    name = _template_path_to_name(template)
+    sidecar = _ENGINE_PROMPTS_DIR / f"{name}.metadata.toml"
+    if not sidecar.is_file():
+        return ()
+    try:
+        try:
+            import tomllib  # Python 3.11+
+        except ImportError:  # pragma: no cover — older interpreters
+            import tomli as tomllib  # type: ignore[no-redef]
+        with sidecar.open("rb") as fh:
+            data = tomllib.load(fh)
+    except Exception as exc:
+        logger.debug("template metadata %s unreadable: %s", sidecar, exc)
+        return ()
+    raw = data.get("provides_tags") or []
+    if not isinstance(raw, list):
+        return ()
+    return tuple(str(t) for t in raw if isinstance(t, str))
+
+
 def load_intro_prompt(profile: ModelProfile) -> str:
     """Load the model-tuned system intro prompt declared by ``profile``.
 
@@ -222,6 +259,11 @@ class SystemPromptBuilder:
         # GLOBAL scope — governance rules, behavior rules, tool instructions
         # Shared across all projects; cached at global boundary.
         # ------------------------------------------------------------------ #
+        # v2.6.1 M2 — resolve the profile + sidecar provides_tags ONCE so the
+        # GLOBAL section assembly and the SESSION-scope snippets pack share
+        # the same dedupe gate. Profiles without ``prompt_dedupe_with_template``
+        # produce ``provides_tags = ()`` and behave byte-identically to v2.6.0.
+        provides_tags: tuple[str, ...] = ()
         if model_name:
             # v13 Phase C: call the profile-driven path directly to
             # avoid the DeprecationWarning the legacy shim now emits
@@ -232,7 +274,10 @@ class SystemPromptBuilder:
             )
 
             _ensure_builtin_profiles_loaded()
-            intro = load_intro_prompt(resolve_profile_for_model(model_name))
+            _profile = resolve_profile_for_model(model_name)
+            intro = load_intro_prompt(_profile)
+            if getattr(_profile, "prompt_dedupe_with_template", False):
+                provides_tags = load_template_provides_tags(_profile)
         else:
             intro = _INTRO
         sections.append(PromptSection(content=intro, scope="global", priority=0))
@@ -251,7 +296,12 @@ class SystemPromptBuilder:
                 gov_lines.append("")
             sections.append(PromptSection(content="\n".join(gov_lines), scope="global", priority=5))
 
-        sections.append(PromptSection(content=_BEHAVIOR_RULES, scope="global", priority=10))
+        # v2.6.1 M2 — skip the generic _BEHAVIOR_RULES insertion when the
+        # active template already provides the same guidance. The template
+        # body was inserted as ``intro`` above, so re-emitting the snippet
+        # body would duplicate ~1100 chars of behaviour rules per turn.
+        if "behavior_rules" not in provides_tags:
+            sections.append(PromptSection(content=_BEHAVIOR_RULES, scope="global", priority=10))
 
         # Personas section (Wave 2 wiring) — only rendered when personas provided.
         if personas:
@@ -260,11 +310,16 @@ class SystemPromptBuilder:
             if personas_text:
                 sections.append(PromptSection(content=personas_text, scope="global", priority=12))
 
-        if is_local_model:
+        if is_local_model and "local_model_rules" not in provides_tags:
             sections.append(PromptSection(content=_LOCAL_MODEL_RULES, scope="global", priority=11))
 
         if not native_tools and tools:
-            sections.append(PromptSection(content=_XML_TOOL_INSTRUCTIONS, scope="global", priority=20))
+            # v2.6.1 M2 — skip the format spec when the template already
+            # supplies it, but ALWAYS keep the available-tools list since
+            # it carries dynamic per-session schema info no template can
+            # bake in.
+            if "xml_tools" not in provides_tags:
+                sections.append(PromptSection(content=_XML_TOOL_INSTRUCTIONS, scope="global", priority=20))
             tool_lines = ["Available tools:"]
             for t in tools:
                 schema_str = json.dumps(t.input_schema, separators=(",", ":"))
@@ -377,8 +432,13 @@ class SystemPromptBuilder:
         # Composable prompt snippets (conditional enrichment)
         try:
             from llm_code.runtime.prompt_snippets import BUILTIN_SNIPPETS, compose_system_prompt
+            # v2.6.1 M2 — pass ``provides_tags`` resolved above so any
+            # snippet whose tags are fully covered by the active model
+            # template gets dropped here too. ``provides_tags == ()``
+            # for legacy profiles preserves byte-parity with v2.6.0.
             snippet_text = compose_system_prompt(
                 BUILTIN_SNIPPETS,
+                provides_tags=provides_tags,
                 is_local=is_local_model,
                 force_xml=not native_tools,
             )
