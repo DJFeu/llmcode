@@ -20,7 +20,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-blue" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/tests-6182%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-7959%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/cold%20start-~400ms-brightgreen" alt="Cold start">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
   <img src="https://img.shields.io/pypi/v/llmcode-cli" alt="PyPI">
@@ -128,7 +128,8 @@ llmcode --mode plan           # Read-only mode, plan before execution
 llmcode --yolo                # Auto-accept all permissions (dangerous)
 llmcode -x "find large files" # Shell assistant: translate to command + execute
 llmcode -q "explain this"     # Quick Q&A without the REPL
-llmcode --serve --port 8765   # Remote WebSocket server
+llmcode --serve --port 8765   # Remote WebSocket server (localhost-only)
+llmcode --serve --allow-remote # Bind 0.0.0.0 — trusted networks only
 llmcode --connect host:8765   # Connect to remote agent
 llmcode --resume              # Resume from checkpoint
 ```
@@ -591,7 +592,7 @@ llm_code/               48,000+ lines Python
 ├── ide/                IDE bridge (WebSocket JSON-RPC)
 ├── swarm/              Multi-agent coordinator (synthesis-first)
 └── utils/              Notebook, diff, hyperlinks, search
-tests/                  5,527+ tests across 430+ files
+tests/                  7,950+ tests across 430+ files
 ```
 
 ---
@@ -603,7 +604,7 @@ git clone https://github.com/DJFeu/llmcode
 cd llmcode
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest                  # 5,527+ tests
+pytest                  # 7,950+ tests
 ruff check llm_code/    # lint
 ```
 

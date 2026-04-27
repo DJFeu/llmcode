@@ -134,6 +134,14 @@ class ReplGroup(click.Group):
     "--port", type=int, default=8765, help="Server port (for --serve)",
 )
 @click.option(
+    "--allow-remote",
+    is_flag=True,
+    help=(
+        "Bind --serve to 0.0.0.0 (LAN/internet-reachable). "
+        "Default is localhost-only. Use only on trusted networks."
+    ),
+)
+@click.option(
     "--connect", default=None,
     help="Connect to remote server (host:port)",
 )
@@ -194,6 +202,7 @@ def main(
     verbose: bool = False,
     serve: bool = False,
     port: int = 8765,
+    allow_remote: bool = False,
     connect: str | None = None,
     ssh: str | None = None,
     replay: str | None = None,
@@ -323,8 +332,20 @@ def main(
 
     if serve:
         # Migrated from llm_code.remote.server.RemoteServer (M4.11).
+        # v2.5.3 — default to localhost-only. ``--allow-remote`` opts in
+        # to 0.0.0.0 (LAN/internet-reachable) with a stderr banner so
+        # operators know the surface they just exposed. Pre-v2.5.3 this
+        # bound 0.0.0.0 unconditionally — silent network exposure.
         from llm_code.hayhooks.debug_repl import DebugReplServer
-        server = DebugReplServer(host="0.0.0.0", port=port, config=config)
+        host = "0.0.0.0" if allow_remote else "127.0.0.1"
+        if allow_remote:
+            click.echo(
+                f"⚠ --allow-remote: server is listening on 0.0.0.0:{port}. "
+                "Use only on trusted networks; the debug REPL has full "
+                "shell access via the remote session.",
+                err=True,
+            )
+        server = DebugReplServer(host=host, port=port, config=config)
         asyncio.run(server.start())
         return
 

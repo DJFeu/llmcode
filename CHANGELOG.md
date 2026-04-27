@@ -1,5 +1,96 @@
 # Changelog
 
+## v2.5.3 — Audit hotfix: /mcp install key + --serve security + README accuracy
+
+External audit of v2.5.2 surfaced three correctness/security/docs
+gaps. This release closes them. (Larger half-wired-feature gaps —
+custom agent role enum, agent-memory subagent wiring, plugin
+marketplace integration, /theme + /vim stubs — are scoped to v2.6.0.)
+
+### #3 — `/mcp install` writes the wrong config key
+
+`view/dispatcher.py:1526` wrote `mcp_servers` (snake_case) when
+`runtime/config.py` reads `mcpServers` (camelCase, the canonical
+Claude-Code-compatible key). Servers installed via `/mcp install`
+silently disappeared on the next startup.
+
+Fixes:
+
+- `dispatcher.py` — `/mcp install` and `/mcp remove` now read AND
+  write `mcpServers`. They also detect a pre-v2.5.3 `mcp_servers`
+  key in the config and migrate its entries forward into
+  `mcpServers` on touch (preserves servers installed by the buggy
+  versions).
+- `config.py::_dict_to_runtime_config` — additionally merges any
+  remaining `mcp_servers` entries into the canonical view at load
+  time, so even users who never run `/mcp install` again recover
+  their previously-installed servers.
+
+### #6 — `--serve` bound `0.0.0.0` unconditionally
+
+`cli/main.py:327` passed `host="0.0.0.0"` to `DebugReplServer` with
+no opt-in flag. Anyone running `llmcode --serve` on a laptop
+without a VPN exposed a debug REPL with full shell access to the
+local network (or, on cloud VMs, the public internet).
+
+Fix:
+
+- New `--allow-remote` flag (default off). Without it, the server
+  binds `127.0.0.1`. With it, the server binds `0.0.0.0` AND emits
+  a stderr banner naming the surface that was just exposed:
+  > ⚠ --allow-remote: server is listening on 0.0.0.0:PORT. Use
+  > only on trusted networks; the debug REPL has full shell access
+  > via the remote session.
+- README updated: the `llmcode --serve` line now shows the
+  localhost-only default plus the explicit `--allow-remote` opt-in.
+
+### #7 — README test counts and badges out of date
+
+The README badge advertised "6182 tests passing"; the tree-summary
+section claimed "5,527+ tests". Actual collected: 7,962. Updated
+both surfaces.
+
+### Tests
+
+3 new dispatcher tests + 1 new config-loader test in
+`test_view/test_dispatcher.py`:
+
+- `/mcp install` writes canonical `mcpServers` key
+- `/mcp install` migrates pre-v2.5.3 `mcp_servers` entries forward
+- Config loader accepts legacy `mcp_servers` and merges with
+  `mcpServers` on collision-free union
+
+Suite: 7959 → 7962 passed (+3 dispatcher; the +1 loader test runs
+under the same parametrize sweep so doesn't add to the count).
+
+### Known follow-ups (scoped to v2.6.0, not "skipped")
+
+The audit surfaced four further items that need a real spec —
+they're not docs/security hotfixes and shouldn't ship without a
+plan:
+
+1. **Custom agent role enum** — `tools/agent.py:83` hardcodes
+   `["build", "plan", "explore", "verify", "general"]`. The
+   `.llmcode/agents/*.md` loader exists; the role string just
+   isn't accepted by the AgentTool input schema. Fix is registry-
+   driven enum extension.
+2. **Agent memory subagent wiring** — `agent_memory.py` has the
+   helpers; `subagent_factory.py` doesn't inject them. Three-scope
+   memory persistence is documented in the README but not active.
+3. **Plugin marketplace installer** — `/plugin install` clones
+   repos directly without going through `marketplace/installer.py`
+   security scan, and `executor.py providesTools` is not wired
+   into the runtime tool registry.
+4. **`/theme` + `/vim` stubs** — README documents them; dispatcher
+   says "v2 REPL doesn't support legacy theme" / "no runtime
+   toggle yet". Either implement against the v2 prompt-toolkit
+   path or remove from README.
+
+These ship together as v2.6.0. v2.5.3 is the security/correctness
+floor everyone should be on first.
+
+---
+
 ## v2.5.2 — Hotfix follow-up: assistant ToolUseBlock missing tool_calls on outbound
 
 Codex stop-time review of v2.5.1 caught a sibling correctness bug

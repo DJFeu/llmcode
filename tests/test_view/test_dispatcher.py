@@ -1175,3 +1175,74 @@ def test_every_v1_command_is_registered(
     d = dispatcher_factory()
     handler = getattr(d, f"_cmd_{name}", None)
     assert handler is not None, f"missing handler: _cmd_{name}"
+
+
+def test_mcp_install_writes_mcpServers_camelcase(
+    dispatcher_factory, backend, tmp_path, monkeypatch,
+) -> None:
+    """v2.5.3 — /mcp install must write the canonical ``mcpServers``
+    (camelCase) key that ``config.py`` reads. Pre-v2.5.3 wrote
+    ``mcp_servers`` (snake_case) which the loader silently ignored,
+    so installs disappeared on next startup."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    state = _make_state(tmp_path)
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+
+    d.dispatch("mcp", "install @modelcontextprotocol/server-filesystem")
+
+    import json
+    config_path = tmp_path / ".llmcode" / "config.json"
+    assert config_path.exists(), "config.json should be created"
+    data = json.loads(config_path.read_text())
+    assert "mcpServers" in data, "must use canonical mcpServers key"
+    assert "mcp_servers" not in data, "must NOT write legacy snake_case key"
+    assert "server-filesystem" in data["mcpServers"]
+
+
+def test_mcp_install_migrates_legacy_snake_case_key(
+    dispatcher_factory, backend, tmp_path, monkeypatch,
+) -> None:
+    """v2.5.3 — when an existing config still has the pre-v2.5.3
+    ``mcp_servers`` key from a prior buggy install, the new install
+    must merge those entries forward into ``mcpServers`` so they
+    survive."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config_path = tmp_path / ".llmcode" / "config.json"
+    config_path.parent.mkdir(parents=True)
+    import json
+    config_path.write_text(json.dumps({
+        "mcp_servers": {
+            "legacy_server": {"command": "npx", "args": ["-y", "old-pkg"]},
+        },
+    }))
+
+    state = _make_state(tmp_path)
+    renderer = ViewStreamRenderer(view=backend, state=state)
+    d = CommandDispatcher(view=backend, state=state, renderer=renderer)
+    d.dispatch("mcp", "install new-server-pkg")
+
+    data = json.loads(config_path.read_text())
+    assert "mcpServers" in data
+    assert "mcp_servers" not in data, "legacy key must be migrated, not duplicated"
+    assert "legacy_server" in data["mcpServers"], "legacy entry must survive"
+    assert "new-server-pkg" in data["mcpServers"]
+
+
+def test_config_loader_accepts_legacy_snake_case_mcp_key(tmp_path) -> None:
+    """v2.5.3 — config loader merges ``mcp_servers`` entries forward
+    so users on old configs (written by the pre-v2.5.3 /mcp install
+    bug) don't lose their MCP servers on the next startup."""
+    from llm_code.runtime.config import _dict_to_runtime_config
+    raw = {
+        "model": "glm-5.1",
+        "mcp_servers": {
+            "snake_server": {"command": "npx", "args": ["-y", "x"]},
+        },
+        "mcpServers": {
+            "camel_server": {"command": "npx", "args": ["-y", "y"]},
+        },
+    }
+    cfg = _dict_to_runtime_config(raw)
+    assert "snake_server" in cfg.mcp_servers
+    assert "camel_server" in cfg.mcp_servers

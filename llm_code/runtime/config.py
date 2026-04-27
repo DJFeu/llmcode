@@ -724,9 +724,18 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
             # Back-compat flat view: always_on entries only (what the TUI
             # currently starts at init). on_demand servers are hidden from
             # the flat view so the TUI auto-start loop skips them.
-            _parse_mcp_config(data.get("mcpServers", {})).always_on
+            #
+            # v2.5.3 — also accept ``mcp_servers`` (snake_case) for users
+            # whose configs were written by the pre-v2.5.3 ``/mcp install``
+            # bug. ``mcpServers`` (camelCase) wins on collision; otherwise
+            # the snake-case entries are merged in.
+            _parse_mcp_config(
+                {**data.get("mcp_servers", {}), **data.get("mcpServers", {})}
+            ).always_on
         ),
-        mcp=_parse_mcp_config(data.get("mcpServers", {})),
+        mcp=_parse_mcp_config(
+            {**data.get("mcp_servers", {}), **data.get("mcpServers", {})}
+        ),
         registries=data.get("registries", {}),
         skills_dirs=tuple(data.get("skills_dirs", [])),
         lsp_servers=data.get("lspServers", {}),

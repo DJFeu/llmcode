@@ -1523,7 +1523,15 @@ class CommandDispatcher:
                 config_data: dict = {}
                 if config_path.exists():
                     config_data = _json.loads(config_path.read_text())
-                mcp_servers = config_data.setdefault("mcp_servers", {})
+                # v2.5.3 — config.py reads ``mcpServers`` (camelCase, the
+                # canonical Claude-Code-compatible key); a pre-v2.5.3
+                # bug wrote ``mcp_servers`` (snake_case) here so installs
+                # weren't loaded on next startup. Migrate any existing
+                # snake-case entries forward, then write canonical key.
+                if "mcp_servers" in config_data:
+                    legacy = config_data.pop("mcp_servers")
+                    config_data.setdefault("mcpServers", {}).update(legacy)
+                mcp_servers = config_data.setdefault("mcpServers", {})
                 mcp_servers[short_name] = {
                     "command": "npx", "args": ["-y", pkg],
                 }
@@ -1555,7 +1563,13 @@ class CommandDispatcher:
                     self._view.print_info("No config file found.")
                     return
                 config_data = _json.loads(config_path.read_text())
-                mcp_servers = config_data.get("mcp_servers", {})
+                # v2.5.3 — migrate snake-case key forward (see install
+                # comment above) so /mcp remove works on configs written
+                # by older llmcode versions.
+                if "mcp_servers" in config_data:
+                    legacy = config_data.pop("mcp_servers")
+                    config_data.setdefault("mcpServers", {}).update(legacy)
+                mcp_servers = config_data.get("mcpServers", {})
                 if name not in mcp_servers:
                     self._view.print_info(
                         f"MCP server '{name}' not found in config."
