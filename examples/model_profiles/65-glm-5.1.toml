@@ -20,11 +20,15 @@
 # that by 60-80% with no quality loss (the most recent batch stays
 # full for current reasoning).
 #
-# v2.9.0 P3 — final compile thinking=0 via ``compile_after_tool_calls``
-# + ``compile_thinking_budget`` in [tool_consumption]. After the
+# v2.9.0 P3 / v2.9.1 floor — final compile thinking budget. Once the
 # model has issued ≥ 3 tool calls this turn, the next iteration is
-# templating work (cite + format the N tool results); set thinking
-# budget to 0 to skip the redundant ~5-15s of chain-of-thought.
+# templating work (cite + format the N tool results); cut the budget
+# from 16384 → 512 to skip the redundant ~5-15s of chain-of-thought.
+# v2.9.1: 512 (not 0) is the empirical floor for GLM-5.1's
+# ``reasoning_content`` channel under llama.cpp — setting 0 caused an
+# "empty response" fallback in a real news-search smoke test (model
+# emitted a tool_call wrapper without visible content because the
+# reasoning channel was fully disabled).
 
 name = "GLM-5.1 (744B.A40B)"
 
@@ -175,15 +179,26 @@ retry_on_denial = true
 # almost entirely stale tool payloads.
 compress_old_tool_results = true
 
-# v2.9.0 P3 — "final compile" thinking budget. Once the model has
-# issued >= 3 tool calls in this turn, the next iteration is the
-# summarisation step (cite + format the N tool results). That step
-# is templating, not reasoning — set thinking budget to 0 to skip
-# the redundant ~5-15s of chain-of-thought. Set
-# compile_after_tool_calls = 0 to disable; raise the threshold if
-# you want the override only for very tool-heavy turns.
+# v2.9.0 P3 / v2.9.1 floor — "final compile" thinking budget. Once
+# the model has issued >= 3 tool calls in this turn, the next
+# iteration is the summarisation step (cite + format the N tool
+# results). That step is templating, not deep reasoning — cut the
+# budget from 16384 → 512 to skip the redundant ~5-15s of
+# chain-of-thought.
+#
+# v2.9.1 hotfix: 512 (not 0) is the empirical floor for GLM-5.1's
+# ``reasoning_content`` channel under llama.cpp. Setting 0 fully
+# disables reasoning, which leaves the model with only the content
+# channel — and on a real smoke test it emitted a tool_call wrapper
+# without visible text, triggering llmcode's "empty response"
+# fallback. 512 preserves the wall-clock win (~5-10s saved vs. the
+# v2.8.1 post_tool floor of 1024) without breaking compile output.
+#
+# Set ``compile_after_tool_calls = 0`` to disable the override
+# entirely; raise the threshold if you want the override only for
+# very tool-heavy turns.
 compile_after_tool_calls = 3
-compile_thinking_budget = 0
+compile_thinking_budget = 512
 
 # v2.9.0 P1 — parallel tool dispatch. When the model emits multiple
 # tool calls in a single assistant turn, run them concurrently via

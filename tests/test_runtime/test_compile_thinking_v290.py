@@ -314,3 +314,70 @@ class TestProfileSchemaRoundtrip:
         profile = _profile_from_dict(raw)
         assert profile.compile_after_tool_calls == 0
         assert profile.compile_thinking_budget == 0
+
+
+# ── v2.9.1 hotfix regression ─────────────────────────────────────────
+
+
+class TestV291CompileBudgetFloor:
+    """v2.9.1 hotfix — GLM-5.1's ``reasoning_content`` channel needs a
+    non-zero floor on the compile step.
+
+    A real smoke test on ``查詢今日熱門新聞三則`` with
+    ``compile_thinking_budget = 0`` tripped llmcode's ``empty response
+    fallback``: the model emitted a tool-call wrapper but no visible
+    text because llama.cpp had nothing to route through the reasoning
+    channel. v2.9.1 pins the GLM profile floor at 512.
+
+    This regression test loads the shipped
+    ``examples/model_profiles/65-glm-5.1.toml`` directly so a future
+    PR that flips it back to 0 fails CI loudly.
+    """
+
+    def test_shipped_glm_profile_has_nonzero_compile_floor(self) -> None:
+        from pathlib import Path
+
+        try:
+            import tomllib
+        except ImportError:  # Python 3.10
+            import tomli as tomllib  # type: ignore[import-not-found, no-redef]
+
+        profile_path = (
+            Path(__file__).resolve().parents[2]
+            / "examples"
+            / "model_profiles"
+            / "65-glm-5.1.toml"
+        )
+        with profile_path.open("rb") as fh:
+            data = tomllib.load(fh)
+
+        budget = data["tool_consumption"]["compile_thinking_budget"]
+        assert budget >= 512, (
+            f"GLM-5.1 reasoning_content channel needs >= 512 floor; "
+            f"got {budget}. Setting 0 caused empty-response fallback "
+            f"in real smoke test (v2.9.1 hotfix)."
+        )
+
+    def test_glm_compile_threshold_still_triggers_at_3(self) -> None:
+        """The hotfix changes the budget value, NOT the trigger gate.
+
+        ``compile_after_tool_calls = 3`` should be unchanged so the
+        wall-clock-win threshold still fires at the right point.
+        """
+        from pathlib import Path
+
+        try:
+            import tomllib
+        except ImportError:  # Python 3.10
+            import tomli as tomllib  # type: ignore[import-not-found, no-redef]
+
+        profile_path = (
+            Path(__file__).resolve().parents[2]
+            / "examples"
+            / "model_profiles"
+            / "65-glm-5.1.toml"
+        )
+        with profile_path.open("rb") as fh:
+            data = tomllib.load(fh)
+
+        assert data["tool_consumption"]["compile_after_tool_calls"] == 3

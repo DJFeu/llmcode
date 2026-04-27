@@ -1,5 +1,57 @@
 # Changelog
 
+## v2.9.1 — P3 compile thinking floor (hotfix)
+
+A real GLM-5.1 smoke test on `查詢今日熱門新聞三則` went 218s → 171s
+(−47s, P2 compression confirmed cutting prefill from 41,921 → 30,010
+tokens), but tripped llmcode's `empty response fallback` on the
+final compile step. Diagnosis:
+
+```
+[WARNING] empty response fallback: out_tokens=230 thinking_len=0 saw_tool_call=True
+```
+
+`thinking_len=0` confirmed P3 fired. `saw_tool_call=True` plus
+`out_tokens=230` with no rendered content meant the model emitted
+a tool-call wrapper but produced no visible text. Root cause: GLM-5.1
+on llama.cpp routes its compile output through the `reasoning_content`
+channel; cutting the thinking budget to **0** fully disables that
+channel, leaving the model with only the content channel — and at
+that point it kept trying to call yet another tool instead of
+emitting the summary text.
+
+### Fix
+
+Bump GLM's `[tool_consumption] compile_thinking_budget` from `0` to
+`512`. This:
+
+* Keeps P3's wall-clock win — 512 is still half of v2.8.1's
+  `post_tool_thinking_budget = 1024` floor, saving ~5-10s on the
+  compile step versus v2.8.1.
+* Restores compile output — 512 is enough headroom for GLM's
+  reasoning channel to format a coherent answer from the cached
+  tool results.
+* Documented in-profile so a future bisect doesn't regress to 0.
+
+### Regression test
+
+`tests/test_runtime/test_compile_thinking_v290.py` gains
+`TestV291CompileBudgetFloor::test_shipped_glm_profile_has_nonzero_compile_floor`,
+which loads the actual `examples/model_profiles/65-glm-5.1.toml`
+file and asserts `compile_thinking_budget >= 512` so a future
+PR that flips it back to 0 fails CI.
+
+### Out of scope (will be follow-up if needed)
+
+* P1 didn't fire on the news-search workflow because GLM emitted
+  one tool call per iteration rather than batching them. Prompting
+  the model to issue parallel calls is a v2.10 prompt-template
+  change, not a hotfix.
+* The `empty response fallback` heuristic itself (it counts a
+  tool_call wrapper as "no visible content") is technically
+  correct for this case — fixing the upstream cause is the right
+  layer.
+
 ## v2.9.0 — GLM Wall-Clock Optimization Wave (P1 + P2 + P3)
 
 A user transcript on GLM-5.1 (744B/40B MoE on llama.cpp) ran the
