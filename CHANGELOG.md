@@ -1,5 +1,128 @@
 # Changelog
 
+## v2.6.1 — Performance hotfix (no quality loss)
+
+Three quality-neutral or quality-positive fixes that surfaced from a
+GLM-5.1 perf investigation. Wall-clock was 172.1s end-to-end on a
+"top 3 news" query — diagnosis traced 90% of that to three
+mechanism-level issues. Each fix targets one of them; none of them
+trades reasoning depth for speed.
+
+### M1 — Profile thinking-budget routing fix (BUG FIX, quality goes UP)
+
+`ModelProfile.default_thinking_budget` was parsed from TOML but never
+read by `runtime/conversation.py::build_thinking_extra_body()`. The
+GLM profile declared `default_thinking_budget = 16384`, but the
+adaptive code computed `max(config.budget_tokens, 131072)` then
+applied the `max_output_tokens / 2` cap. With user `max_tokens =
+4096`, the effective thinking budget collapsed to ~2048 — far below
+the profile's intent.
+
+`build_thinking_extra_body()` now consults the profile field first.
+When non-zero the profile value becomes the budget ceiling, the
+local-mode `max(_, 131072)` bump is bypassed, and the
+`max_output_tokens / 2` cap is skipped. Quality knobs
+(reasoning-effort scale, small-model cap, thinking-boost flag)
+still apply on top. Profiles with `default_thinking_budget == 0`
+(the dataclass default) preserve the v2.6.0 adaptive path
+byte-for-byte.
+
+GLM-5.1 now actually gets the 16384 thinking tokens its profile
+asks for. Wall clock per turn may rise slightly on thinking-heavy
+queries — that is the *correct* behaviour for a profile that
+declared 16384 as its budget.
+
+### M2 — GLM prompt ballast dedupe (quality-neutral, saves ~2400 chars/turn)
+
+For GLM-5.1, three prompt-assembly paths layered duplicate guidance
+on top of the GLM-tuned `glm.j2` template every turn:
+
+* `runtime/prompt.py` injected `_BEHAVIOR_RULES` /
+  `_LOCAL_MODEL_RULES` / `_XML_TOOL_INSTRUCTIONS` constants.
+* The composable snippets pack at session-scope priority 25 emitted
+  the same content again via `BUILTIN_SNIPPETS`.
+* `glm.j2` itself restated all of it in GLM-tuned voice.
+
+Net effect: ~2400 chars of duplicate guidance per turn for a model
+whose template was hand-tuned to express the same behaviour rules.
+
+`PromptSnippet` gains a `tags: tuple[str, ...]` field; built-in
+snippets carry tags (`intro`, `behavior_rules`, `local_model_rules`,
+`xml_tools`, `tool_result_nudge`). Sidecar
+`<template>.metadata.toml` declares which categories the template
+covers. `glm.metadata.toml` lists `intro` / `behavior_rules` /
+`tool_result_nudge` (NOT `xml_tools` — `glm.j2` doesn't show the
+XML tool format spec, so that snippet keeps rendering).
+
+`ModelProfile.prompt_dedupe_with_template` (default `False`) gates
+the whole feature — the GLM example profile opts in via
+`[prompt] dedupe_with_template = true`. Every other profile is
+guaranteed byte-identical output via the new
+`tests/test_runtime/parity/` gate.
+
+GLM system prompt: 11467 → 9078 chars (saved 2389 chars per turn,
+21% reduction). Quality preserved — a "required signals" test
+ensures the deduped prompt still contains every behaviour rule the
+template expresses, the XML tool format spec, the agent-tool
+warning, and the GLM identity intro.
+
+### M3 — True SSE streaming for OpenAI-compat (TTFT improvement, quality-neutral)
+
+`stream_message` previously called `_post_with_retry`, which
+buffered the entire response body before parsing. The "streaming"
+SSE iterator iterated over `response.text` — the complete response
+text — so user-visible TTFT was full generation time.
+
+New `aparse_sse_events_from_lines` async generator parses SSE
+blocks incrementally from `httpx.Response.aiter_lines`. New
+`_AsyncStreamIterator` mirrors `_StreamIterator` semantics (delta
+accumulation, pending tool-call assembly, single-stop emission,
+trailing-usage patch) but consumes events one chunk at a time.
+New `_stream_with_retry` opens an `httpx.AsyncClient.stream`
+context, validates status BEFORE yielding, and forwards parsed
+events as they land. Retries fire only on connect-time failures so
+mid-stream errors propagate cleanly without duplicate events.
+
+`send_message` (non-streaming) is untouched. Generation speed
+unchanged; only PERCEIVED latency improves.
+
+### Profile schema additions (v2.6.1)
+
+```toml
+[prompt]
+dedupe_with_template = true   # M2 — opt in to template-aware snippet skip
+```
+
+### Tests
+
+Suite: 8288 → 8349 passed (+61 net new across M1+M2+M3, including
+12 + 26 + 17 dedicated tests + several parity fixtures).
+
+* `tests/test_runtime/test_thinking_profile_budget_v261.py` (12) —
+  M1 budget routing.
+* `tests/test_runtime/test_prompt_dedupe_v261.py` (26) — M2 snippet
+  tags + dedupe + TOML round-trip.
+* `tests/test_runtime/parity/test_system_prompt_v260_byte_parity.py`
+  (7) — M2 byte-parity gate against pre-fix v2.6.0 baselines.
+* `tests/test_api/test_openai_compat_streaming_v261.py` (17) — M3
+  async SSE parser + true streaming integration + retry semantics
+  + non-streaming path regression check.
+
+All v15 grep guard, v15 byte-parity, README↔reality, and v2.6.1
+system-prompt-parity guards green.
+
+### Acceptance criteria
+
+- ✅ GLM-5.1 turn payload includes `thinking_budget = 16384` (M1)
+- ✅ GLM-5.1 system prompt is byte-identical to v2.6.0 EXCEPT for
+  the deduped sections (M2 byte-parity gate)
+- ✅ Every other profile produces byte-identical system prompts
+  (M2 byte-parity gate, 4/4 non-opt-in profiles pass)
+- ✅ `stream_message` opens `httpx.AsyncClient.stream`, not
+  `client.post` (M3 spy test)
+- ✅ Chunk N's events arrive at the consumer BEFORE chunk N+1 is
+  pulled from the transport (M3 mock-transport ordering test)
+
 ## v2.6.0 — Audit closure + cross-project borrow GA
 
 GA cut for v16. Closes the four half-wired-feature gaps surfaced by
