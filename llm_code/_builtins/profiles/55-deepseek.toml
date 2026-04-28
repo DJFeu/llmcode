@@ -1,0 +1,28 @@
+# DeepSeek — deepseek.j2 prompt
+#
+# Catches deepseek-v3, deepseek-r1, deepseek-chat, and any future ids
+# containing the ``deepseek`` substring. The reasoning subset
+# (``deepseek-r1``) emits long CoT in the dedicated ``reasoning_content``
+# field — the prompt warns against leaking it into the answer channel.
+
+name = "DeepSeek"
+
+[provider]
+type = "openai-compat"
+native_tools = true
+supports_reasoning = true
+supports_images = false
+
+[prompt]
+template = "deepseek"
+match = ["deepseek"]
+
+[parser]
+variants = [
+    "json_payload",
+    "hermes_function",
+    "hermes_truncated",
+    "harmony_kv",
+    "glm_brace",
+    "bare_name_tag",
+]

@@ -1,0 +1,49 @@
+# Qwen3.5-122B-A10B (INT4) — self-hosted via vLLM
+#
+# Place this file in ~/.llmcode/model_profiles/ to override or extend
+# the built-in profile. File name (without .toml) is matched against the
+# model name (case-insensitive).
+
+name = "Qwen3.5-122B-A10B"
+
+[provider]
+type = "openai-compat"
+native_tools = false
+supports_reasoning = true
+supports_images = false
+force_xml_tools = true
+
+[streaming]
+implicit_thinking = true
+reasoning_field = "reasoning_content"
+
+[thinking]
+thinking_extra_body_format = "chat_template_kwargs"
+default_thinking_budget = 16384
+
+[deployment]
+is_local = true
+
+[limits]
+max_output_tokens = 4096
+context_window = 131072
+
+# [routing]
+# tier_c_model = ""  # leave empty to use self for skill routing
+
+# v13 — profile-driven adapters. Qwen routes to the tuned ``qwen.j2``
+# prompt and walks the full variant list because vLLM-served Qwen3.5
+# can emit any of the truncated forms depending on chat template.
+[prompt]
+template = "qwen"
+match = ["qwen"]
+
+[parser]
+variants = [
+    "json_payload",
+    "hermes_function",
+    "hermes_truncated",
+    "harmony_kv",
+    "glm_brace",
+    "bare_name_tag",
+]

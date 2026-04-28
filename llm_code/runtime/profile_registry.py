@@ -176,17 +176,24 @@ def _load_builtin_profiles(path: Path) -> int:
 
 
 def _ensure_builtin_profiles_loaded() -> None:
-    """Load the packaged ``examples/model_profiles/*.toml`` once.
+    """Load the bundled ``*.toml`` profiles once.
 
     Idempotent: the second and subsequent calls are no-ops. Tests
     that want a clean registry should call
     :func:`_reset_registry_for_tests` first.
 
-    The search path is computed from this module's location so the
-    function works both from an editable install (source tree) and,
-    for Phase A, whenever ``examples/model_profiles`` is present in
-    the repo. Packaged wheels without ``examples/`` are a no-op — a
-    future phase packages profiles inside the wheel.
+    Resolution order:
+
+    1. ``llm_code._builtins.profiles`` — the wheel-bundled directory
+       added in v2.10.0. Always present in installed wheels and in
+       editable checkouts (the directory is part of the package).
+    2. ``examples/model_profiles/`` — the legacy on-disk source. Kept
+       as a fallback so tests / scripts that operate on a repo without
+       running ``pip install -e .`` still see the profiles.
+
+    Both locations are de-duplicated by ``register_profile``'s
+    collision check, so loading the same profile from both is safe —
+    the second registration raises and is logged-then-skipped.
     """
     global _builtin_loaded
     if _builtin_loaded:
@@ -194,11 +201,30 @@ def _ensure_builtin_profiles_loaded() -> None:
     # Flip the flag early so a filesystem error on the sweep doesn't
     # leave the guard stuck open and retry on every subsequent call.
     _builtin_loaded = True
-    # ``llm_code/runtime/profile_registry.py`` → parents[2] = repo root.
-    builtin_dir = (
+
+    # Primary source: wheel-bundled directory (v2.10.0+).
+    try:
+        from llm_code.profiles.builtins import builtin_profile_dir
+
+        bundled_dir = builtin_profile_dir()
+    except Exception as exc:  # pragma: no cover - defensive
+        _logger.debug(
+            "profile registry: could not resolve bundled profiles dir — %s",
+            exc,
+        )
+        bundled_dir = None
+    if bundled_dir is not None and bundled_dir.is_dir():
+        _load_builtin_profiles(bundled_dir)
+
+    # Legacy fallback for repo-level developer flows that don't run
+    # ``pip install -e .`` (editable install would expose the bundled
+    # dir directly). ``llm_code/runtime/profile_registry.py`` →
+    # parents[2] = repo root.
+    legacy_dir = (
         Path(__file__).resolve().parents[2] / "examples" / "model_profiles"
     )
-    _load_builtin_profiles(builtin_dir)
+    if legacy_dir.is_dir():
+        _load_builtin_profiles(legacy_dir)
 
 
 # ── Test helpers ──────────────────────────────────────────────────────

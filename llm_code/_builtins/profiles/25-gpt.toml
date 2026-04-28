@@ -1,0 +1,29 @@
+# Plain OpenAI GPT family — non-reasoning models (e.g. gpt-3.5-turbo)
+#
+# Reasoning-class models (o1/o3/gpt-4/gpt-5) are claimed by ``20-beast.toml``
+# via numeric filename ordering, so this profile catches everything else
+# that contains ``gpt`` — typically gpt-3.5-turbo and similar baselines.
+# The bare ``"gpt"`` substring is broad on purpose; user/cloud profiles
+# can override by registering before the built-ins.
+
+name = "OpenAI GPT (default)"
+
+[provider]
+type = "openai-compat"
+native_tools = true
+supports_reasoning = false
+supports_images = true
+
+[prompt]
+template = "gpt"
+match = ["gpt"]
+
+[parser]
+variants = [
+    "json_payload",
+    "hermes_function",
+    "hermes_truncated",
+    "harmony_kv",
+    "glm_brace",
+    "bare_name_tag",
+]

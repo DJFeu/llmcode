@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "llmcode-cli"
-version = "2.9.2"
+version = "2.10.0"
 description = "Open-source AI agent runtime for any LLM — production-grade coding agent with multi-layer memory, multi-agent orchestration, and defense-in-depth security"
 license = {text = "MIT"}
 authors = [{name = "Adam Hung"}]
@@ -119,6 +119,11 @@ llmcode = "llm_code.cli.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["llm_code"]
+# v2.10.0 — the bundled built-in profiles live under
+# ``llm_code/_builtins/profiles/*.toml`` so ``packages = ["llm_code"]``
+# is enough for hatchling to pull every ``.toml`` data file into the
+# wheel (verified via ``pip wheel . && unzip -l``). ``importlib.resources``
+# resolves them at runtime — see ``llm_code/profiles/builtins.py``.
 
 [tool.hatch.build.targets.sdist]
 include = [

@@ -1,0 +1,213 @@
+# GLM-5.1 (Zhipu) — self-hosted via llama.cpp
+#
+# Tested config: llama-server with --jinja, --alias glm-5.1.
+# Architecture: 753.86B total / ~40B active (MoE), MLA attention,
+# native context 202752, reasoning chain in `reasoning_content` field.
+#
+# To activate: copy this file to ~/.llmcode/model_profiles/glm-5.1.toml
+# (file name without .toml is matched against the `model` value in
+# ~/.llmcode/config.json — case-insensitive prefix match).
+#
+# v2.9.0 P1 — parallel tool dispatch via the [parallel_tools] section
+# below. GLM-5.1 reliably emits multi-call assistant turns through the
+# harmony_kv / glm_brace parser variants; opting in directly cuts the
+# wall-clock cost of multi-search workflows by N-1 round-trips.
+#
+# v2.9.0 P2 — compress older tool_result payloads on re-feed via
+# ``compress_old_tool_results`` in [tool_consumption]. llama.cpp has
+# no prompt cache; the observed 41k-token prefill on a 3-search
+# workflow was almost entirely stale tool payloads. Compression cuts
+# that by 60-80% with no quality loss (the most recent batch stays
+# full for current reasoning).
+#
+# v2.9.0 P3 / v2.9.1 floor — final compile thinking budget. Once the
+# model has issued ≥ 3 tool calls this turn, the next iteration is
+# templating work (cite + format the N tool results); cut the budget
+# from 16384 → 512 to skip the redundant ~5-15s of chain-of-thought.
+# v2.9.1: 512 (not 0) is the empirical floor for GLM-5.1's
+# ``reasoning_content`` channel under llama.cpp — setting 0 caused an
+# "empty response" fallback in a real news-search smoke test (model
+# emitted a tool_call wrapper without visible content because the
+# reasoning channel was fully disabled).
+
+name = "GLM-5.1 (744B.A40B)"
+
+[provider]
+type = "openai-compat"
+# llama.cpp + jinja exposes function calling, but GLM-5.1 tool-call
+# robustness over OpenAI-compat is still uneven; use llmcode's XML
+# fallback (proven path on Qwen3 / DeepSeek-R1) until verified.
+native_tools = false
+supports_reasoning = true
+supports_images = false
+force_xml_tools = true
+
+[streaming]
+# GLM-5.1 emits reasoning in a SEPARATE `reasoning_content` field
+# (verified via smoke test against the running server). Unlike Qwen
+# under vLLM — which prepends <think>...</think> to the main content —
+# llama.cpp keeps reasoning isolated, so implicit_thinking must be
+# false to prevent llmcode from stripping a non-existent prefix.
+implicit_thinking = false
+reasoning_field = "reasoning_content"
+
+[thinking]
+# llama.cpp jinja templates accept thinking budget via the same
+# chat_template_kwargs route as vLLM.
+thinking_extra_body_format = "chat_template_kwargs"
+default_thinking_budget = 16384
+# v2.8.1 — post-tool consumption iterations don't need 16384 thinking
+# tokens to summarise an already-fetched tool result. Cap at 1024 so
+# iteration 0 (decision phase) keeps full reasoning depth while
+# iteration 1+ (consume + answer) stops burning ~30-90s of wall clock
+# on redundant chain-of-thought. Set to 0 to disable the override.
+post_tool_thinking_budget = 1024
+
+[sampling]
+# GLM family upstream guidance suggests 0.6; matches DeepSeek-R1 which
+# shares the long-CoT pattern.
+default_temperature = 0.6
+reasoning_effort = "high"
+
+[deployment]
+# Enables llmcode's "unlimited token upgrade" path for self-hosted models.
+is_local = true
+
+[limits]
+# Aligned with the actual --ctx-size used at server startup (64K).
+# Bump if the server is later restarted with a larger context window.
+# Native training context is 202752 — server can be re-launched up to
+# that limit, in which case raise this number to match.
+context_window = 65536
+max_output_tokens = 8192
+
+[pricing]
+# Self-hosted — no per-token cost.
+price_input = 0.0
+price_output = 0.0
+
+[routing]
+# Tier C (LLM-based skill router) reuses the same model. Override to a
+# smaller hosted model if the routing latency becomes a problem.
+tier_c_model = ""
+
+# v13 — profile-driven adapters. The ``[prompt]`` template + match
+# tokens replace the legacy if-ladder in ``runtime/prompt.py``; the
+# ``[parser]`` variants + ``[parser_hints]`` replace the GLM-specific
+# defaults that used to live in ``view/stream_parser.py``.
+#
+# v2.6.1 M2 — ``dedupe_with_template = true`` opts the GLM profile in
+# to the prompt-snippet dedupe gate. ``glm.j2`` already restates the
+# generic intro / behaviour / tool-result-nudge guidance in
+# GLM-tuned voice; the sidecar ``glm.metadata.toml`` declares those
+# semantic categories under ``provides_tags``, and the prompt
+# builder drops any matching snippets to save ~1500 chars per turn.
+# XML tool format + agent-tool-warning still render because the
+# template doesn't cover those tags.
+[prompt]
+template = "glm"
+# Substring-matched against ``model_id.lower()``; first match wins so
+# numeric filename prefix decides ordering. ``zhipu`` covers the
+# original vendor brand (e.g. ``zhipu-chatglm``).
+match = ["glm", "zhipu"]
+dedupe_with_template = true
+
+[parser]
+# Full default order — GLM streams emit any of the six variants
+# depending on the chat template + tool path, so the registry walks
+# the full list. Order matches DEFAULT_VARIANT_ORDER.
+variants = [
+    "json_payload",
+    "hermes_function",
+    "hermes_truncated",
+    "harmony_kv",
+    "glm_brace",
+    "bare_name_tag",
+]
+
+[parser_hints]
+# Variant 6 closes on ``</arg_value>`` (NOT ``</tool_call>``). Variant 7
+# bodies legitimately contain ``</arg_value>`` but the StreamParser
+# must wait for the real ``</tool_call>`` when ``<arg_key>`` is present
+# — that hint is encoded on the ``harmony_kv`` variant itself
+# (``requires_standard_close_when=("<arg_key>",)``) and StreamParser
+# reads it via the registry. The chained variant-6 emissions separate
+# sibling calls with U+2192 (``→``) plus whitespace, which we strip
+# after each custom close.
+custom_close_tags = ["</arg_value>"]
+call_separator_chars = "\u2192 \t\r\n"
+
+# v14 — tool consumption compat layer. GLM-5.1 reproducibly fails the
+# call-tool → receive-result → consume-result pattern: the model
+# writes a denial in `content` ("I don't have internet access") even
+# after a successful tool round-trip. v14 introduces three runtime
+# mechanisms (see docs/superpowers/specs/2026-04-27-llm-code-v14-...)
+# to compensate for this class of model-level instruction-following
+# weakness. GLM-5.1 opts in to all three.
+[tool_consumption]
+# Mechanism A — post-tool <system-reminder> injection. Default ON
+# globally (set explicitly here for documentation clarity).
+reminder_after_each_call = true
+
+# Mechanism B — drop reasoning_content / reasoning fields from prior
+# assistant messages on the outbound request. GLM-5.1's reasoning
+# channel runs ahead of content; without this flag, a prior turn's
+# denial reasoning could bleed into the next turn's reasoning even
+# after a tool succeeded. Today's openai_compat path already filters
+# reasoning via the ThinkingBlock drop, so the flag is a forward-
+# compat guarantee — any future change that round-trips reasoning
+# back to GLM will still be filtered for this profile.
+strip_prior_reasoning = true
+
+# Mechanism C — denial-pattern detection + forced retry. After the
+# turn's content streams, if a tool was called this turn AND the
+# content matches a denial pattern, re-invoke the provider once with
+# an injected <system-reminder>. Capped at 1 retry per turn.
+# Buffers streaming for retry-eligible turns (TTFT trade-off). Costs
+# +1 provider call per denial-matched turn (~30%+ on GLM-5.1
+# news/realtime queries — observe the
+# llmcode.tool_consumption.denial_retries_total counter).
+retry_on_denial = true
+
+# v2.9.0 P2 — replace older tool_result payloads with a 500-char
+# preview + structured marker on iter N+1 prefill. The trailing
+# (most recent) batch of tool results stays full so the model still
+# has complete data for current reasoning. Drops 60-80% of prefill
+# tokens on multi-search workflows. Default off globally; GLM opts
+# in because llama.cpp re-prefills the full history every iter and
+# the 41k-token observed prefill on the 3-search workflow was
+# almost entirely stale tool payloads.
+compress_old_tool_results = true
+
+# v2.9.0 P3 / v2.9.1 floor — "final compile" thinking budget. Once
+# the model has issued >= 3 tool calls in this turn, the next
+# iteration is the summarisation step (cite + format the N tool
+# results). That step is templating, not deep reasoning — cut the
+# budget from 16384 → 512 to skip the redundant ~5-15s of
+# chain-of-thought.
+#
+# v2.9.1 hotfix: 512 (not 0) is the empirical floor for GLM-5.1's
+# ``reasoning_content`` channel under llama.cpp. Setting 0 fully
+# disables reasoning, which leaves the model with only the content
+# channel — and on a real smoke test it emitted a tool_call wrapper
+# without visible text, triggering llmcode's "empty response"
+# fallback. 512 preserves the wall-clock win (~5-10s saved vs. the
+# v2.8.1 post_tool floor of 1024) without breaking compile output.
+#
+# Set ``compile_after_tool_calls = 0`` to disable the override
+# entirely; raise the threshold if you want the override only for
+# very tool-heavy turns.
+compile_after_tool_calls = 3
+compile_thinking_budget = 512
+
+# v2.9.0 P1 — parallel tool dispatch. When the model emits multiple
+# tool calls in a single assistant turn, run them concurrently via
+# asyncio.gather instead of a sequential for-loop. GLM-5.1 reliably
+# emits multi-call payloads via the harmony_kv / glm_brace variants
+# (separated by the U+2192 → arrow that the parser already strips),
+# so opting in directly translates to wall-clock savings on every
+# multi-call turn. Tool results return in the original tool_call_id
+# order so the model sees a deterministic sequence regardless of
+# completion order.
+[parallel_tools]
+enable_parallel_tools = true

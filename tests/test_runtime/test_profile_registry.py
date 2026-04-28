@@ -244,6 +244,13 @@ class TestLoadBuiltinProfiles:
 
 class TestEnsureBuiltinProfilesLoaded:
     def test_runs_at_most_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # v2.10.0 — ``_ensure_builtin_profiles_loaded`` may invoke the
+        # underlying loader against up to two directories per ensure call
+        # (the wheel-bundled ``llm_code/_builtins/profiles`` AND, in a
+        # source checkout, the legacy ``examples/model_profiles`` fallback).
+        # The contract this test pins is "at most one ensure-pass per
+        # process": collect the unique directories touched, and assert
+        # that subsequent ``ensure`` calls re-touch nothing.
         calls: list[Path] = []
 
         def _counting_loader(path: Path) -> int:
@@ -252,11 +259,16 @@ class TestEnsureBuiltinProfilesLoaded:
 
         monkeypatch.setattr(pr, "_load_builtin_profiles", _counting_loader)
         pr._ensure_builtin_profiles_loaded()
+        first_pass = list(calls)
         pr._ensure_builtin_profiles_loaded()
         pr._ensure_builtin_profiles_loaded()
-        assert len(calls) == 1
+        # Subsequent ensure calls must be no-ops.
+        assert calls == first_pass
 
     def test_reset_allows_reload(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # See note in ``test_runs_at_most_once`` about the multi-directory
+        # contract. Resetting the registry must reset the guard so a
+        # subsequent ensure pass re-runs the same loader sequence.
         calls: list[Path] = []
 
         def _counting_loader(path: Path) -> int:
@@ -265,9 +277,13 @@ class TestEnsureBuiltinProfilesLoaded:
 
         monkeypatch.setattr(pr, "_load_builtin_profiles", _counting_loader)
         pr._ensure_builtin_profiles_loaded()
+        first_pass_len = len(calls)
+        assert first_pass_len >= 1
         pr._reset_registry_for_tests()
         pr._ensure_builtin_profiles_loaded()
-        assert len(calls) == 2
+        # The second ensure pass should add another full set of loader
+        # calls (one per discoverable directory).
+        assert len(calls) == 2 * first_pass_len
 
     def test_real_examples_dir_loads_without_error(self) -> None:
         # Smoke test against the actual repo ``examples/model_profiles``.
