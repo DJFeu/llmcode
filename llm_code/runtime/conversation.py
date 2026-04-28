@@ -1195,8 +1195,81 @@ class ConversationRuntime:
             max_iterations=max(1, int(self._config.max_turn_iterations)),
         )
 
+        # v2.13.0 Lever 2 — per-iter diagnostic timing accumulators.
+        # Always-on at DEBUG level (zero perf cost when not enabled —
+        # ``time.monotonic()`` is ~50ns and ``logger.debug`` short-
+        # circuits when the effective level is INFO+). The per-iter
+        # log line + the turn summary together let any future
+        # wall-clock issue be diagnosed from one log block instead of
+        # a fresh smoke-test instrumentation pass.
+        _turn_provider_total_s = 0.0
+        _turn_tool_total_s = 0.0
+        _turn_iter_count = 0
+        # Per-iter timing markers — re-initialised at each iter start.
+        # Declared here at turn scope so the closure below can read
+        # them through ``nonlocal`` even on early exits.
+        _iter_start_t = 0.0
+        _after_provider_t = 0.0
+        _after_tools_t = 0.0
+        _iter_input_tokens = 0
+        _iter_output_tokens = 0
+        _iter_thinking_chars = 0
+        _iter_tool_calls = 0
+        _iter_stop_reason = ""
+        _iter_logged_for_index = -1  # last _iteration value already logged
+
+        def _emit_iter_timing(iter_index: int) -> None:
+            """Emit one ``iter_timing:`` debug line for the given
+            iteration, capturing the iter end timestamp at call time.
+
+            Idempotent — if called twice for the same ``iter_index``
+            the second call no-ops, so wiring the helper at every
+            exit point (break / continue / natural end) doesn't
+            double-log.
+            """
+            nonlocal _iter_logged_for_index, _turn_provider_total_s
+            nonlocal _turn_tool_total_s, _turn_iter_count
+            if iter_index == _iter_logged_for_index:
+                return
+            _iter_end_t = time.monotonic()
+            _provider_phase_s = max(_after_provider_t - _iter_start_t, 0.0)
+            _tool_phase_s = max(_after_tools_t - _after_provider_t, 0.0)
+            _iter_total_s = max(_iter_end_t - _iter_start_t, 0.0)
+            _bookkeeping_s = max(
+                _iter_total_s - _provider_phase_s - _tool_phase_s, 0.0,
+            )
+            logger.debug(
+                "iter_timing: iter=%d prefill_in=%d out=%d "
+                "thinking_chars=%d tool_calls=%d "
+                "provider_s=%.2f tool_s=%.2f bookkeeping_s=%.2f "
+                "iter_total_s=%.2f stop_reason=%s",
+                iter_index, _iter_input_tokens, _iter_output_tokens,
+                _iter_thinking_chars, _iter_tool_calls,
+                _provider_phase_s, _tool_phase_s, _bookkeeping_s,
+                _iter_total_s, _iter_stop_reason,
+            )
+            _turn_provider_total_s += _provider_phase_s
+            _turn_tool_total_s += _tool_phase_s
+            _turn_iter_count = iter_index + 1
+            _iter_logged_for_index = iter_index
+
         for _iteration in range(self._config.max_turn_iterations):
             self._iteration_budget.tick()
+            # v2.13.0 Lever 2 — reset per-iter timing markers at the
+            # top of every iter. ``_after_provider_t`` and
+            # ``_after_tools_t`` advance at their natural phase
+            # boundaries below; ``_emit_iter_timing(_iteration)`` is
+            # called at every exit point (natural end, break,
+            # continue) and is idempotent so double-logging is
+            # impossible.
+            _iter_start_t = time.monotonic()
+            _after_provider_t = _iter_start_t
+            _after_tools_t = _iter_start_t
+            _iter_input_tokens = 0
+            _iter_output_tokens = 0
+            _iter_thinking_chars = 0
+            _iter_tool_calls = 0
+            _iter_stop_reason = ""
             # Proactive context compaction: compress before hitting model limit
             est_tokens = self.session.estimated_tokens()
 
@@ -1601,6 +1674,8 @@ class ConversationRuntime:
                         reason="prompt_too_long",
                     )
                     _close_llm_span_with_error(exc)
+                    _after_provider_t = time.monotonic()
+                    _emit_iter_timing(_iteration)
                     continue  # retry this iteration of the turn loop
                 elif (
                     ("413" in _exc_str or "prompt too long" in _exc_str.lower())
@@ -1633,6 +1708,8 @@ class ConversationRuntime:
                                 exc,
                             )
                             _close_llm_span_with_error(exc)
+                            _after_provider_t = time.monotonic()
+                            _emit_iter_timing(_iteration)
                             continue  # retry this iteration
                         # 3rd consecutive failure: walk one step down the chain.
                         self._fire_hook(
@@ -1676,6 +1753,8 @@ class ConversationRuntime:
                                 logger.debug("cost_tracker.model sync skipped", exc_info=True)
                         self._consecutive_failures = 0
                         _close_llm_span_with_error(exc)
+                        _after_provider_t = time.monotonic()
+                        _emit_iter_timing(_iteration)
                         continue  # retry with fallback model
                     logger.error("Provider stream error: %s", exc)
                     _close_llm_span_with_error(exc)
@@ -1790,6 +1869,19 @@ class ConversationRuntime:
                 except Exception:
                     pass
                 _close_llm_span_ok()
+
+            # v2.13.0 Lever 2 — provider-phase boundary. Captured AFTER
+            # the streaming loop closes (and after the LLM span closes
+            # cleanly). On the XML-fallback retry path the retry
+            # stream completes before this point so the marker still
+            # represents "all provider work done." Tool dispatch
+            # starts after this.
+            _after_provider_t = time.monotonic()
+            if stop_event is not None:
+                _iter_input_tokens = int(stop_event.usage.input_tokens)
+                _iter_output_tokens = int(stop_event.usage.output_tokens)
+                _iter_stop_reason = str(stop_event.stop_reason or "")
+            _iter_thinking_chars = sum(len(p) for p in thinking_parts)
 
             # Reset consecutive failure counters on successful stream
             self._consecutive_failures = 0
@@ -1919,6 +2011,7 @@ class ConversationRuntime:
                         _upgraded,
                     )
                     _current_max_tokens = _upgraded
+                    _emit_iter_timing(_iteration)
                     continue  # retry this iteration with higher token limit
 
             # Build native tool call list for parsing
@@ -2078,6 +2171,7 @@ class ConversationRuntime:
                     except (KeyError, IndexError, ValueError):
                         _msg = _msg_template
                     yield StreamTextDelta(text=_msg)
+                    _emit_iter_timing(_iteration)
                     break
             elif parsed_calls:
                 # Reset counter when model is actively using tools
@@ -2134,6 +2228,7 @@ class ConversationRuntime:
                             _retry_reminder,
                         )
                         _denial_retry_count += 1
+                        _emit_iter_timing(_iteration)
                         # Skip the break — re-enter the iteration loop
                         # so the provider sees the injected reminder.
                         continue
@@ -2221,6 +2316,7 @@ class ConversationRuntime:
                         _retry_reminder,
                     )
                     _empty_compile_retry_count += 1
+                    _emit_iter_timing(_iteration)
                     # Skip the break — re-enter the iteration loop
                     # so the provider sees the injected reminder.
                     continue
@@ -2328,6 +2424,7 @@ class ConversationRuntime:
                         _retry_reminder,
                     )
                     _malformed_tool_retry_count += 1
+                    _emit_iter_timing(_iteration)
                     # Skip the break — re-enter the iteration loop so
                     # the provider sees the injected reminder.
                     continue
@@ -2365,6 +2462,7 @@ class ConversationRuntime:
                     if _combined:
                         yield StreamTextDelta(text=_combined)
                     _buffered_text_events.clear()
+                _emit_iter_timing(_iteration)
                 break
 
             # 9. Execute tools via the validate→safety→permission→progress pipeline
@@ -2610,6 +2708,13 @@ class ConversationRuntime:
                         int(_context_limit * 0.6), reason="post_tool",
                     )
 
+            # v2.13.0 Lever 2 — tool-phase boundary. Captured AFTER
+            # tool dispatch (or skipped if no tools fired this iter).
+            # The remaining work between this point and the iter end
+            # is bookkeeping (post-tool compaction, retry-loop check).
+            _after_tools_t = time.monotonic()
+            _iter_tool_calls = len(tool_result_blocks) if tool_result_blocks else 0
+
             # Fast exit if the idempotent-retry tracker detected a
             # loop. We still record the error tool_result_block and
             # add it to the session so the model's message history
@@ -2622,7 +2727,12 @@ class ConversationRuntime:
                         content=tuple(tool_result_blocks),
                     )
                     self.session = self.session.add_message(tool_msg)
+                _emit_iter_timing(_iteration)
                 break  # Exit the outer turn-iteration loop
+
+            # v2.13.0 Lever 2 — natural end-of-iter logging. Fires
+            # before the implicit fall-through to the next iteration.
+            _emit_iter_timing(_iteration)
 
             # 10. Loop back for LLM to process results
 
@@ -2641,6 +2751,18 @@ class ConversationRuntime:
             "Turn complete: %d input tokens, %d output tokens",
             accumulated_usage.input_tokens,
             accumulated_usage.output_tokens,
+        )
+        # v2.13.0 Lever 2 — turn-level timing summary. One DEBUG line
+        # per turn surfacing iter count + total wall-clock + per-phase
+        # cumulative durations. Pairs with the per-iter ``iter_timing:``
+        # lines above so a future wall-clock diagnosis can read off
+        # both the granular and the rolled-up view from one log block.
+        _turn_total_s = _turn_duration_ms / 1000.0
+        logger.debug(
+            "turn_timing: iters=%d total_s=%.2f provider_total_s=%.2f "
+            "tool_total_s=%.2f",
+            _turn_iter_count, _turn_total_s,
+            _turn_provider_total_s, _turn_tool_total_s,
         )
         # Telemetry: per-turn data now lives on the wrapping agent.turn span
         # (enriched via trace_llm_completion children). Legacy trace_turn is
