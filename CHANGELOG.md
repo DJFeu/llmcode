@@ -1,5 +1,131 @@
 # Changelog
 
+## v2.11.0 — Empty-compile retry (silent-compile recovery)
+
+Single-mechanism release. Fixes the empty-compile failure mode surfaced
+by a DJFeu smoke test on the prompt `查詢今日熱門新聞三則`
+(GLM-5.1 744B/40B MoE on llama.cpp): the agent loop dispatched two
+`web_search` tool calls, results came back, then the next iteration
+emitted **0 visible text + 0 thinking + `stop_reason="stop"`** — a
+silent-compile failure. `view/stream_renderer.py:347` correctly fired
+the empty-response advisory, but the user was staring at an orange
+warning instead of the news summary they asked for.
+
+This is a recoverable failure: a brief nudge ("compile your final
+answer now from the data you already have") yields a coherent summary
+on retry. v2.11 detects the silent-compile case in the agent loop and
+re-invokes the provider once with an injected `<system-reminder>`,
+capped at 1 retry per turn.
+
+### What ships
+
+- **`empty_compile_retry` profile flag** (default `False`) — opt-in in
+  the `[tool_consumption]` TOML section. Sister mechanism to v14
+  mech-C `retry_on_denial`; structurally identical (same call site,
+  same `<system-reminder>` injection + `continue` shape, same 1-retry
+  cap). Cloud / Anthropic profiles keep v2.10 byte-parity.
+- **`empty_compile_retry_message`** — the reminder body, exposed for
+  localised profiles. Default carries a `{tool_calls}` placeholder for
+  the running count.
+- **GLM-5.1 opt-in** — both `examples/model_profiles/65-glm-5.1.toml`
+  and `llm_code/_builtins/profiles/65-glm-5.1.toml` ship the flag
+  enabled. Run `llmcode profiles update glm-5.1` after upgrade to
+  refresh the user copy.
+
+### Detection
+
+Inside `runtime/conversation.py`, after the existing v14 denial-retry
+block, the agent loop fires the retry when ALL of these hold:
+
+1. `iteration > 0` (decision-iter is exempt — model legitimately may
+   emit a tool_call without text on iter 0)
+2. `_tool_called_this_turn` (model already did real work this turn)
+3. No new tool_call this iteration (we are inside `if not parsed_calls:`)
+4. `response_text` is empty (no visible text content)
+5. Thinking buffer length < 8 chars after strip (negligible thinking)
+6. `stop_event.stop_reason in ("stop", "end_turn")` (NOT `"tool_use"`)
+7. Profile flag `empty_compile_retry = True`
+8. Retry not yet used this turn (cap of 1)
+
+When the gate fires the runtime injects:
+
+```
+<system-reminder>
+You have already gathered information from {N} tool call(s) in this
+turn. Please compile your final answer to the user's question now in
+plain text. Do not call any more tools — the user is waiting for a
+coherent summary based on the data you already have.
+</system-reminder>
+```
+
+…and re-enters the iteration loop via `continue` so the provider sees
+the reminder. Defensively clears the v14 buffered-text events (which
+are empty here by construction, but the clear protects against future
+changes that let v14's buffer accumulate other event types).
+
+### Streaming UX
+
+No buffering needed — the trigger condition is "0 visible text", so
+nothing is held back during the failed iteration. The retry is
+transparent: the failed iteration produces silence, then the
+substantive content from the retried call streams normally.
+
+### Cap and graceful degradation
+
+Cap is hard 1 per turn. If the second attempt also produces empty
+output, the runtime logs `tool_consumption: empty_compile_retry_failed
+empty_persisted_after_retry` and falls through to the existing empty-
+response advisory in `view/stream_renderer.py:347` — the user still
+sees an explanation for the silence rather than a hung turn.
+
+### Telemetry
+
+Mirrors v14 mech-C shape — structured `logger.warning(...)` lines:
+
+- `tool_consumption: empty_compile_retry tool_calls=N iteration=I
+  stop_reason=...` — fires once per retry trigger.
+- `tool_consumption: empty_compile_retry_failed
+  empty_persisted_after_retry tool_calls=N` — fires when the retried
+  call also produced empty output.
+
+Observe via the
+`llmcode.tool_consumption.empty_compile_retries_total` counter.
+
+### Tests
+
+13 new cases in `tests/test_runtime/test_empty_compile_retry_v211.py`
+covering: trigger fires when all gates hold (incl. both `stop` and
+`end_turn` reasons), every gate exercised in isolation (iteration 0,
+text present, thinking present, no prior tool calls), 1-retry cap,
+persistent-empty diagnostic log, profile-flag-off byte parity, no-log
+on disabled profile, retry-path log shape, and reminder XML well-
+formedness via `xml.etree.ElementTree.fromstring`.
+
+Parity gates (`test_system_prompt_v260_byte_parity.py`,
+`test_post_tool_thinking_budget_v281.py`, `test_compile_thinking_v290.py`)
+all green; the v14 `test_denial_retry_loop.py` suite is untouched and
+still green.
+
+### Out of scope
+
+- The v14 `retry_on_denial` code path is read-only here — sister
+  mechanism, not a unified config knob (the failure modes have
+  opposite text-presence requirements).
+- `empty_compile_retry = false` stays the global default; only GLM
+  opts in for v2.11. Other profiles can opt in once they reproduce
+  the silent-compile pattern under load.
+- No multi-retry knob — the hard cap of 1 invites no infinite-loop
+  accidents.
+- The `view/stream_renderer.py:347` advisory text is unchanged; it
+  still fires when retry fails (graceful-degradation path).
+
+### Codex review caveat
+
+If a downstream codex review run reports breakage, also run the spec
+§ Sanity gate fresh-venv smoke yourself; the last few sessions saw
+codex test stale installs and surface false positives. The fresh-venv
+smoke is the source of truth for "does this wheel work".
+
 ## v2.10.0 — Built-in profile bundling + `llmcode profiles` CLI
 
 Closes the v2.9.x packaging gap. Every flag added in v2.9.0 (P1 parallel
