@@ -1,5 +1,95 @@
 # Changelog
 
+## v2.10.0 — Built-in profile bundling + `llmcode profiles` CLI
+
+Closes the v2.9.x packaging gap. Every flag added in v2.9.0 (P1 parallel
+tools, P2 result compression, P3 compile thinking) and v2.9.1 (compile
+thinking floor) lives entirely inside the model profile TOML, but the
+canonical examples lived at `examples/model_profiles/65-glm-5.1.toml` —
+which is *not* in the wheel (`pyproject.toml` ships `packages =
+["llm_code"]` only). After `pip install -U llmcode-cli==2.9.x`, the
+wheel updated, but a user's local `~/.llmcode/model_profiles/glm-5.1.toml`
+copy stayed frozen at the v2.9.0 snapshot — none of the v2.9.x defaults
+ever reached the runtime. v2.9.2 patched the worst symptom (the
+`reasoning_content` compile floor) inside the wheel as a runtime clamp;
+v2.10.0 fixes the root cause.
+
+### What ships
+
+* **Built-in profile bundling** — every `examples/model_profiles/*.toml`
+  is now copied into `llm_code/_builtins/profiles/` and shipped inside
+  the wheel. Hatchling's `packages = ["llm_code"]` directive picks up
+  non-Python data files in the package directory, so the TOMLs are
+  reachable via `importlib.resources` from any installed wheel.
+  Verified via `pip wheel . && unzip -l` (single-copy, no
+  `force-include` needed).
+* **`llmcode profiles list`** — shows every bundled profile and its
+  install status: `installed (matches built-in)`, `installed (DIVERGED
+  — run llmcode profiles diff <name>)`, or `not installed`. Also
+  prints the user dir + bundled dir paths.
+* **`llmcode profiles diff <name>`** — unified diff (3 context lines)
+  between the bundled profile and the user copy. Empty output for
+  identical files (script-friendly); friendly message if the user
+  copy is missing.
+* **`llmcode profiles update [name]`** — copy bundled → user dir with
+  a safety matrix:
+  * Missing user copy → copy in.
+  * Identical → "already up to date", no write.
+  * Diverged → 1-context unified-diff summary, prompt `[y/N]`,
+    backup-on-confirm, then overwrite.
+
+  Flags: `--all`, `--force`, `--dry-run`, `--no-backup`,
+  `--backup-suffix TEXT`. Default backup suffix is
+  `.bak.YYYYMMDD-HHMMSS` so multiple refreshes don't collide.
+
+### Runtime registry
+
+`runtime/profile_registry._ensure_builtin_profiles_loaded` now walks
+the wheel-bundled directory first, then falls back to
+`examples/model_profiles/` for repo checkouts that haven't run
+`pip install -e .`. The existing `register_profile` collision guard
+silently skips duplicates, so the dual-load is safe.
+
+### Test coverage
+
+* `tests/test_profiles/test_builtins.py` — 26 tests across discovery,
+  sorted listing, friendly-name lookup (bare slug / full stem /
+  case-insensitive / with `.toml` extension), GLM profile shape pinning
+  (P1 parallel, P2 compression, P3 threshold, v2.9.1 floor), and
+  end-to-end runtime registry integration.
+* `tests/test_cli/test_profiles_list.py` — 9 tests across
+  `TestListBasic`, `TestListStatusDetection`, `TestListEdgeCases`.
+* `tests/test_cli/test_profiles_update.py` — 17 tests across
+  `TestUpdateMissing` (2), `TestUpdateIdentical` (1),
+  `TestUpdateDiverged` (6), `TestUpdateAll` (2),
+  `TestUpdateArgValidation` (3), `TestUpdateFilesystemErrors` (1),
+  `TestUpdateAcceptsBothNameForms` (2).
+* `tests/test_cli/test_profiles_diff.py` — 9 tests across
+  `TestDiffMissing` (2), `TestDiffIdentical` (1), `TestDiffDiverged`
+  (2), `TestDiffArgValidation` (2), `TestDiffAcceptsBothNameForms` (2).
+
+Each CLI test points `_user_profile_dir` at a temp dir so the real
+`~/.llmcode/model_profiles/` is never touched.
+
+### Sanity verification
+
+`pip install` from the local checkout into a fresh venv resolves the
+bundled GLM profile via `importlib.resources`, `llmcode profiles list`
+shows every bundled slug, and `llmcode profiles diff glm-5.1` works
+even with no user copy. The full runtime suite stays green
+(`pytest tests/test_runtime` → 2467 passed, 5 skipped) and the
+v2.6.0 system-prompt byte-parity gate is unaffected.
+
+### Strict out of scope
+
+Per the v2.10.0 plan:
+
+* No auto-update on `llmcode` startup. CLI is opt-in.
+* No "stale profile detected" banner.
+* No telemetry on which profiles get refreshed.
+* No refactor of `model_profile.py`'s loader (it already supports the
+  right paths).
+
 ## v2.9.2 — Runtime safeguard for reasoning_content compile floor (hotfix)
 
 Codex stop-time review caught a packaging gap in v2.9.1: the fix

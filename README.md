@@ -311,6 +311,20 @@ Declarative per-model profiles replace scattered hardcoded model adaptations. Pr
 
 Built-in profiles for Qwen3/3.5, Claude, GPT-4o, DeepSeek-R1, o3/o4-mini. User overrides via `~/.llmcode/model_profiles/*.toml`. See [`examples/model_profiles/`](examples/model_profiles/) for templates.
 
+#### Updating model profiles
+
+v2.10.0 bundles every built-in profile inside the wheel and adds a CLI for managing local copies in `~/.llmcode/model_profiles/`:
+
+```bash
+llmcode profiles list              # show bundled profiles + install status
+llmcode profiles diff glm-5.1      # unified diff between bundled and user copy
+llmcode profiles update glm-5.1    # refresh user copy (backup-on-overwrite)
+llmcode profiles update --all      # refresh every bundled profile
+llmcode profiles update --dry-run glm-5.1  # show plan without writing
+```
+
+`update` backs up diverged user copies as `<name>.toml.bak.YYYYMMDD-HHMMSS` by default. Pass `--no-backup` to skip the backup or `--force` to overwrite without prompting. Run `llmcode profiles --help` for the full surface.
+
 ### Anthropic Provider
 
 Native httpx-based provider for Anthropic's Messages API:
