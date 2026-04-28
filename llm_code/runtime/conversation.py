@@ -1114,6 +1114,15 @@ class ConversationRuntime:
         _tool_called_this_turn = False
         _denial_retry_count = 0
 
+        # v2.11.0 — empty-compile retry state. Sister mechanism to
+        # v14 mech-C above. Triggered when an iteration ends with
+        # 0 visible text + 0 (or negligible) thinking + stop_reason
+        # "stop"/"end_turn" AND a tool was called earlier this turn
+        # — the model has data but failed to compile a final answer.
+        # Capped at 1 retry per turn (same shape as denial_retry_count)
+        # so a stuck provider state cannot loop indefinitely.
+        _empty_compile_retry_count = 0
+
         # v2.9.0 P3 — count distinct tool dispatches across this turn
         # so ``build_thinking_extra_body`` can apply the "final compile"
         # heuristic when the model has issued ``profile.compile_after_tool_calls``
@@ -2085,6 +2094,89 @@ class ConversationRuntime:
                             "pattern_persisted_after_retry pattern=%r",
                             _persisted_match.pattern,
                         )
+
+                # v2.11.0 — empty-compile retry. Sister mechanism to
+                # the v14 denial retry above. Fires when a non-decision
+                # iteration produces 0 visible text + 0 (or negligible)
+                # thinking + stop_reason "stop"/"end_turn" AND the
+                # model has already invoked tools earlier this turn.
+                # Canonical case: GLM-5.1 on llama.cpp issued two
+                # ``web_search`` tool calls then silently failed to
+                # compile a final answer from the results, leaving the
+                # user staring at the renderer's empty-response
+                # advisory instead of a news summary. A short
+                # ``<system-reminder>`` nudge ("compile your answer
+                # from the data you already have, no more tools")
+                # typically yields a coherent summary on retry.
+                #
+                # Cap is 1 per turn (same shape as denial retry).
+                # Persistent empty output falls through to the
+                # existing advisory in ``view/stream_renderer.py``
+                # — graceful degradation: the user still sees an
+                # explanation for the silence rather than a hung
+                # turn.
+                _thinking_text = "".join(thinking_parts).strip()
+                if (
+                    self._model_profile.empty_compile_retry
+                    and _iteration > 0
+                    and _tool_called_this_turn
+                    and _empty_compile_retry_count < 1
+                    and not response_text
+                    and len(_thinking_text) < 8
+                    and stop_event is not None
+                    and stop_event.stop_reason in ("stop", "end_turn")
+                ):
+                    logger.warning(
+                        "tool_consumption: empty_compile_retry "
+                        "tool_calls=%d iteration=%d stop_reason=%s",
+                        _tool_calls_this_turn,
+                        _iteration,
+                        stop_event.stop_reason,
+                    )
+                    # Defensive clear — by definition the trigger
+                    # requires no text deltas, so the buffer is
+                    # already empty. Belt-and-braces against a
+                    # future change that lets v14 mech-C buffering
+                    # accumulate other event types.
+                    _buffered_text_events.clear()
+                    _msg_template = (
+                        self._model_profile.empty_compile_retry_message
+                    )
+                    try:
+                        _reminder_text = _msg_template.format(
+                            tool_calls=_tool_calls_this_turn,
+                        )
+                    except (KeyError, IndexError, ValueError):
+                        _reminder_text = _msg_template
+                    _retry_reminder = Message(
+                        role="user",
+                        content=(TextBlock(text=_reminder_text),),
+                    )
+                    self.session = self.session.add_message(
+                        _retry_reminder,
+                    )
+                    _empty_compile_retry_count += 1
+                    # Skip the break — re-enter the iteration loop
+                    # so the provider sees the injected reminder.
+                    continue
+
+                # Persistent-empty diagnostic. Cap reached + still
+                # empty → log a structured warning and fall through
+                # to the renderer's advisory. Mirrors the
+                # ``denial_retry_failed`` shape above.
+                if (
+                    self._model_profile.empty_compile_retry
+                    and _iteration > 0
+                    and _tool_called_this_turn
+                    and _empty_compile_retry_count >= 1
+                    and not response_text
+                    and len(_thinking_text) < 8
+                ):
+                    logger.warning(
+                        "tool_consumption: empty_compile_retry_failed "
+                        "empty_persisted_after_retry tool_calls=%d",
+                        _tool_calls_this_turn,
+                    )
 
                 # Flush the buffered text events as one ``Stream
                 # TextDelta`` — turn is ending normally (or after a

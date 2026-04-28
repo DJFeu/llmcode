@@ -169,6 +169,22 @@ strip_prior_reasoning = true
 # llmcode.tool_consumption.denial_retries_total counter).
 retry_on_denial = true
 
+# v2.11.0 — empty-compile retry. Sister mechanism to retry_on_denial
+# above. GLM-5.1 on llama.cpp occasionally silent-compiles AFTER the
+# agent loop has already collected tool results: the iteration ends
+# with 0 visible text + 0 thinking + stop_reason="stop", which trips
+# llmcode's empty-response advisory in stream_renderer.py instead of
+# producing a coherent summary. Real-world reproducer (DJFeu smoke
+# test, prompt "查詢今日熱門新聞三則"): two web_search calls
+# returned data, but the third iteration emitted 220 output tokens
+# with 0 visible content. A brief <system-reminder> ("compile your
+# answer now from the data you already have, no more tools") yields
+# a clean summary on retry. Capped at 1 retry per turn — persistent
+# empty output falls through to the renderer advisory (graceful
+# degradation). Observe via the
+# llmcode.tool_consumption.empty_compile_retries_total counter.
+empty_compile_retry = true
+
 # v2.9.0 P2 — replace older tool_result payloads with a 500-char
 # preview + structured marker on iter N+1 prefill. The trailing
 # (most recent) batch of tool results stays full so the model still

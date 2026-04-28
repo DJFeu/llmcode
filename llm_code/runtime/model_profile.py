@@ -155,6 +155,47 @@ class ModelProfile:
     strip_prior_reasoning: bool = False
     retry_on_denial: bool = False
 
+    # ── v2.11.0 — empty-compile retry ────────────────────────────────
+    # Sister mechanism to ``retry_on_denial`` above. After the model
+    # has already invoked tools earlier in this turn, an iteration
+    # that ends with **no visible text + no (or negligible) thinking
+    # + stop_reason "stop"/"end_turn"** is a silent-compile failure:
+    # the model has the data, but failed to produce a final answer.
+    # Today's behaviour falls through to the ``view/stream_renderer``
+    # empty-response advisory — the user sees an orange warning
+    # instead of the summary they asked for.
+    #
+    # When ``empty_compile_retry`` is on, the agent loop injects a
+    # short ``<system-reminder>`` ("compile your final answer now
+    # from the data you already have, do not call more tools") and
+    # re-invokes the provider once. Capped at 1 retry per turn —
+    # persistent empty output still falls through to the advisory.
+    #
+    # Default off globally; opt in per-profile for models that
+    # exhibit the silent-compile pattern (canonical: GLM-5.1 on
+    # llama.cpp). Cloud / Anthropic profiles keep v2.10 byte-parity.
+    #
+    # ``empty_compile_retry_message`` carries the reminder body so
+    # localized profiles can override the wording. ``{tool_calls}``
+    # placeholder expands to the running tool-call count for the
+    # current turn.
+    #
+    # TOML authoring (matches the existing flat-section convention):
+    #
+    #     [tool_consumption]
+    #     empty_compile_retry = true
+    #     # empty_compile_retry_message = "..."   # optional override
+    empty_compile_retry: bool = False
+    empty_compile_retry_message: str = (
+        "<system-reminder>\n"
+        "You have already gathered information from {tool_calls} "
+        "tool call(s) in this turn. Please compile your final "
+        "answer to the user's question now in plain text. Do not "
+        "call any more tools — the user is waiting for a coherent "
+        "summary based on the data you already have.\n"
+        "</system-reminder>"
+    )
+
     # ── v15 — borrow from free-claude-code ───────────────────────────
     # Three optional capability flags ported from
     # ``Alishahryar1/free-claude-code`` (the Claude Code → any-LLM proxy
@@ -783,6 +824,11 @@ def _profile_from_dict(data: dict[str, Any], base: ModelProfile | None = None) -
             "compress_old_tool_results",
             "compile_after_tool_calls",
             "compile_thinking_budget",
+            # v2.11.0 — empty-compile retry mechanism. Same section as
+            # the rest of the consumption-shape levers; same opt-in
+            # convention as ``retry_on_denial``.
+            "empty_compile_retry",
+            "empty_compile_retry_message",
         ),
         # v2.9.0 P1 — parallel tool dispatch lever lives in its own
         # section so opting in / out doesn't require touching the
