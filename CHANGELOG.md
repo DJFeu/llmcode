@@ -1,5 +1,70 @@
 # Changelog
 
+## v2.11.1 — Parser reserved-names hotfix (Harmony envelope child tags)
+
+A real GLM-5.1 smoke test on `查詢今日熱門新聞三則` finished in **80.9s
+with `out_tokens=56`** — way too small for a coherent answer. The
+verbose log surfaced the actual root cause:
+
+```
+[DEBUG] tool_pipeline: Executing tool: arg_key
+[WARNING] tool_pipeline: Unknown tool requested: arg_key
+[INFO] tool_consumption: reminder_injected tool=arg_key bytes=291
+[DEBUG] conversation: Forced-text mode: stripped tools for this iteration
+```
+
+GLM-5.1 had emitted a `<tool_call>` envelope whose body placed the
+args JSON directly inside `<arg_key>` (instead of the proper
+`<arg_key>K</arg_key><arg_value>V</arg_value>` pair shape).
+`_HERMES_BARE_NAME_TAG_RE` — variant 5's generic
+`<NAME>{JSON}</NAME>` matcher — picked up the malformed
+`<arg_key>{"query":"..."}</arg_key>` fragment as a tool call named
+**"arg_key"**. The runtime tried to dispatch a tool that doesn't
+exist; the failure cascaded into forced-text mode (tools stripped
+for the retry); the model emitted only a 56-token preamble; the
+empty-response fallback fired. None of the v2.9.x / v2.10.0 / v2.11.0
+mechanisms triggered because the bug was upstream of the agent loop
+— at parser layer.
+
+### Fix
+
+Extend `_VARIANT_5_RESERVED_NAMES` (`llm_code/tools/parsing.py:131`)
+with the Harmony / GLM envelope child tags that variant 5 must
+**never** interpret as tool names, regardless of body shape:
+
+```python
+_VARIANT_5_RESERVED_NAMES: frozenset[str] = frozenset({
+    "tool_call", "think", "function", "parameter",
+    # v2.11.1
+    "arg_key", "arg_value", "tool_name", "parameters",
+    "name", "arguments",
+})
+```
+
+The added names cover both Harmony / GLM (`arg_key`, `arg_value`)
+and Hermes / OpenAI-compat envelope shapes (`tool_name`,
+`parameters`, `name`, `arguments`), so the same class of misformat
+on any of those families now fails closed instead of dispatching a
+phantom tool.
+
+### Regression coverage
+
+`tests/test_tools/test_parsing.py` gains 7 new tests
+(`test_v2111_*`):
+
+* Each blacklisted tag rejected (arg_key / arg_value / tool_name /
+  parameters / name / arguments)
+* The end-to-end `<tool_call><arg_key>{...JSON...}</arg_key></tool_call>`
+  shape returns no `arg_key`-named tool
+
+### Compatibility
+
+* v2.11.0 → v2.11.1 — drop-in; only `_VARIANT_5_RESERVED_NAMES`
+  changes.
+* No profile changes.
+* Existing reserved-name tests (variant 5's original four guards)
+  stay green.
+
 ## v2.11.0 — Empty-compile retry (silent-compile recovery)
 
 Single-mechanism release. Fixes the empty-compile failure mode surfaced

@@ -128,11 +128,35 @@ _HERMES_BARE_NAME_TAG_RE = re.compile(
 # already handled by earlier parser stages — matching them here
 # would double-count or re-interpret a malformed wrapper as its own
 # tool named "tool_call".
+#
+# v2.11.1 hotfix — extend the set with Harmony / GLM envelope CHILD
+# tags. GLM-5.1 on llama.cpp occasionally emits a malformed body
+# where the args JSON sits directly inside ``<arg_key>`` or
+# ``<arg_value>`` (instead of the proper key/value pair shape):
+#
+#     <tool_call>
+#     <arg_key>{"query":"...","max_results":3}</arg_key>
+#     </tool_call>
+#
+# Without these names blacklisted, ``_HERMES_BARE_NAME_TAG_RE``
+# (which matches the generic ``<NAME>{JSON}</NAME>`` shape) extracts
+# ``name="arg_key"`` and the runtime tries to dispatch a tool called
+# "arg_key" — observed against a real GLM news-search smoke test
+# where the failure cascaded into "forced-text mode" and an
+# empty-response fallback. The remaining names (``tool_name``,
+# ``parameters``, ``name``, ``arguments``) cover the same class of
+# misformat for the Hermes / OpenAI-compat envelope shapes.
 _VARIANT_5_RESERVED_NAMES: frozenset[str] = frozenset({
     "tool_call",
     "think",
     "function",
     "parameter",
+    "arg_key",
+    "arg_value",
+    "tool_name",
+    "parameters",
+    "name",
+    "arguments",
 })
 
 

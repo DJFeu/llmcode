@@ -558,6 +558,74 @@ class TestBareNameTagVariant:
         text = '<think>{"a": 1}</think>'
         assert parse_tool_calls(text, None) == []
 
+    # ── v2.11.1 hotfix — Harmony / GLM envelope child tags ──────────
+
+    def test_v2111_arg_key_not_reinterpreted_as_tool(self):
+        """v2.11.1 regression — GLM-5.1 sometimes emits args JSON
+        directly inside ``<arg_key>`` instead of the proper
+        ``<arg_key>K</arg_key><arg_value>V</arg_value>`` pair shape.
+        Without the reserved-names guard, variant 5's
+        ``<NAME>{JSON}</NAME>`` regex extracts ``name="arg_key"`` and
+        the runtime dispatches a tool that doesn't exist — observed
+        against a real news-search smoke test where the failure
+        cascaded into forced-text mode + empty-response fallback."""
+        text = '<arg_key>{"query": "今日新聞", "max_results": 3}</arg_key>'
+        assert parse_tool_calls(text, None) == []
+
+    def test_v2111_arg_value_not_reinterpreted_as_tool(self):
+        """Same class of bug for ``<arg_value>`` — both Harmony
+        envelope child tags must reject as tool names regardless of
+        body shape."""
+        text = '<arg_value>{"query": "x"}</arg_value>'
+        assert parse_tool_calls(text, None) == []
+
+    def test_v2111_tool_name_not_reinterpreted_as_tool(self):
+        """``<tool_name>`` is a Hermes envelope child tag — JSON body
+        inside it is malformed input, never a tool call named
+        "tool_name"."""
+        text = '<tool_name>{"x": 1}</tool_name>'
+        assert parse_tool_calls(text, None) == []
+
+    def test_v2111_parameters_not_reinterpreted_as_tool(self):
+        """``<parameters>`` is the OpenAI / Hermes envelope child for
+        argument dict — JSON inside it is the args body, not a tool."""
+        text = '<parameters>{"q": "hello"}</parameters>'
+        assert parse_tool_calls(text, None) == []
+
+    def test_v2111_name_not_reinterpreted_as_tool(self):
+        """``<name>`` is the JSON-payload envelope child carrying the
+        tool name string — JSON dict inside it must not be parsed as
+        a tool call."""
+        text = '<name>{"value": "web_search"}</name>'
+        assert parse_tool_calls(text, None) == []
+
+    def test_v2111_arguments_not_reinterpreted_as_tool(self):
+        """``<arguments>`` is another common envelope child name; the
+        body is the args dict, not a tool name."""
+        text = '<arguments>{"q": "hello"}</arguments>'
+        assert parse_tool_calls(text, None) == []
+
+    def test_v2111_real_glm_malformed_body_returns_empty(self):
+        """End-to-end shape from the real smoke-test capture — a
+        ``<tool_call>`` envelope whose body has the args JSON inside
+        ``<arg_key>`` instead of split into the proper kv pair. The
+        outer wrapper still goes through the fast path; variant 5's
+        scan of the residual wrapper-less text must not surface the
+        ``<arg_key>{...}</arg_key>`` fragment as a tool call."""
+        text = (
+            "<tool_call>\n"
+            '<arg_key>{"query": "今日熱門新聞", "max_results": 3}</arg_key>\n'
+            "</tool_call>"
+        )
+        # Either the fast path returns no calls (preferred — the body
+        # is structurally invalid for harmony_kv too) OR it returns
+        # exactly one well-formed call. What it MUST NOT do is return
+        # a tool named "arg_key".
+        result = parse_tool_calls(text, None)
+        assert all(c.name != "arg_key" for c in result), (
+            f"parser surfaced 'arg_key' as a tool name; got {result!r}"
+        )
+
     def test_variant5_only_fires_when_tool_call_wrapper_absent(self):
         """A well-formed ``<tool_call>`` block MUST go through the
         fast path and variant 5 must not double-parse the same
