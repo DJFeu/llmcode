@@ -1,5 +1,80 @@
 # Changelog
 
+## v2.13.1 — URL-list stripper preserves markdown title links (hotfix)
+
+Codex stop-time review (8th catch this session, second TRUE positive
+after the v2.12.1 loader gap) caught that v2.13.0's Lever 3
+`_URL_LIST_LINE_RE` was too aggressive:
+
+> **URL-stripper removes primary URL fields, not just trailers.**
+
+The original regex matched any line whose entire content was a
+markdown link `[Title](https://...)` in addition to bare URLs.
+But markdown title links carry the search-result PRIMARY URL
+field (the headline + canonical link), not a structural trailer.
+Stripping them lost title/URL pairing for older compressed
+results — model could read the body snippet but no longer cite
+or reference the article it came from.
+
+### Reproducer
+
+```python
+sample = '''
+[News Article](https://news.com/1)
+This is the article body.
+[Another](https://news.com/2)
+More body.
+'''
+# v2.13.0 output: title links GONE, only body snippets remain
+# v2.13.1 output: titles + URLs preserved alongside body
+```
+
+Note: bold-wrapped titles `**[Title](url)**` were already safe
+(the bold markers fell outside the strict line-match regex), so
+search backends that always use bold (Serper, most defaults)
+weren't affected by the v2.13.0 bug. Plain-markdown-formatted
+backends are the ones the hotfix repairs.
+
+### Fix
+
+Restrict `_URL_LIST_LINE_RE` to match BARE URLs only:
+
+```python
+_URL_LIST_LINE_RE = re.compile(
+    r"^\s*(?:[*\-]\s+)?"
+    r"(?:URL:\s+)?"
+    r"https?://\S+"           # only bare URLs, not markdown links
+    r"\s*$",
+)
+```
+
+The bullet/`URL:` prefix tolerance is preserved so the Lever 3
+wall-clock win on URL-heavy backends (Exa-style `URL: https://...`,
+Linkup-style `* https://...` trailers) survives — only the
+markdown-link alternative is dropped.
+
+### Regression coverage
+
+`tests/test_runtime/test_compress_tool_results_v290.py::TestV2131MarkdownTitleLinksPreserved`
+adds 5 tests:
+
+* Plain markdown title link `[News Article](url)` preserved
+* Bullet markdown title link `* [Title](url)` preserved
+* Bare URL trailer `* https://...` still stripped (regression
+  guard for Lever 3's intended behaviour)
+* `URL: https://...` (Exa-style) still stripped
+* End-to-end realistic GLM search-result shape — both primary
+  titles and body snippets survive
+
+### Compatibility
+
+* v2.13.0 → v2.13.1 — drop-in; only `_URL_LIST_LINE_RE` narrows.
+* All 20 existing P2 tests stay green (the existing fixtures used
+  bare-URL bullets which are still matched).
+* No profile changes.
+* Build on top of v2.12.1's loader inheritance — `pip install -U`
+  reaches every existing user without `llmcode profiles update`.
+
 ## v2.13.0 — Wall-clock optimizations (parallel-tool nudge + diagnostic logs + tighter P2)
 
 Wave 2 of the GLM-5.1 wall-clock work, after v2.9.0–v2.12.1 closed

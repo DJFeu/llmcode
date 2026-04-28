@@ -411,3 +411,111 @@ class TestV213PreviewCap:
 
     def test_legacy_marker_prefix_is_v29(self) -> None:
         assert _COMPRESS_LEGACY_MARKER_PREFIX == "[v2.9 compressed]"
+
+
+# ── v2.13.1 hotfix — markdown title links must NOT be stripped ──────
+
+
+class TestV2131MarkdownTitleLinksPreserved:
+    """v2.13.1 hotfix — codex stop-time review caught that the v2.13.0
+    URL-stripper was too aggressive: it matched any line whose entire
+    content was a markdown link ``[Title](url)``, but those lines
+    carry the search-result TITLE (primary URL field) — not a
+    structural URL-list trailer. Stripping them lost title/URL
+    pairing for older results. The hotfix restricts the regex to
+    BARE URLs only; markdown title links are preserved.
+    """
+
+    def test_plain_markdown_title_link_preserved(self) -> None:
+        """``[News Article](url)`` on its own line — primary title
+        for a search result. Must survive the strip pass."""
+        from llm_code.api.conversion import _strip_url_list_trailer
+
+        sample = (
+            "[News Article](https://news.com/1)\n"
+            "\n"
+            "This is the article body.\n"
+            "\n"
+            "[Another](https://news.com/2)\n"
+            "\n"
+            "More body.\n"
+        )
+        result = _strip_url_list_trailer(sample)
+        assert "[News Article](https://news.com/1)" in result
+        assert "[Another](https://news.com/2)" in result
+        assert "This is the article body." in result
+
+    def test_bullet_markdown_title_link_preserved(self) -> None:
+        """``* [Title](url)`` — bulleted markdown link preserves
+        title/URL even though it has the bullet prefix the regex
+        previously honoured for bare-URL trailers."""
+        from llm_code.api.conversion import _strip_url_list_trailer
+
+        sample = (
+            "Article body.\n"
+            "* [Title 1](https://x.com/1)\n"
+            "* [Title 2](https://x.com/2)\n"
+            "More body.\n"
+        )
+        result = _strip_url_list_trailer(sample)
+        assert "* [Title 1](https://x.com/1)" in result
+        assert "* [Title 2](https://x.com/2)" in result
+
+    def test_bare_url_trailer_still_stripped(self) -> None:
+        """The hotfix narrows the regex but doesn't disable it —
+        bare URLs in trailer position still get filtered so the
+        Lever 3 wall-clock win on URL-heavy backends survives."""
+        from llm_code.api.conversion import _strip_url_list_trailer
+
+        sample = (
+            "Top news today\n"
+            "1. Story A. First sentence.\n"
+            "URL list:\n"
+            "* https://example.com/news/1\n"
+            "* https://example.com/news/2\n"
+        )
+        result = _strip_url_list_trailer(sample)
+        assert "https://example.com/news/1" not in result
+        assert "URL list:" not in result
+        assert "Top news today" in result
+        assert "Story A. First sentence." in result
+
+    def test_url_prefix_form_still_stripped(self) -> None:
+        """``URL: https://...`` (Exa-style explicit prefix) is a
+        structural trailer pattern — stays stripped."""
+        from llm_code.api.conversion import _strip_url_list_trailer
+
+        sample = (
+            "Article body.\n"
+            "URL: https://example.com/source\n"
+        )
+        result = _strip_url_list_trailer(sample)
+        assert "URL: https://example.com" not in result
+        assert "Article body." in result
+
+    def test_realistic_glm_search_result_preserves_titles(self) -> None:
+        """End-to-end shape from a real GLM smoke-test search result.
+        Bold-wrapped titles ``**[Title](url)**`` were already safe
+        (the bold markers fell outside the regex); plain-bold-less
+        titles are the case the hotfix repairs.
+        """
+        from llm_code.api.conversion import _strip_url_list_trailer
+
+        sample = (
+            "## Search Results for \"taiwan news today\"\n"
+            "\n"
+            "[Taipei Times — Top stories](https://www.taipeitimes.com/News/front)\n"
+            "Taiwan's government top priority is safeguarding the 15% non-stacking tariff.\n"
+            "\n"
+            "[Taiwan News — US Section 301](https://taiwannews.com.tw/news/6319186)\n"
+            "US launched Section 301 investigation; agreement signed in mid-February.\n"
+        )
+        result = _strip_url_list_trailer(sample)
+        # Both primary titles + URLs survive.
+        assert "[Taipei Times" in result
+        assert "[Taiwan News" in result
+        assert "taipeitimes.com" in result
+        assert "taiwannews.com.tw" in result
+        # Body snippets survive too.
+        assert "non-stacking tariff" in result
+        assert "Section 301" in result

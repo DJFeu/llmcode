@@ -504,13 +504,20 @@ _COMPRESS_LEGACY_MARKER_PREFIX: str = "[v2.9 compressed]"
 #
 # These lines have no reasoning value once the body has been
 # integrated. Strip them from the preview window so the 250-char cap
-# is spent on body content, not structural padding. Conservative —
-# only matches lines whose ENTIRE content past optional bullet
-# whitespace is a URL or a markdown link (`[text](url)`).
+# is spent on body content, not structural padding.
+#
+# v2.13.1 hotfix — restrict to BARE URL lines only. The original
+# v2.13.0 regex also matched lines whose entire content was a
+# markdown link ``[Title](https://...)``, but those lines carry the
+# search-result TITLE (primary URL field), not a structural trailer.
+# Stripping them lost the title/URL pairing for older results.
+# Codex stop-time review caught this against a real GLM smoke test.
+# Keep the bullet/``URL:`` prefix tolerance; drop the markdown-link
+# alternative.
 _URL_LIST_LINE_RE = re.compile(
     r"^\s*(?:[*\-]\s+)?"
     r"(?:URL:\s+)?"
-    r"(?:https?://\S+|\[[^\]]+\]\(https?://[^)]+\))"
+    r"https?://\S+"
     r"\s*$",
 )
 # Header lines that signal a following URL-list block. Stripped
