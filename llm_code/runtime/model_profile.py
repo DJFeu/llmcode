@@ -815,6 +815,35 @@ def _load_toml(path: Path) -> dict[str, Any]:
         return tomllib.load(f)
 
 
+def _load_bundled_profile_base(key: str) -> "ModelProfile | None":
+    """v2.12.1 — resolve the wheel-bundled built-in profile for ``key``.
+
+    Used as a merge base when a user's local ``~/.llmcode/model_profiles/
+    <key>.toml`` exists but the registry has no hardcoded entry for that
+    key. Without this, a v2.9-era local copy of ``glm-5.1.toml`` would
+    merge over ``_DEFAULT_PROFILE`` and silently drop every field added
+    to the bundled profile in subsequent releases (``compress_old_tool_
+    results``, ``empty_compile_retry``, ``malformed_tool_retry``, ...).
+
+    Returns ``None`` if no bundled profile matches the given key —
+    callers fall back to ``_DEFAULT_PROFILE`` in that case (genuine
+    custom profile, not a stale built-in copy).
+    """
+    try:
+        from llm_code.profiles.builtins import builtin_profile_path
+    except Exception:  # pragma: no cover — defensive
+        return None
+    bundled_path = builtin_profile_path(key)
+    if bundled_path is None or not bundled_path.exists():
+        return None
+    try:
+        bundled_data = _load_toml(bundled_path)
+        return _profile_from_dict(bundled_data, base=_DEFAULT_PROFILE)
+    except Exception as exc:  # pragma: no cover — defensive
+        _logger.debug("bundled profile load failed for %s: %s", key, exc)
+        return None
+
+
 def _profile_from_dict(data: dict[str, Any], base: ModelProfile | None = None) -> ModelProfile:
     """Build a ModelProfile from a flat dict, optionally merging over a base.
 
@@ -1005,7 +1034,18 @@ class ProfileRegistry:
             try:
                 data = _load_toml(toml_path)
                 key = toml_path.stem.lower()
-                base = self._profiles.get(key, _DEFAULT_PROFILE)
+                base = self._profiles.get(key)
+                if base is None:
+                    # v2.12.1 — when the user has a local profile copy
+                    # of a wheel-bundled built-in (e.g. a stale GLM-5.1
+                    # copy from a v2.9-era install), load the bundled
+                    # version as the merge base so new fields added in
+                    # subsequent releases reach existing users without
+                    # requiring a manual ``llmcode profiles update``.
+                    # Falls back to ``_DEFAULT_PROFILE`` when the key
+                    # is not a known built-in (genuine custom profile).
+                    bundled = _load_bundled_profile_base(key)
+                    base = bundled if bundled is not None else _DEFAULT_PROFILE
                 profile = _profile_from_dict(data, base=base)
                 self._profiles[key] = profile
                 _logger.debug("loaded user profile: %s from %s", key, toml_path)

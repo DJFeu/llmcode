@@ -1,5 +1,84 @@
 # Changelog
 
+## v2.12.1 — Profile loader inherits from bundled built-ins (hotfix)
+
+Codex stop-time review (codex-rescue agent, called in after the 4th
+release in a debug chain) caught a delivery gap that's been silently
+breaking every profile-driven flag added since v2.10:
+
+> **Root cause: profile-load delivery gap.** The v2.12 retry code is
+> present and the bundled built-in profile carries
+> `malformed_tool_retry = true`, BUT a user with an existing
+> `~/.llmcode/model_profiles/glm-5.1.toml` (copied from the v2.9-era
+> example) merges over `_DEFAULT_PROFILE` — never the bundled
+> built-in — so every field added to the bundled profile in
+> subsequent releases silently drops to the default `False`. The
+> first retry gate evaluates False and the log line cannot fire.
+
+This bug invisibly hobbled v2.10/2.11.0/2.11.1/2.12.0 for every
+existing GLM-5.1 user. The runtime code was correct; the tests
+passed; the bundled profile was correct. But the LOADER never
+consulted the bundled built-in as a merge base for stale user
+profile copies.
+
+### Fix
+
+`llm_code/runtime/model_profile.py::ProfileRegistry._load_user_profiles`
+now falls back to the wheel-bundled built-in
+(`llm_code._builtins.profiles/<key>.toml`) as merge base BEFORE
+applying the user's TOML, when the registry has no hardcoded entry
+for the key:
+
+```python
+base = self._profiles.get(key)
+if base is None:
+    bundled = _load_bundled_profile_base(key)
+    base = bundled if bundled is not None else _DEFAULT_PROFILE
+profile = _profile_from_dict(data, base=base)
+```
+
+Result: a v2.9-era stale local copy of `glm-5.1.toml` automatically
+picks up every field added in v2.10–v2.12 (`compress_old_tool_results`,
+`enable_parallel_tools`, `compile_after_tool_calls`,
+`compile_thinking_budget`, `empty_compile_retry`,
+`malformed_tool_retry`) on next `pip install -U` — no manual
+`llmcode profiles update` required. User explicit overrides still
+win where present.
+
+### Why the v2.10 `llmcode profiles update` CLI didn't prevent this
+
+`llmcode profiles update` requires the user to **run it**. Most
+users won't, especially after a hotfix release where they haven't
+read the changelog. v2.12.1 makes the runtime self-healing for any
+field added to a bundled profile after the user's local copy was
+authored — `pip install -U` is sufficient.
+
+### Regression coverage
+
+`tests/test_runtime/test_profile_inheritance_v2121.py` — 7 new
+tests:
+
+* `_load_bundled_profile_base("glm-5.1")` returns hydrated profile
+  with v2.9.0/v2.11.0/v2.12.0 fields all True
+* Numeric-prefix form (`65-glm-5.1`) resolves identically
+* Unknown key returns None (genuine custom profile path preserved)
+* **Stale local GLM TOML inherits all v2.10–v2.12 fields** (the
+  exact pre-fix bug)
+* User explicit override wins over bundled default
+* Genuine custom profile (no bundled match) falls back to
+  `_DEFAULT_PROFILE` — pre-v2.12.1 byte-parity for that path
+* Missing user dir doesn't break registry init
+
+### Compatibility
+
+* v2.12.0 → v2.12.1 — drop-in; only the loader's merge-base
+  selection changes for keys that have a bundled built-in.
+* Existing user profiles with explicit field values continue to
+  override.
+* Genuine custom profiles (no bundled match) still merge over
+  `_DEFAULT_PROFILE` — no behavior change for that path.
+* Existing profile-loading tests stay green.
+
 ## v2.12.0 — Malformed-tool retry (parser-reject recovery)
 
 Single-mechanism release. Sister to v2.11.0 `empty_compile_retry`,
