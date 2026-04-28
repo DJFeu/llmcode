@@ -516,6 +516,15 @@ def _register_subcommands() -> None:
     except Exception:  # pragma: no cover — defensive
         pass
 
+    # v2.10.0 — ``llmcode profiles list|diff|update``. Manages the
+    # bundled built-in model profiles vs. user copies in
+    # ``~/.llmcode/model_profiles/``.
+    try:
+        from llm_code.cli.profiles_cmd import profiles as profiles_group
+        main.add_command(profiles_group, name="profiles")
+    except Exception:  # pragma: no cover — defensive
+        pass
+
 
 _register_subcommands()
 
