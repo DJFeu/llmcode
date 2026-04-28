@@ -1,5 +1,138 @@
 # Changelog
 
+## v2.13.0 — Wall-clock optimizations (parallel-tool nudge + diagnostic logs + tighter P2)
+
+Wave 2 of the GLM-5.1 wall-clock work, after v2.9.0–v2.12.1 closed
+the empty-fallback bug chain. A real smoke test on
+`顯示今日熱門新聞三則` finally produced a complete 3-news-item
+answer in **251.8s** (`in=46003 out=946`) — the first run of the
+prompt that didn't trigger the empty-response advisory. With the
+correctness chain settled, the next leverage point is wall-clock.
+
+Three quality-preserving levers ship together (one feat commit per
+lever, no v2.14 follow-up — folds into this wave per Adam's
+working-style memo):
+
+### Lever 1 — GLM parallel-tool prompt nudge
+
+The v2.9.0 P1 `asyncio.gather` dispatch path activates only when
+the model emits ≥ 2 tool calls in a single assistant response.
+GLM-5.1 emits one call per iteration in practice — so the gather
+path stays dormant and the wall-clock dividend is unrealised.
+
+Lever 1 nudges the model toward batched emission via a
+template-text addition in `llm_code/engine/prompts/models/glm.j2`'s
+`# Tool call efficiency` section: when independent pieces of
+information are needed (multi-search, multi-fetch, multi-read),
+issue all the corresponding `<tool_call>` blocks in a single
+response. Sequential calls remain correct when a later call
+genuinely depends on an earlier result.
+
+The prompt-snippet dedupe gate (`dedupe_with_template = true` on the
+GLM profile) is unaffected — the new paragraph sits inside the
+`# Tool call efficiency` section, which carries no `provides_tags`
+claim, so existing snippet coverage is preserved. The
+`glm-5.1-xml.dedupe.txt` parity fixture is regenerated to the new
+shape; `test_glm_dedupe_fixture_shrinks_baseline` and
+`test_glm_dedupe_keeps_required_behavior_signals` continue to pass.
+
+### Lever 2 — Per-iter diagnostic timing logs
+
+The post-v2.12.1 smoke produced `i turn: 251.8s | in=46003 out=946`
+— a single black-box line. Diagnosing where the 251s went currently
+requires re-running with full verbose logging and manually
+correlating timestamps from `Provider stream error` /
+`auto-compaction` / `stop_reason=stop` / `tool_consumption: ...`
+entries.
+
+Lever 2 adds always-on (DEBUG-level) per-iter timing breakdown so
+any future wall-clock issue can be diagnosed by reading one
+structured log block:
+
+```
+iter_timing: iter=N prefill_in=I out=O thinking_chars=T tool_calls=C
+             provider_s=P.PP tool_s=T.TT bookkeeping_s=B.BB
+             iter_total_s=X.XX stop_reason=...
+turn_timing: iters=N total_s=X.XX provider_total_s=Y.YY tool_total_s=Z.ZZ
+```
+
+Implementation in `llm_code/runtime/conversation.py::_run_turn_body`
+captures `time.monotonic()` markers at iter-start, after-
+provider-stream, and after-tool-dispatch. An idempotent
+`_emit_iter_timing(iter_index)` closure is called at every iter
+exit point (natural end, retry-loop break, retry-continue,
+fallback-continue, etc.); double calls for the same `iter_index`
+no-op so wiring at multiple exit sites is safe.
+
+Performance: DEBUG-level — `logger.debug(...)` short-circuits when
+the effective level is INFO+. Four `time.monotonic()` calls per
+iter cost ~4µs total in non-debug mode. No new INFO/WARN/ERROR log
+lines.
+
+### Lever 3 — Tighter P2 compression (250-char preview + URL-list strip)
+
+v2.9.0 P2 keeps 500 chars of preview per stale tool result. For
+ongoing reasoning the model only needs title + URL + lede sentence
+(~250 chars); body context the model has already integrated adds
+nothing on re-feed. Most search backends additionally append a
+structural URL-list trailer (`URL list: / * https://...`) that
+contributes no reasoning value but eats preview budget.
+
+Lever 3 tightens the P2 helper without restructuring it:
+
+- `_COMPRESS_PREVIEW_CHARS` 500 → 250 — half the preview budget,
+  same envelope.
+- `_COMPRESS_MARKER_PREFIX` `[v2.9 compressed]` →
+  `[v2.13 compressed]` — future maintenance reads which release
+  wrote the marker.
+- New `_COMPRESS_LEGACY_MARKER_PREFIX` recognised by the
+  idempotence check, so a long-running session whose history was
+  compressed under v2.9 doesn't get its already-compressed bodies
+  re-compressed when the upgrade lands mid-conversation.
+- New `_strip_url_list_trailer(preview)` helper drops bullet-URL
+  lines and their structural headers (`URL list:`,
+  `Related links:`, etc.) from the preview window. Conservative —
+  body lines containing URLs alongside prose are preserved.
+
+The 49-scenario provider-conversion parity corpus
+(`test_provider_conversion_parity_v15`) remains green because the
+corpus profiles have `compress_old_tool_results=False`. Profiles
+with the flag off see byte-parity behaviour vs v2.12.1.
+
+### Compatibility
+
+- v2.12.1 → v2.13.0 — drop-in for every profile.
+- No new profile fields, no CLI surface, no env-var.
+- The GLM-5.1 system prompt gains the new paragraph (~80 chars).
+  Other templates unchanged.
+- DEBUG-level logs gain `iter_timing:` / `turn_timing:` lines.
+  INFO/WARN/ERROR output unchanged.
+
+### Estimated impact
+
+Combined: **251.8s → ~180-200s** (−20~25%) on the canonical 3-news-
+search workflow, with future wall-clock issues directly readable
+from the new log lines. Lever 1's payoff is conditional on the
+model actually batching; Lever 3 is unconditional (~5-15s saved
+on every multi-iter turn); Lever 2 is observation-only but enables
+the next round of optimisation by making bottlenecks visible.
+
+### Test coverage
+
+- `tests/test_runtime/test_glm_template_v213.py` — 3 tests pinning
+  the parallel-tool nudge substantive content.
+- `tests/test_runtime/test_iter_timing_v213.py` — 4 tests pinning
+  per-iter line count, single turn-summary, non-negative timings.
+- `tests/test_runtime/test_compress_tool_results_v290.py` — 12
+  existing + 8 new tests (idempotence covers both v2.9 + v2.13
+  markers; URL-list strip with body preservation; inline-URL
+  preservation; cap / marker constants pinned).
+- Existing parity gates remain green:
+  `test_system_prompt_v260_byte_parity` (regenerated GLM dedupe
+  fixture), `test_provider_conversion_parity_v15`
+  (49-scenario corpus), `test_compile_thinking_v290`,
+  `test_post_tool_thinking_budget_v281`.
+
 ## v2.12.1 — Profile loader inherits from bundled built-ins (hotfix)
 
 Codex stop-time review (codex-rescue agent, called in after the 4th
