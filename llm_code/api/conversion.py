@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal
@@ -471,20 +472,94 @@ def _split_bundled_tool_results(
     return tuple(expanded)
 
 
-# ── v2.9.0 P2 — tool-result compression on re-feed ───────────────────
+# ── v2.9.0 P2 / v2.13.0 Lever 3 — tool-result compression on re-feed ─
 
 
 # Hard cap on the per-result preview length retained in the truncated
-# marker. 500 chars is enough to keep title/url + a 2-3 sentence
-# excerpt for every common tool (web_search, web_fetch, research),
-# which is what downstream re-feeds need to cite. Anything longer is
-# already in session history if the model wants the full payload.
-_COMPRESS_PREVIEW_CHARS: int = 500
+# marker. v2.9.0 used 500; v2.13.0 Lever 3 tightens to 250 because
+# ongoing reasoning over stale tool_results only needs title / URL /
+# lede sentence — body context the model has already integrated adds
+# nothing on re-feed. The full body is always still in session history
+# if the model wants it; the trailing batch (most recent tool results
+# this turn) stays full so current reasoning has complete data.
+_COMPRESS_PREVIEW_CHARS: int = 250
 
 # Marker placed in front of every compressed payload so users (and
-# tests) can grep for the v2.9 lever in the wire dump. Includes the
-# version tag for forward-compat traceability.
-_COMPRESS_MARKER_PREFIX: str = "[v2.9 compressed]"
+# tests) can grep for the lever in the wire dump. v2.13.0 bumps the
+# tag from ``[v2.9 compressed]`` so future maintenance reads which
+# release wrote the marker; the LEGACY tag (below) is still honoured
+# in the idempotence check so a long-running session that started on
+# v2.9 doesn't get its already-compressed bodies re-compressed when
+# the upgrade lands mid-conversation.
+_COMPRESS_MARKER_PREFIX: str = "[v2.13 compressed]"
+_COMPRESS_LEGACY_MARKER_PREFIX: str = "[v2.9 compressed]"
+
+
+# v2.13.0 Lever 3 — URL-list trailer strip. Many search backends
+# append a structural trailer like::
+#
+#     URL list:
+#     * https://example.com/news/1
+#     * https://example.com/news/2
+#
+# These lines have no reasoning value once the body has been
+# integrated. Strip them from the preview window so the 250-char cap
+# is spent on body content, not structural padding. Conservative —
+# only matches lines whose ENTIRE content past optional bullet
+# whitespace is a URL or a markdown link (`[text](url)`).
+_URL_LIST_LINE_RE = re.compile(
+    r"^\s*(?:[*\-]\s+)?"
+    r"(?:URL:\s+)?"
+    r"(?:https?://\S+|\[[^\]]+\]\(https?://[^)]+\))"
+    r"\s*$",
+)
+# Header lines that signal a following URL-list block. Stripped
+# verbatim when present (case-insensitive); ``set`` lookup is O(1).
+_URL_LIST_HEADERS = frozenset({
+    "url list:",
+    "urls:",
+    "related links:",
+    "links:",
+    "sources:",
+})
+
+
+def _strip_url_list_trailer(preview: str) -> str:
+    """Remove URL-list trailer lines from a compressed preview window.
+
+    Filters lines whose entire content is a bare URL / markdown link
+    (matched by :data:`_URL_LIST_LINE_RE`) and the structural header
+    lines that introduce them (``URL list:``, ``Related links:``,
+    etc.). Body lines containing URLs alongside prose
+    (e.g. ``"see also https://..."``) are preserved.
+
+    The strip is conservative — if filtering would empty the preview
+    entirely (rare; payload was a pure URL list with no body), the
+    original preview is returned so the model still has the URLs to
+    recall what was fetched.
+    """
+    lines = preview.splitlines()
+    filtered: list[str] = []
+    saw_body = False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            filtered.append(line)
+            continue
+        if stripped.lower() in _URL_LIST_HEADERS:
+            # Drop the header — we don't peek at the next line
+            # because the trailer lines (if any) are dropped by the
+            # URL match below regardless.
+            continue
+        if _URL_LIST_LINE_RE.match(line):
+            continue
+        filtered.append(line)
+        saw_body = True
+    if not saw_body:
+        # Preview was a pure URL list; preserve the original so the
+        # model still sees the URLs.
+        return preview
+    return "\n".join(filtered)
 
 
 def _looks_like_tool_result_message(msg: Message) -> bool:
@@ -514,14 +589,28 @@ def _truncate_tool_result_payload(content: object) -> str:
     Anthropic wraps it in a ``{"type": "text", "text": ...}`` block
     via :func:`_anthropic_block_to_dict`.
 
-    Idempotence — bodies that already begin with the v2.9 marker
-    prefix are returned verbatim. The compression step is wired into
-    every outbound serialization, so a profile that compresses on
-    iteration 1 must not double-truncate on iteration 2.
+    Idempotence — bodies that already begin with the v2.13 marker
+    prefix OR the legacy v2.9 marker prefix are returned verbatim.
+    The compression step is wired into every outbound serialization,
+    so a profile that compresses on iteration 1 must not double-
+    truncate on iteration 2; the v2.9 marker is still recognised so
+    a long-running session that started on v2.9 doesn't get its
+    already-compressed bodies re-compressed on upgrade.
+
+    v2.13.0 Lever 3 — preview window goes through
+    :func:`_strip_url_list_trailer` before being placed in the
+    marker. URL-list trailers (``* https://...``, ``URL: http...``)
+    that some search backends append are removed because they
+    contribute no reasoning value on re-feed; the 250-char cap is
+    spent on body content instead.
     """
     body = serialize_tool_result(content)
-    if body.startswith(_COMPRESS_MARKER_PREFIX):
-        # Already compressed — leave it alone (idempotence).
+    if (
+        body.startswith(_COMPRESS_MARKER_PREFIX)
+        or body.startswith(_COMPRESS_LEGACY_MARKER_PREFIX)
+    ):
+        # Already compressed (current or v2.9 legacy) — leave alone
+        # (idempotence + backwards-compat).
         return body
     preview = body[:_COMPRESS_PREVIEW_CHARS]
     truncated_chars = max(len(body) - _COMPRESS_PREVIEW_CHARS, 0)
@@ -529,6 +618,7 @@ def _truncate_tool_result_payload(content: object) -> str:
         # Nothing to compress — keep the original body so the wire
         # payload is identical to the un-compressed path.
         return body
+    preview = _strip_url_list_trailer(preview)
     return (
         f"{_COMPRESS_MARKER_PREFIX} preview ({_COMPRESS_PREVIEW_CHARS} chars "
         f"of {len(body)}):\n"

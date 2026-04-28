@@ -1,20 +1,30 @@
-"""v2.9.0 P2 — tool-result compression on re-feed tests.
+"""v2.9.0 P2 / v2.13.0 Lever 3 — tool-result compression tests.
 
 Each LLM iteration on slow local models (GLM via llama.cpp, Qwen via
 vLLM) re-prefills the entire conversation history. After 3 web_search
 calls the prefill includes ~40k tokens of stale tool payloads even
-though the model only needs the *most recent* batch. P2 replaces
-older tool_results with truncated markers; the trailing batch stays
-intact so the current iteration's reasoning still has full data.
+though the model only needs the *most recent* batch. P2 (v2.9.0)
+replaces older tool_results with truncated markers; the trailing
+batch stays intact so the current iteration's reasoning still has
+full data. v2.13.0 Lever 3 tightens the preview cap (500 → 250
+chars), bumps the marker prefix to ``[v2.13 compressed]`` while
+still recognising the legacy ``[v2.9 compressed]`` marker for
+backwards compatibility, and strips URL-list trailers from the
+preview window.
 
 These tests pin down:
 
-* Compression preserves the first 500 chars of each old payload
-  prefixed with ``[v2.9 compressed]``.
+* Compression preserves the first ``_COMPRESS_PREVIEW_CHARS`` chars
+  of each old payload prefixed with the current marker tag.
 * The most-recent contiguous tool_result batch is NOT compressed.
 * Non-tool-result messages (assistant text, user prompts) are
   passed through verbatim.
 * Compression is idempotent — running it twice doesn't double-truncate.
+* The legacy v2.9 marker is also recognised by the idempotence
+  check (backwards compat for long-running sessions that started
+  on v2.9 and upgrade mid-conversation).
+* URL-list trailers (``URL list: / * https://...``) are stripped
+  from the preview window so the cap is spent on body content.
 * When the profile flag is off, the conversion path is byte-parity
   with v2.8.1 (no compression applied).
 * The profile schema round-trips ``compress_old_tool_results``
@@ -23,6 +33,7 @@ These tests pin down:
 from __future__ import annotations
 
 from llm_code.api.conversion import (
+    _COMPRESS_LEGACY_MARKER_PREFIX,
     _COMPRESS_MARKER_PREFIX,
     _COMPRESS_PREVIEW_CHARS,
     compress_old_tool_results,
@@ -95,8 +106,12 @@ class TestCompressionMarker:
         # Suppress unused warning from the diagnostic block above.
         del compressed_history
 
-    def test_preview_keeps_first_500_chars(self) -> None:
-        """The 500-char preview window is exactly that — no shorter."""
+    def test_preview_keeps_first_n_chars(self) -> None:
+        """The preview window is exactly ``_COMPRESS_PREVIEW_CHARS``
+        wide — no shorter. v2.9.0 used 500; v2.13.0 Lever 3 tightens
+        to 250. The test is parameterised on the constant so future
+        cap changes don't require a rewrite.
+        """
         long_payload = "A" * 600 + "B" * 600  # 1200 chars
         old = _tool_result_msg("t1", long_payload)
         brk = _assistant_with_tool_use("t2")
@@ -244,3 +259,155 @@ class TestFlagOffByteParity:
         # even when profile is irrelevant.
         out = compress_old_tool_results(history)
         assert out == history
+
+
+# ── v2.13.0 Lever 3 — backwards-compat for v2.9 marker ───────────────
+
+
+class TestBackwardsCompatV29Marker:
+    """v2.13's idempotence check still recognises the v2.9 marker.
+
+    A long-running session whose history was compressed under v2.9
+    must NOT have its already-compressed bodies re-compressed when
+    the user upgrades to v2.13 mid-conversation. Re-compression
+    would produce a v2.13 marker wrapping a v2.9 marker — visually
+    confusing for log scrapers + wastes the wire payload on
+    duplicate marker text.
+    """
+
+    def test_v29_marker_recognised_by_idempotence_check(self) -> None:
+        v29_compressed_body = (
+            f"{_COMPRESS_LEGACY_MARKER_PREFIX} preview "
+            f"(500 chars of 1000):\n"
+            f"some preview content...\n"
+            f"[full content omitted ...]"
+        )
+        old = _tool_result_msg("t0", v29_compressed_body)
+        brk = _assistant_with_tool_use("t1")
+        new = _tool_result_msg("t1", "fresh")
+        out = compress_old_tool_results((old, brk, new))
+        # The v2.9-format body should be preserved verbatim — no
+        # re-compression under the v2.13 marker.
+        assert out[0].content[0].content == v29_compressed_body
+
+    def test_v213_marker_short_circuits_too(self) -> None:
+        """v2.13 markers are also recognised (forward-compat against
+        a future v2.14 marker bump that should preserve v2.13 too).
+        """
+        v213_compressed_body = (
+            f"{_COMPRESS_MARKER_PREFIX} preview "
+            f"({_COMPRESS_PREVIEW_CHARS} chars of 1000):\n"
+            f"preview...\n"
+            f"[full content omitted ...]"
+        )
+        old = _tool_result_msg("t0", v213_compressed_body)
+        brk = _assistant_with_tool_use("t1")
+        new = _tool_result_msg("t1", "fresh")
+        out = compress_old_tool_results((old, brk, new))
+        assert out[0].content[0].content == v213_compressed_body
+
+
+# ── v2.13.0 Lever 3 — URL-list trailer strip ────────────────────────
+
+
+class TestUrlListStrip:
+    """v2.13 strips structural URL-list trailers from the preview.
+
+    Many search backends append a trailer of the form::
+
+        URL list:
+        * https://example.com/news/1
+        * https://example.com/news/2
+
+    These lines have no reasoning value once the body has been
+    integrated. Stripping them spends the (now smaller) preview cap
+    on body content. Conservative — body lines containing URLs
+    alongside prose are preserved.
+    """
+
+    def test_url_list_trailer_removed_from_preview(self) -> None:
+        # Build a payload whose first ~250 chars contain headlines
+        # AND a URL-list trailer; pad past the cap with more body so
+        # compression actually fires.
+        body = (
+            "Top news today\n"
+            "1. Story A. First sentence about the news item.\n"
+            "2. Story B. Another sentence describing the event.\n"
+            "URL list:\n"
+            "* https://example.com/news/1\n"
+            "* https://example.com/news/2\n"
+        )
+        # Pad past _COMPRESS_PREVIEW_CHARS so compression actually
+        # runs (idempotence path returns early when body fits).
+        full_body = body + ("padding " * 200)
+        old = _tool_result_msg("t0", full_body)
+        brk = _assistant_with_tool_use("t1")
+        new = _tool_result_msg("t1", "fresh")
+        out = compress_old_tool_results((old, brk, new))
+        compressed = out[0].content[0].content
+        # The marker should be present.
+        assert compressed.startswith(_COMPRESS_MARKER_PREFIX)
+        # Body content survives.
+        assert "Top news today" in compressed
+        # URL-list lines are stripped from the preview.
+        assert "* https://example.com/news/1" not in compressed
+        assert "* https://example.com/news/2" not in compressed
+        # The "URL list:" header line is also dropped.
+        assert "URL list:" not in compressed
+
+    def test_inline_urls_preserved(self) -> None:
+        """Body lines that mention URLs alongside prose stay intact —
+        only entire-line URL bullets get stripped.
+        """
+        body = (
+            "Article body — see https://example.com for the source.\n"
+            "More body text continuing the explanation.\n"
+        )
+        full_body = body + ("padding " * 200)
+        old = _tool_result_msg("t0", full_body)
+        brk = _assistant_with_tool_use("t1")
+        new = _tool_result_msg("t1", "fresh")
+        out = compress_old_tool_results((old, brk, new))
+        compressed = out[0].content[0].content
+        # Inline URL is preserved (it's in a body line with prose).
+        assert "see https://example.com" in compressed
+
+    def test_pure_url_list_payload_marker_still_emitted(self) -> None:
+        """If the payload is dominated by URLs (no body prose), the
+        compressor still emits the marker — this is the defensive
+        path. The exact preview content depends on whether the last
+        line in the truncated window is a complete URL match or a
+        partial fragment; we assert only that the structural marker
+        envelope is intact.
+        """
+        body = (
+            "* https://example.com/a\n"
+            "* https://example.com/b\n"
+            "* https://example.com/c\n"
+        )
+        full_body = body + ("* https://example.com/d\n" * 100)
+        old = _tool_result_msg("t0", full_body)
+        brk = _assistant_with_tool_use("t1")
+        new = _tool_result_msg("t1", "fresh")
+        out = compress_old_tool_results((old, brk, new))
+        compressed = out[0].content[0].content
+        assert compressed.startswith(_COMPRESS_MARKER_PREFIX)
+        assert "[full content omitted" in compressed
+
+
+# ── v2.13.0 Lever 3 — preview cap shape ──────────────────────────────
+
+
+class TestV213PreviewCap:
+    """The v2.13 preview cap is exactly 250 chars — no looser, no
+    tighter. Pinned as a constant so a future tune still passes.
+    """
+
+    def test_compress_preview_chars_is_250(self) -> None:
+        assert _COMPRESS_PREVIEW_CHARS == 250
+
+    def test_marker_prefix_is_v213(self) -> None:
+        assert _COMPRESS_MARKER_PREFIX == "[v2.13 compressed]"
+
+    def test_legacy_marker_prefix_is_v29(self) -> None:
+        assert _COMPRESS_LEGACY_MARKER_PREFIX == "[v2.9 compressed]"
