@@ -1,5 +1,192 @@
 # Changelog
 
+## v2.12.0 — Malformed-tool retry (parser-reject recovery)
+
+Single-mechanism release. Sister to v2.11.0 `empty_compile_retry`,
+targeting a **different** failure mode that v2.11.1's parser hotfix
+exposed. Fourth in the debugging chain on the DJFeu GLM-5.1 smoke test
+(`查詢/顯示今日熱門新聞三則`):
+
+* **v2.9.x** — wall-clock optimization (P1/P2/P3): 218s → 150s, 41k →
+  11k tokens prefill.
+* **v2.10.0** — bundle profiles into wheel.
+* **v2.11.0** — `empty_compile_retry` for iter > 0 silent-compile bug.
+* **v2.11.1** — parser reserved-names hotfix (Harmony envelope child
+  tags).
+* **v2.12.0** — `malformed_tool_retry` for the iter-0 parser-reject
+  bug that v2.11.1's hotfix surfaced.
+
+After v2.11.1 the parser correctly **rejects** the malformed
+`<tool_call>NAME<arg_key>{...JSON...}</arg_key></tool_call>` shape
+(args JSON crammed into `<arg_key>` instead of split into
+`<arg_key>K</arg_key><arg_value>V</arg_value>` pairs). New verbose log
+on the same prompt:
+
+```
+02:06:01 Starting turn: 顯示今日熱門新聞三則
+02:06:09 Turn complete: 11204 input tokens, 54 output tokens
+02:06:09 [WARNING] empty response fallback: out_tokens=54 thinking_len=0
+                  saw_tool_call=True assistant_added=False stop_reason=stop
+02:06:09 turn complete: out_tokens=54 thinking_len=0 assistant_added=False
+                  saw_tool_call=...
+```
+
+The fourth-layer bug: parser rejection on iter 0 leaves the agent loop
+with nothing to dispatch. `parsed_calls` is empty → no tool runs → turn
+ends with `stop_reason=stop` → empty-response advisory fires → user sees
+no answer. v2.11's `empty_compile_retry` does NOT fire here by design
+(it requires `iteration > 0` AND `tool_calls_this_turn >= 1`); this is
+a sibling failure mode that needs its own retry.
+
+### What ships
+
+- **`malformed_tool_retry` profile flag** (default `False`) — opt-in in
+  the `[tool_consumption]` TOML section. Sister mechanism to v2.11
+  `empty_compile_retry`; structurally identical plumbing (same call
+  site, same `_buffered_text_events.clear()` defensive call, same
+  `<system-reminder>` injection + `continue` shape, same 1-retry cap).
+  Cloud / Anthropic / native-tools profiles keep v2.11.1 byte-parity.
+- **`malformed_tool_retry_message`** — the reminder body, exposed for
+  localised profiles. Empty string falls back to a canned default that
+  embeds the canonical `<arg_key>K</arg_key><arg_value>V</arg_value>`
+  example envelope.
+- **GLM-5.1 opt-in** — both `examples/model_profiles/65-glm-5.1.toml`
+  and `llm_code/_builtins/profiles/65-glm-5.1.toml` ship the flag
+  enabled. Run `llmcode profiles update glm-5.1` after upgrade to
+  refresh the user copy.
+
+### Detection
+
+Inside `runtime/conversation.py`, after the v2.11 `empty_compile_retry`
+block (and its persistent-empty diagnostic), the agent loop fires the
+v2.12 retry when ALL of these hold:
+
+1. `_iteration == 0` (decision iter, explicitly different from v2.11's
+   `_iteration > 0`)
+2. Model attempted a tool call: `"<tool_call>" in response_text`
+3. Parser rejected: `parsed_calls` empty AND `native_tool_list` empty
+4. No substantive non-tool text:
+   `_TOOL_CALL_BLOCK_RE.sub("", response_text).strip() == ""` —
+   stripping `<tool_call>...</tool_call>` blocks leaves nothing
+5. `stop_event.usage.output_tokens > 0` (true zero-byte responses are
+   a different failure class — provider-level)
+6. `stop_event.stop_reason in ("stop", "end_turn")` — natural stop, not
+   `tool_use` mid-loop
+7. Profile flag `malformed_tool_retry = True`
+8. Retry not yet used this turn (`_malformed_tool_retry_count < 1`)
+
+Conditions 1 + 8 make v2.11 and v2.12 mutually exclusive at the trigger
+gate — both flags can be on simultaneously (GLM has both after this
+release) without conflict.
+
+### Retry message
+
+Specific and actionable — vs v2.11's "compile your final answer". GLM
+struggles specifically with the `<arg_key>` / `<arg_value>` split, so
+the example is critical:
+
+```xml
+<system-reminder>
+Your previous response contained a tool call that the parser could not
+extract — the format was likely malformed. Please try again, using
+EXACTLY this shape:
+
+<tool_call>
+TOOL_NAME
+<arg_key>arg_one</arg_key>
+<arg_value>value_one</arg_value>
+<arg_key>arg_two</arg_key>
+<arg_value>value_two</arg_value>
+</tool_call>
+
+The tool name goes on its own line (no XML tag around it). Each
+argument needs a separate <arg_key>K</arg_key><arg_value>V</arg_value>
+pair. Do NOT place JSON or values directly inside the
+<arg_key></arg_key> tag.
+</system-reminder>
+```
+
+### Streaming UX
+
+Buffering hooks into the existing v14 mech-C `_buffered_text_events`
+list — the gate is now `retry_on_denial OR malformed_tool_retry` so the
+malformed wrapper text never leaks to the renderer when the retry
+trigger fires. Profiles with neither flag keep v2.11.1 buffer behaviour
+exactly. The renderer's `stream_parser` already classifies a rejected
+`<tool_call>` block as a hidden TOOL_CALL event so even unbuffered
+profiles never display the wrapper directly.
+
+### Cap and graceful degradation
+
+Cap is hard 1 per turn. If the second attempt also produces a
+malformed wrapper, the runtime logs `tool_consumption:
+malformed_tool_retry_failed malformed_persisted_after_retry` and falls
+through to the existing empty-response advisory in
+`view/stream_renderer.py:347` — the user still sees an explanation for
+the silence rather than a hung turn.
+
+### Telemetry
+
+Mirrors v2.11 / v14 mech-C shape — structured `logger.warning(...)`
+lines:
+
+- `tool_consumption: malformed_tool_retry iter=I retry_count=N
+  tool_calls_this_turn=T stop_reason=R out_tokens=O` — fires once per
+  retry trigger.
+- `tool_consumption: malformed_tool_retry_failed
+  malformed_persisted_after_retry tool_calls_this_turn=T` — fires when
+  the retried call also produced a malformed wrapper.
+
+Observe via the `llmcode.tool_consumption.malformed_tool_retries_total`
+counter (same convention as `denial_retries_total` and
+`empty_compile_retries_total` even though the current implementation is
+structured logs, not Prometheus).
+
+### Tests
+
+20 new cases in `tests/test_runtime/test_malformed_tool_retry_v212.py`
+covering: trigger fires when all 8 gates hold (incl. both `stop` and
+`end_turn` reasons), every gate exercised in isolation (iter > 0,
+parsed_calls non-empty, assistant text alongside, no `<tool_call>`
+marker, `stop_reason="tool_use"`, `out_tokens=0`), 1-retry cap,
+persistent-malformed diagnostic log, retry-then-text path
+(no advisory), profile-flag-off byte parity, no-log on disabled
+profile, retry-path log shape, default reminder XML well-formedness,
+canonical example presence, empty-message-falls-back-to-default,
+explicit-message-overrides, and v2.11/v2.12 mutual exclusivity (no
+double-fire when both flags on).
+
+Parity gates (`test_system_prompt_v260_byte_parity.py`,
+`test_post_tool_thinking_budget_v281.py`,
+`test_compile_thinking_v290.py`, `test_empty_compile_retry_v211.py`,
+`test_parsing.py`, `test_denial_retry_loop.py`) all green.
+
+### Out of scope
+
+- Merging `malformed_tool_retry` and `empty_compile_retry` into a single
+  config knob — they're sibling mechanisms with distinct triggers and
+  messages; keep them separate so a future failure mode that needs ONLY
+  one of them can be controlled independently.
+- Default-on for non-`reasoning_content` profiles. Only GLM opts in for
+  v2.12. Anthropic / OpenAI / native-tools profiles need separate
+  evaluation — their parser surface is different.
+- Lifting the 1-retry cap. Multiple retries on a still-broken model is
+  multiplicative wall-clock waste.
+- Touching the parser layer (`llm_code/tools/parsing.py`). v2.11.1
+  already fixed reserved-names; further parser leniency is a different
+  lever class (was option B in the original lever menu — explicitly
+  NOT chosen for v2.12).
+- Changing the empty-response advisory text in `stream_renderer.py:347`
+  — it still fires when retry fails, and its existing wording is fine
+  for that fallback case.
+
+### Codex review caveat
+
+If a downstream codex review run reports breakage, also run the spec
+§ Sanity gate fresh-venv smoke yourself; the last three sessions saw
+codex test stale installs and surface false positives. The fresh-venv
+smoke is the source of truth for "does this wheel work".
+
 ## v2.11.1 — Parser reserved-names hotfix (Harmony envelope child tags)
 
 A real GLM-5.1 smoke test on `查詢今日熱門新聞三則` finished in **80.9s
