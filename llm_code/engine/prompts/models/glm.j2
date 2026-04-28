@@ -83,6 +83,8 @@ Before editing, read the file. Mimic existing style, naming, and patterns. NEVER
 - Prefer dedicated tools (`read_file`, `grep_search`, `glob_search`) over `bash` (`cat`, `grep`, `find`, `ls`)
 - Reserve `bash` for actual shell work (git, builds, tests, scripts)
 
+When you need multiple INDEPENDENT pieces of information — for example, several search queries with different terms, or several URL fetches, or several files to read — issue ALL the corresponding `<tool_call>` blocks in a single response. They will be dispatched concurrently and the wall-clock cost is N-1 round-trips lower than calling them one-by-one. Sequential calls are only correct when a later call genuinely depends on an earlier call's output.
+
 # Common GLM mistakes — avoid these
 
 - Prefixing the final answer with English meta-narration ("The user is asking for X. I don't have access to Y. Let me be honest…") — that text belongs in `reasoning_content`, not in the answer the user reads
