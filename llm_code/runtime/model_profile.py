@@ -196,6 +196,49 @@ class ModelProfile:
         "</system-reminder>"
     )
 
+    # ── v2.12.0 — malformed-tool-call retry ──────────────────────────
+    # Sister mechanism to ``empty_compile_retry`` above (v2.11.0). The
+    # v2.11.1 parser hotfix correctly **rejects** envelope shapes that
+    # cram args JSON into ``<arg_key>`` instead of the proper
+    # ``<arg_key>K</arg_key><arg_value>V</arg_value>`` pair shape — but
+    # rejection on iter 0 leaves the agent loop with nothing to
+    # dispatch and no text to render: the model emits only the
+    # malformed wrapper and the turn ends with the renderer's empty-
+    # response advisory. Canonical reproducer: GLM-5.1 on llama.cpp,
+    # smoke-tested on the prompt ``查詢/顯示今日熱門新聞三則`` post
+    # v2.11.1, observed verbose log ``out_tokens=54 thinking_len=0
+    # saw_tool_call=True assistant_added=False stop_reason=stop``.
+    #
+    # When ``malformed_tool_retry`` is on, the agent loop injects a
+    # specific format-correction ``<system-reminder>`` (with the
+    # canonical ``<tool_call>NAME ... <arg_key>K</arg_key>
+    # <arg_value>V</arg_value> ...</tool_call>`` example) and re-invokes
+    # the provider once. Capped at 1 retry per turn — persistent
+    # malformed output falls through to the existing empty-response
+    # advisory. Triggers ONLY on iter 0 where ``empty_compile_retry``
+    # is explicitly exempt; the two flags are mutually exclusive in
+    # practice (``empty_compile_retry`` requires ``iteration > 0`` AND
+    # ``tool_calls_this_turn >= 1``; ``malformed_tool_retry`` requires
+    # ``iteration == 0`` AND ``tool_calls_this_turn == 0``).
+    #
+    # Default off globally; opt in per-profile for models that
+    # exhibit the malformed-envelope pattern (canonical: GLM-5.1 on
+    # llama.cpp). Cloud / Anthropic / native-tools profiles keep
+    # v2.11.1 byte-parity.
+    #
+    # ``malformed_tool_retry_message`` carries the reminder body; an
+    # empty string falls back to the canned default below so localized
+    # profiles can override the wording without hard-coding the entire
+    # example envelope.
+    #
+    # TOML authoring (matches the existing flat-section convention):
+    #
+    #     [tool_consumption]
+    #     malformed_tool_retry = true
+    #     # malformed_tool_retry_message = "..."   # optional override
+    malformed_tool_retry: bool = False
+    malformed_tool_retry_message: str = ""  # empty = use canned default
+
     # ── v15 — borrow from free-claude-code ───────────────────────────
     # Three optional capability flags ported from
     # ``Alishahryar1/free-claude-code`` (the Claude Code → any-LLM proxy
@@ -829,6 +872,11 @@ def _profile_from_dict(data: dict[str, Any], base: ModelProfile | None = None) -
             # convention as ``retry_on_denial``.
             "empty_compile_retry",
             "empty_compile_retry_message",
+            # v2.12.0 — malformed-tool-call retry mechanism. Sister to
+            # ``empty_compile_retry`` above; structurally identical
+            # plumbing with iter-0 / parser-rejection trigger gates.
+            "malformed_tool_retry",
+            "malformed_tool_retry_message",
         ),
         # v2.9.0 P1 — parallel tool dispatch lever lives in its own
         # section so opting in / out doesn't require touching the

@@ -185,6 +185,25 @@ retry_on_denial = true
 # llmcode.tool_consumption.empty_compile_retries_total counter.
 empty_compile_retry = true
 
+# v2.12.0 — malformed-tool-call retry. Sister to empty_compile_retry
+# (different failure mode, structurally identical plumbing). After
+# v2.11.1's parser hotfix correctly rejects GLM-5.1's malformed
+# <tool_call>NAME<arg_key>{...JSON...}</arg_key></tool_call> shape,
+# iter 0 ends with the agent loop holding 0 parsed calls + the
+# malformed wrapper text only — verbose log shape:
+# ``out_tokens=54 thinking_len=0 saw_tool_call=True
+# assistant_added=False stop_reason=stop``. Without v2.12 the user
+# sees only the renderer's empty-response advisory.
+#
+# When iter 0 ends with a parser-rejected tool_call wrapper and no
+# substantive text outside it, inject a format-correction
+# <system-reminder> (canonical
+# <arg_key>K</arg_key><arg_value>V</arg_value> example) and retry
+# once. Cap 1/turn. Falls through to the empty-response advisory
+# on persistent failure. Observe via the
+# llmcode.tool_consumption.malformed_tool_retries_total counter.
+malformed_tool_retry = true
+
 # v2.9.0 P2 — replace older tool_result payloads with a 500-char
 # preview + structured marker on iter N+1 prefill. The trailing
 # (most recent) batch of tool results stays full so the model still

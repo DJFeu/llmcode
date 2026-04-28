@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import dataclasses
 import json
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -347,6 +348,46 @@ _MAX_INLINE_RESULT = 2000
 # Fallback used when neither provider nor config exposes a context limit and
 # the runtime has not yet detected one from an API response.
 _DEFAULT_MAX_INPUT_TOKENS = 200_000
+
+
+# v2.12.0 — canonical reminder for the malformed-tool-call retry. Lives
+# at module scope (not on ``ModelProfile``) because the body is a
+# multi-line example envelope that profiles rarely need to override; the
+# profile field defaults to an empty string and falls back to this
+# constant. Matches the spec wording exactly so the model gets a
+# specific, actionable nudge ("place args as <arg_key>K</arg_key>
+# <arg_value>V</arg_value> pairs, NOT JSON inside <arg_key>"). The
+# ``<tool_call>`` example below is intentionally well-formed XML so
+# parsers / strict templates don't choke on it.
+_DEFAULT_MALFORMED_TOOL_RETRY_REMINDER = (
+    "<system-reminder>\n"
+    "Your previous response contained a tool call that the parser "
+    "could not extract — the format was likely malformed. Please try "
+    "again, using EXACTLY this shape:\n"
+    "\n"
+    "<tool_call>\n"
+    "TOOL_NAME\n"
+    "<arg_key>arg_one</arg_key>\n"
+    "<arg_value>value_one</arg_value>\n"
+    "<arg_key>arg_two</arg_key>\n"
+    "<arg_value>value_two</arg_value>\n"
+    "</tool_call>\n"
+    "\n"
+    "The tool name goes on its own line (no XML tag around it). "
+    "Each argument needs a separate "
+    "<arg_key>K</arg_key><arg_value>V</arg_value> pair. Do NOT "
+    "place JSON or values directly inside the "
+    "<arg_key></arg_key> tag.\n"
+    "</system-reminder>"
+)
+
+
+# v2.12.0 — pre-compiled regex used to strip ``<tool_call>...</tool_call>``
+# blocks from ``response_text`` so we can decide whether the model
+# emitted any substantive non-tool-call text alongside a (rejected)
+# tool call attempt. Non-greedy so chained envelopes are stripped one
+# block at a time; ``re.DOTALL`` so multi-line bodies are matched.
+_TOOL_CALL_BLOCK_RE = re.compile(r"<tool_call\b[^>]*>.*?</tool_call>", re.DOTALL)
 
 
 def _record_token_usage(
@@ -1123,6 +1164,22 @@ class ConversationRuntime:
         # so a stuck provider state cannot loop indefinitely.
         _empty_compile_retry_count = 0
 
+        # v2.12.0 — malformed-tool-call retry state. Sister mechanism
+        # to ``empty_compile_retry`` above. Triggered when iter 0 ends
+        # with the model having attempted a tool call (``<tool_call>``
+        # markers in response text) but the parser rejected it (no
+        # parsed_calls, no native tools), AND no substantive non-tool
+        # text was emitted. v2.11.1's parser hotfix surfaces this
+        # failure mode: rejection at iter 0 leaves the agent loop with
+        # nothing to dispatch and silence to render. Capped at 1 retry
+        # per turn — same shape as ``_empty_compile_retry_count`` so
+        # the two mechanisms coexist without conflict (their gates are
+        # mutually exclusive: empty-compile requires
+        # ``iteration > 0`` AND ``tool_calls_this_turn >= 1``, while
+        # malformed-tool requires ``iteration == 0`` AND
+        # ``tool_calls_this_turn == 0``).
+        _malformed_tool_retry_count = 0
+
         # v2.9.0 P3 — count distinct tool dispatches across this turn
         # so ``build_thinking_extra_body`` can apply the "final compile"
         # heuristic when the model has issued ``profile.compile_after_tool_calls``
@@ -1650,11 +1707,19 @@ class ConversationRuntime:
             try:
                 async for event in stream:
                     # Yield streaming events to caller — except text
-                    # deltas when retry_on_denial is active. Buffered
-                    # text gets flushed at the end of the iteration
-                    # (turn ends without retry) or discarded on retry.
+                    # deltas when ``retry_on_denial`` (v14 mech-C) or
+                    # ``malformed_tool_retry`` (v2.12.0) is active.
+                    # Buffered text gets flushed at the end of the
+                    # iteration (turn ends without retry) or discarded
+                    # on retry. v2.12 piggybacks on the same buffer so
+                    # the malformed ``<tool_call>...</tool_call>``
+                    # wrapper text never leaks to the renderer when the
+                    # retry trigger fires.
                     if (
-                        self._model_profile.retry_on_denial
+                        (
+                            self._model_profile.retry_on_denial
+                            or self._model_profile.malformed_tool_retry
+                        )
                         and isinstance(event, StreamTextDelta)
                     ):
                         _buffered_text_events.append(event)
@@ -2175,6 +2240,115 @@ class ConversationRuntime:
                     logger.warning(
                         "tool_consumption: empty_compile_retry_failed "
                         "empty_persisted_after_retry tool_calls=%d",
+                        _tool_calls_this_turn,
+                    )
+
+                # v2.12.0 — malformed-tool-call retry. Sister
+                # mechanism to ``empty_compile_retry`` above and the
+                # v14 denial retry. Fires on iter 0 when the model
+                # emitted a ``<tool_call>...</tool_call>`` wrapper
+                # that ``parse_tool_calls`` rejected (no parsed_calls,
+                # no native_tool_list) AND the residual text outside
+                # the wrapper is empty — the spec's "saw_tool_call=
+                # True, assistant_added=False, stop_reason=stop"
+                # shape. Canonical reproducer: GLM-5.1 emits
+                # ``<tool_call>NAME<arg_key>{...JSON...}</arg_key>
+                # </tool_call>`` with args JSON crammed into
+                # ``<arg_key>`` instead of split into
+                # ``<arg_key>K</arg_key><arg_value>V</arg_value>``
+                # pairs; v2.11.1's parser hotfix correctly rejects
+                # this, but rejection on iter 0 leaves the agent loop
+                # with nothing to dispatch — without v2.12 the user
+                # sees only the renderer's empty-response advisory.
+                #
+                # Cap is 1 per turn (same shape as denial / empty-
+                # compile retries). Persistent malformed output falls
+                # through to the existing advisory in
+                # ``view/stream_renderer.py:347`` — graceful
+                # degradation: the user still sees an explanation for
+                # the silence rather than a hung turn.
+                #
+                # Mutual exclusivity vs ``empty_compile_retry``: the
+                # two flags can be on simultaneously (GLM has both
+                # after v2.12); their trigger gates are disjoint —
+                # ``empty_compile_retry`` requires ``_iteration > 0``
+                # AND ``_tool_called_this_turn``; ``malformed_tool_
+                # retry`` requires ``_iteration == 0`` (which implies
+                # ``_tool_called_this_turn == False`` since the
+                # current iteration's parser-rejected attempt does
+                # not flip the flag).
+                _residual_after_strip = _TOOL_CALL_BLOCK_RE.sub(
+                    "", response_text,
+                ).strip()
+                _saw_malformed_tool_attempt = (
+                    not parsed_calls
+                    and not native_tool_list
+                    and "<tool_call>" in response_text
+                    and not _residual_after_strip
+                )
+                if (
+                    self._model_profile.malformed_tool_retry
+                    and _iteration == 0
+                    and _saw_malformed_tool_attempt
+                    and _malformed_tool_retry_count < 1
+                    and stop_event is not None
+                    and stop_event.usage.output_tokens > 0
+                    and stop_event.stop_reason in ("stop", "end_turn")
+                ):
+                    logger.warning(
+                        "tool_consumption: malformed_tool_retry "
+                        "iter=%d retry_count=%d "
+                        "tool_calls_this_turn=%d "
+                        "stop_reason=%s out_tokens=%d",
+                        _iteration,
+                        _malformed_tool_retry_count,
+                        _tool_calls_this_turn,
+                        stop_event.stop_reason,
+                        stop_event.usage.output_tokens,
+                    )
+                    # Defensive clear — when the v14 mech-C
+                    # ``retry_on_denial`` flag is also on (or the
+                    # v2.12 buffer hook fires), the buffer holds the
+                    # malformed wrapper text we don't want to leak to
+                    # the renderer. When the buffer is gated off, the
+                    # malformed wrapper already streamed; the
+                    # renderer's ``stream_parser`` consumed it as a
+                    # rejected TOOL_CALL event so it never reaches
+                    # the visible message handle either way.
+                    _buffered_text_events.clear()
+                    _msg_template = (
+                        self._model_profile.malformed_tool_retry_message
+                        or _DEFAULT_MALFORMED_TOOL_RETRY_REMINDER
+                    )
+                    _retry_reminder = Message(
+                        role="user",
+                        content=(TextBlock(text=_msg_template),),
+                    )
+                    self.session = self.session.add_message(
+                        _retry_reminder,
+                    )
+                    _malformed_tool_retry_count += 1
+                    # Skip the break — re-enter the iteration loop so
+                    # the provider sees the injected reminder.
+                    continue
+
+                # Persistent-malformed diagnostic. Cap reached + the
+                # retry produced another rejected wrapper → log a
+                # structured warning and fall through to the
+                # renderer's advisory. Mirrors the
+                # ``empty_compile_retry_failed`` shape above. Note
+                # the retry happens at iter 0, so the persisted
+                # failure observation lands in iter 1+ where the
+                # retry counter has already been incremented.
+                if (
+                    self._model_profile.malformed_tool_retry
+                    and _saw_malformed_tool_attempt
+                    and _malformed_tool_retry_count >= 1
+                ):
+                    logger.warning(
+                        "tool_consumption: malformed_tool_retry_failed "
+                        "malformed_persisted_after_retry "
+                        "tool_calls_this_turn=%d",
                         _tool_calls_this_turn,
                     )
 
