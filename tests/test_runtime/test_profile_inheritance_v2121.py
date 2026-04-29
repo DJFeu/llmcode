@@ -418,3 +418,106 @@ class TestV2134MergeVariantLists:
                 f"got {len(calls)}: {calls!r}"
             )
             assert calls[0].name == "web_search"
+
+
+# ── v2.13.5 hotfix — parser_variants_strict opt-out ─────────────────
+
+
+_STRICT_GLM_SUBSET_PARSER_LIST = """
+name = "GLM-5.1 (power user, strict subset)"
+
+[provider]
+type = "openai-compat"
+
+[parser]
+parser_variants_strict = true
+variants = [
+    "json_payload",
+    "harmony_kv",
+    "glm_brace",
+]
+"""
+
+
+class TestV2135ParserVariantsStrictOptOut:
+    """v2.13.5 — escape hatch for power users who genuinely want a
+    subset for perf tuning. Codex stop-time review (6th true positive)
+    flagged that v2.13.4's always-on merge violated the documented
+    subset semantic in ``99-custom-local.toml``. Default behaviour
+    stays auto-merge (the v2.13.4 win for stale stale lists); the
+    new ``parser_variants_strict = true`` flag opts out per-profile.
+    """
+
+    def test_default_strict_is_false(self) -> None:
+        """Backwards-compat — every profile gets the v2.13.4 auto-
+        merge unless they explicitly set strict=true."""
+        from llm_code.runtime.model_profile import _DEFAULT_PROFILE
+        assert _DEFAULT_PROFILE.parser_variants_strict is False
+
+    def test_strict_true_preserves_user_list_verbatim(self) -> None:
+        """The point of the flag — user's explicit subset is the
+        EXACT walk order, no bundled additions."""
+        with tempfile.TemporaryDirectory() as td:
+            user_dir = Path(td)
+            (user_dir / "glm-5.1.toml").write_text(
+                _STRICT_GLM_SUBSET_PARSER_LIST
+            )
+            registry = ProfileRegistry(user_profile_dir=user_dir)
+            profile = registry._profiles["glm-5.1"]
+            assert profile.parser_variants_strict is True
+            # User list verbatim — only 3 entries, no auto-merged
+            # ``glm_hybrid`` / ``hermes_function`` / etc.
+            assert profile.parser_variants == (
+                "json_payload",
+                "harmony_kv",
+                "glm_brace",
+            ), (
+                f"strict=true must preserve user list verbatim; "
+                f"got {profile.parser_variants!r}"
+            )
+
+    def test_strict_false_auto_merges_v2134_behavior(self) -> None:
+        """Default path unchanged — explicit user list lacking new
+        entries auto-picks them up via v2.13.4's merge."""
+        with tempfile.TemporaryDirectory() as td:
+            user_dir = Path(td)
+            (user_dir / "glm-5.1.toml").write_text(
+                _STALE_GLM_WITH_EXPLICIT_PARSER_LIST  # no strict flag
+            )
+            registry = ProfileRegistry(user_profile_dir=user_dir)
+            profile = registry._profiles["glm-5.1"]
+            assert profile.parser_variants_strict is False
+            assert "glm_hybrid" in profile.parser_variants
+
+    def test_section_map_round_trips_strict_field(self) -> None:
+        """The new field parses cleanly via the section_map under
+        ``[parser]``."""
+        from llm_code.runtime.model_profile import _profile_from_dict
+        raw = {
+            "name": "x",
+            "parser": {
+                "variants": ["json_payload", "harmony_kv"],
+                "parser_variants_strict": True,
+            },
+        }
+        profile = _profile_from_dict(raw)
+        assert profile.parser_variants_strict is True
+        assert profile.parser_variants == ("json_payload", "harmony_kv")
+
+    def test_strict_true_with_empty_list_still_uses_default_order(self) -> None:
+        """Edge case — strict=true + empty variants list should NOT
+        be interpreted as "use empty list literally" (which would
+        disable parsing entirely). Empty list still falls through to
+        DEFAULT_VARIANT_ORDER per the existing contract; strict only
+        matters when an explicit non-empty list is set."""
+        from llm_code.runtime.model_profile import _profile_from_dict
+        raw = {
+            "name": "x",
+            "parser": {
+                "variants": [],
+                "parser_variants_strict": True,
+            },
+        }
+        profile = _profile_from_dict(raw)
+        assert profile.parser_variants_strict is True
+        assert profile.parser_variants == ()  # empty → registry uses DEFAULT

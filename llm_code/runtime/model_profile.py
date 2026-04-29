@@ -110,13 +110,25 @@ class ModelProfile:
     #   picked by ``resolve_profile_for_model(model_id)``.
     # ``parser_variants`` — ordered variant names consumed by
     #   ``tools/parser_variants.REGISTRY``. Empty = use
-    #   ``DEFAULT_VARIANT_ORDER``.
+    #   ``DEFAULT_VARIANT_ORDER``. v2.13.4: when non-empty, the
+    #   loader injects bundled-list entries missing from the user's
+    #   list at their bundled-relative position so new variants
+    #   added in subsequent releases reach existing users without
+    #   manual ``llmcode profiles update``. v2.13.5: set
+    #   ``parser_variants_strict = true`` to disable the merge and
+    #   honour the user's list verbatim (escape hatch for power
+    #   users who genuinely want a subset for perf).
+    # ``parser_variants_strict`` — opt-out for the v2.13.4 list-
+    #   element merge. Default ``False`` (auto-heal); set ``True``
+    #   in your profile if you want the explicit ``variants`` list
+    #   to be the EXACT walk order with no bundled additions.
     # ``custom_close_tags`` + ``call_separator_chars`` — feed
     #   ``view/stream_parser.StreamParser`` to replace the
     #   GLM-specific heuristic for variant 6 / variant 7 handling.
     prompt_template: str = ""
     prompt_match: tuple[str, ...] = ()
     parser_variants: tuple[str, ...] = ()
+    parser_variants_strict: bool = False
     custom_close_tags: tuple[str, ...] = ()
     call_separator_chars: str = ""
 
@@ -937,7 +949,7 @@ def _profile_from_dict(data: dict[str, Any], base: ModelProfile | None = None) -
             "prompt_match",
             "prompt_dedupe_with_template",
         ),
-        "parser": ("parser_variants",),
+        "parser": ("parser_variants", "parser_variants_strict"),
         "parser_hints": ("custom_close_tags", "call_separator_chars"),
         # v14 — tool consumption compat layer; v2.9.0 P2 adds
         # compress_old_tool_results to the same section since both
@@ -1124,8 +1136,15 @@ class ProfileRegistry:
                 # user's list at their bundled-relative position so
                 # new variants automatically reach existing users
                 # without requiring ``llmcode profiles update``.
+                #
+                # v2.13.5 — gated on ``parser_variants_strict`` so
+                # power users who genuinely want a subset (perf
+                # tuning for narrow chat templates) can opt out.
+                # Default ``False`` preserves the v2.13.4 auto-heal
+                # behaviour for the 99% case.
                 if (
                     bundled is not None
+                    and not getattr(profile, "parser_variants_strict", False)
                     and getattr(profile, "parser_variants", None)
                     and getattr(bundled, "parser_variants", None)
                     and tuple(profile.parser_variants) != tuple(bundled.parser_variants)

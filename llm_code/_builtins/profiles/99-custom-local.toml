@@ -48,6 +48,17 @@ match = []
 
 [parser]
 # Empty list = use the registry's DEFAULT_VARIANT_ORDER. Override
-# only if your model's chat template emits a known subset of variants
-# (smaller list = faster parse path).
+# with an explicit list to set your preferred walk order.
+#
+# v2.13.4: when an explicit list is set, the loader auto-merges any
+# bundled-list entries missing from your list at their bundled-
+# relative position, so new variants added in subsequent releases
+# reach you on ``pip install -U`` without manual intervention.
+#
+# v2.13.5: if your model's chat template genuinely emits only a
+# subset of variants and you want the explicit ``variants`` list to
+# be the EXACT walk order with no bundled additions (e.g. perf
+# tuning by skipping match predicates that always miss), set
+# ``parser_variants_strict = true`` below to disable the merge.
 variants = []
+# parser_variants_strict = false  # default — auto-heal stale lists

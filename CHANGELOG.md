@@ -1,5 +1,92 @@
 # Changelog
 
+## v2.13.5 — `parser_variants_strict` opt-out + doc alignment (hotfix)
+
+Codex stop-time review (6th true positive of session) flagged that
+v2.13.4's always-on list-element merge **technically violated** the
+documented subset semantic in `99-custom-local.toml`:
+
+> Override only if your model's chat template emits a known subset
+> of variants (smaller list = faster parse path).
+
+In practice no shipped built-in profile uses subset semantics
+(all 12 list the full set), but the documented contract was real
+and a hypothetical power user who customised their list to a
+smaller perf-tuned subset would be silently un-subsetted.
+
+### Fix
+
+Add an opt-out flag `parser_variants_strict: bool = False` to
+`ModelProfile` and gate the v2.13.4 merge on it:
+
+```python
+if (
+    bundled is not None
+    and not getattr(profile, "parser_variants_strict", False)
+    and profile.parser_variants
+    and bundled.parser_variants
+    and tuple(profile.parser_variants) != tuple(bundled.parser_variants)
+):
+    merged = _merge_variant_lists(...)
+    profile = dataclasses.replace(profile, parser_variants=merged)
+```
+
+Default behaviour (no flag, `strict=False`) keeps v2.13.4's auto-
+heal — the 99% case where stale lists need new variants injected.
+Setting `parser_variants_strict = true` in the profile preserves
+the user's explicit list verbatim, restoring the documented
+subset contract for power users who genuinely want it.
+
+### Doc alignment
+
+`99-custom-local.toml` (bundled + example) docs comment updated to
+reflect both v2.13.4's auto-merge default AND v2.13.5's opt-out:
+
+```toml
+[parser]
+# Empty list = use DEFAULT_VARIANT_ORDER. Explicit list = your
+# preferred order, with v2.13.4 auto-merge filling in any
+# bundled-list entries you're missing. Set
+# parser_variants_strict = true to disable the merge and walk
+# your list verbatim (perf tuning).
+variants = []
+# parser_variants_strict = false  # default — auto-heal stale lists
+```
+
+Dataclass docstring on `parser_variants` updated to document both
+behaviours.
+
+### Regression coverage
+
+5 new tests in `TestV2135ParserVariantsStrictOptOut`:
+
+* Default `strict=False` — backwards-compat
+* `strict=True` preserves user list verbatim (the new contract)
+* `strict=False` auto-merges (v2.13.4 behaviour preserved)
+* Section_map round-trips the new field under `[parser]`
+* Edge case: `strict=True` + empty list still falls through to
+  `DEFAULT_VARIANT_ORDER` (strict only matters when list is non-
+  empty)
+
+### Compatibility
+
+* v2.13.4 → v2.13.5 — drop-in; default behaviour unchanged.
+* Power users gain an opt-out; everyone else gets v2.13.4's
+  auto-heal silently.
+* Build on v2.12.1's loader inheritance — `pip install -U` reaches
+  every existing user.
+
+### Closing the chain
+
+This is the **5th release in the v2.12-v2.13 profile-driven
+delivery-gap chain** (file → field → element → contract). Each
+layer was a real catch from codex stop-time review (5 true
+positives + the v2.13.2 pre-impl review = 6 true). Memory
+`feedback_profile_driven_delivery_gap.md` documents the full
+pattern so a future profile-default addition checks all four
+layers up front instead of peeling them back across consecutive
+hotfix releases.
+
 ## v2.13.4 — List-element merge for stale explicit user variant lists (hotfix)
 
 Codex stop-time review (5th true positive of session) caught that
