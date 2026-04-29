@@ -645,3 +645,150 @@ class TestBareNameTagVariant:
         assert len(result) == 2
         assert result[0].args == {"query": "A"}
         assert result[1].args == {"query": "B"}
+
+
+# ── v2.13.2 hotfix — GLM hybrid parallel-emission variant ────────────
+
+
+class TestV2132GlmHybridVariant:
+    """v2.13.2 — when the v2.13.0 parallel-tool prompt nudge takes
+    effect, GLM-5.1 occasionally emits a malformed shape that
+    neither variant 6 (``NAME}{JSON}``) nor variant 7 (proper
+    ``<arg_key>K</arg_key><arg_value>V</arg_value>`` pairs) can
+    extract. The hybrid variant catches the observed shape:
+
+        <tool_call>NAME<arg_key>args": {JSON}}</arg_value>
+
+    Codex stop-time review (2nd true positive of session) confirmed
+    the diagnosis; the regex is anchored on the literal ``<arg_key>
+    args`` pseudo-key wrapper and chained calls (separated by U+2192)
+    are picked up via ``re.finditer`` without explicit separator
+    handling.
+    """
+
+    def test_hybrid_single_call_extracts_correctly(self):
+        """The exact shape from the real GLM DEBUG log capture."""
+        text = (
+            '<tool_call>web_search<arg_key>args": '
+            '{"query": "台灣今日新聞 2026年4月29日", "max_results": 10}}'
+            '</arg_value>'
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "web_search"
+        assert result[0].args == {
+            "query": "台灣今日新聞 2026年4月29日",
+            "max_results": 10,
+        }
+
+    def test_hybrid_chained_parallel_calls(self):
+        """Two parallel calls separated by U+2192 (GLM's chat
+        template separator). The whole point of this variant —
+        without it the runtime sees ``tool_calls=0`` and the loop
+        ends without dispatching anything."""
+        text = (
+            '<tool_call>web_search<arg_key>args": '
+            '{"query": "台灣今日新聞 2026年4月29日", "max_results": 10}}'
+            '</arg_value>'
+            '\u2192'
+            '<tool_call>web_search<arg_key>args": '
+            '{"query": "hot news today April 29 2026", "max_results": 10}}'
+            '</arg_value>'
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 2
+        assert result[0].args == {
+            "query": "台灣今日新聞 2026年4月29日",
+            "max_results": 10,
+        }
+        assert result[1].args == {
+            "query": "hot news today April 29 2026",
+            "max_results": 10,
+        }
+
+    def test_hybrid_unwraps_args_pseudo_key(self):
+        """Defensive unwrap: when GLM goes one level deeper and
+        wraps the real args under a single ``"args"`` key inside
+        the JSON dict, peel it off so the runtime sees a flat
+        args dict."""
+        text = (
+            '<tool_call>web_search<arg_key>args": '
+            '{"args": {"query": "x", "max_results": 3}}}'
+            '</arg_value>'
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        # Unwrapped — the runtime gets {query, max_results} directly,
+        # not nested under "args".
+        assert result[0].args == {"query": "x", "max_results": 3}
+
+    def test_hybrid_no_false_positive_on_proper_harmony(self):
+        """Proper harmony emissions have ``</arg_key><arg_value>``
+        between key and value. The hybrid regex doesn't match (no
+        ``</arg_key>`` close after ``args``), AND harmony_kv runs
+        first in the variant order anyway. Proper harmony with an
+        ``args`` argument key (legitimate use-case) extracts as a
+        single argument named "args"."""
+        text = (
+            "<tool_call>\n"
+            "tool_with_args_key\n"
+            "<arg_key>args</arg_key>\n"
+            '<arg_value>{"a": 1, "b": 2}</arg_value>\n'
+            "</tool_call>"
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "tool_with_args_key"
+        # Proper harmony — ``args`` is a real arg key, not a wrapper.
+        # Value is the JSON-encoded string that harmony decodes.
+        assert "args" in result[0].args
+
+    def test_hybrid_no_false_positive_on_proper_glm_brace(self):
+        """Proper variant 6 (``NAME}{JSON}``) doesn't have
+        ``<arg_key>args`` at all, so the hybrid match predicate
+        returns False and the per-block loop falls through to
+        glm_brace cleanly."""
+        text = (
+            '<tool_call>web_search}{"query": "today news", "max_results": 10}'
+            '</arg_value>'
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].name == "web_search"
+        assert result[0].args == {"query": "today news", "max_results": 10}
+
+    def test_hybrid_reserved_name_skipped(self):
+        """Reserved names (``arg_key``, ``arg_value``, ``tool_call``,
+        etc. from v2.11.1) are still rejected when they appear as
+        the captured tool name in the hybrid shape."""
+        text = (
+            '<tool_call>arg_key<arg_key>args": '
+            '{"query": "x"}}</arg_value>'
+        )
+        result = parse_tool_calls(text, None)
+        assert all(c.name != "arg_key" for c in result), (
+            f"hybrid variant must not surface reserved tag names "
+            f"as tool calls; got {result!r}"
+        )
+
+    def test_hybrid_invalid_json_skipped(self):
+        """Bad JSON body skips the match silently — same defensive
+        pattern as variant 6 / 7."""
+        text = (
+            '<tool_call>web_search<arg_key>args": '
+            '{this is not valid json}</arg_value>'
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 0
+
+    def test_hybrid_preserves_unicode_args(self):
+        """End-to-end on a real Chinese / Japanese mixed query —
+        the actual smoke-test reproducer used Traditional Chinese
+        and the regex must round-trip the UTF-8 bytes unchanged."""
+        text = (
+            '<tool_call>web_search<arg_key>args": '
+            '{"query": "今日熱門新聞 2026年4月29日 台灣"}}</arg_value>'
+        )
+        result = parse_tool_calls(text, None)
+        assert len(result) == 1
+        assert result[0].args["query"] == "今日熱門新聞 2026年4月29日 台灣"

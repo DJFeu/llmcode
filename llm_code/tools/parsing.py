@@ -92,6 +92,44 @@ _GLM_TOOL_CALL_VARIANT_RE = re.compile(
     re.DOTALL,
 )
 
+# Variant 6b (v2.13.2) — GLM-5.1 "hybrid" parallel emission. When the
+# v2.13.0 parallel-tool prompt nudge takes effect, GLM-5.1 occasionally
+# emits a malformed shape that is neither variant 6 (``NAME}{JSON}``)
+# nor variant 7 (proper harmony_kv pairs). Captured wire shape:
+#
+#     <tool_call>web_search<arg_key>args": {"query":"...","max_results":10}}</arg_value>
+#     →
+#     <tool_call>web_search<arg_key>args": {"query":"...","max_results":10}}</arg_value>
+#
+# Tool name sits on the same line as ``<tool_call>`` (like variant 6),
+# but the args body is preceded by ``<arg_key>args["']?\s*:?\s*`` (a
+# pseudo-key wrapping the JSON dict) and the close tag is
+# ``</arg_value>`` not ``</tool_call>``. Multiple sibling calls are
+# separated by U+2192 (``→``) — same convention as variant 6 — and
+# ``re.finditer`` skips the separator without explicit consumption.
+#
+# The pseudo-key is the literal string "args" (with optional closing
+# quote / colon depending on whether GLM dropped the ``</arg_key>``
+# tag mid-emission). The JSON body that follows is the FLAT args
+# dict at top level (e.g. ``{"query": "...", "max_results": 10}``)
+# — not nested under "args" despite the wrapper name. The optional
+# trailing ``\}?`` consumes the spurious closing brace GLM appends
+# when it tries to close an outer object that never opened.
+#
+# Variant order places ``glm_hybrid`` BETWEEN ``harmony_kv`` and
+# ``glm_brace``: harmony's parser runs first and returns None on the
+# hybrid shape (no ``</arg_key>`` close → no key/value pairs found),
+# at which point the per-block loop falls through to glm_hybrid.
+# Proper harmony emissions never hit this regex because they have
+# ``</arg_key><arg_value>`` between key and value.
+_GLM_HYBRID_TOOL_CALL_RE = re.compile(
+    r"<tool_call>\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*"
+    r"<arg_key>args[\"']?\s*:?\s*"
+    r"(\{.*?\})"
+    r"\}?\s*</arg_value>",
+    re.DOTALL,
+)
+
 # Variant 5 — bare name-as-tag form, emitted by Qwen3.5-122B on some
 # vLLM chat template configurations where NEITHER ``<tool_call>`` NOR
 # ``<function=NAME>`` appears in the stream. The on-wire shape is:
@@ -449,6 +487,57 @@ def _parse_glm_variant(text: str) -> list[ParsedToolCall]:
             continue
         if not isinstance(args, dict):
             continue
+        result.append(
+            ParsedToolCall(
+                id=str(uuid.uuid4()),
+                name=name,
+                args=args,
+                source="xml_tag",
+            )
+        )
+    return result
+
+
+def _parse_glm_hybrid_variant(text: str) -> list[ParsedToolCall]:
+    """Variant 6b (v2.13.2) — GLM-5.1 hybrid parallel emission.
+
+    Recognises the malformed ``<tool_call>NAME<arg_key>args"...JSON...
+    </arg_value>`` shape that GLM-5.1 emits when the v2.13.0 parallel-
+    tool prompt nudge takes effect. ``re.finditer`` walks every
+    sibling call in the stream; the U+2192 (``→``) separator GLM
+    inserts between sibling calls is skipped automatically because
+    the regex anchors on ``<tool_call>``.
+
+    The JSON body extracted is the FLAT args dict at top level — the
+    "args" wrapper is a GLM emission quirk, not a real arg key. If
+    the JSON happens to wrap args under a single ``"args"`` key
+    (defensive — observed once during testing), we unwrap once so
+    the runtime sees the same args shape it would for a properly
+    formatted call.
+
+    Reserved-name guard mirrors variant 6 / 7 — a captured "name"
+    that lands in :data:`_VARIANT_5_RESERVED_NAMES` skips silently.
+    """
+    result: list[ParsedToolCall] = []
+    for m in _GLM_HYBRID_TOOL_CALL_RE.finditer(text):
+        name = m.group(1).strip()
+        if not name or name in _VARIANT_5_RESERVED_NAMES:
+            continue
+        try:
+            args = json.loads(m.group(2))
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(args, dict):
+            continue
+        # Defensive unwrap: if GLM put the real args dict under a
+        # single ``"args"`` key, peel it off so the runtime sees a
+        # flat args dict (matching the proper-call extraction shape).
+        if (
+            len(args) == 1
+            and "args" in args
+            and isinstance(args["args"], dict)
+        ):
+            args = args["args"]
         result.append(
             ParsedToolCall(
                 id=str(uuid.uuid4()),

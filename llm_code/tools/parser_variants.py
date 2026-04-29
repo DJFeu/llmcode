@@ -52,6 +52,7 @@ from llm_code.tools.parsing import (
     _WEBFETCH_INLINE_RE,
     ParsedToolCall,
     _parse_bare_name_tag,
+    _parse_glm_hybrid_variant,
     _parse_glm_variant,
     _parse_harmony_variant,
     _parse_hermes_block,
@@ -186,6 +187,13 @@ DEFAULT_VARIANT_ORDER: tuple[str, ...] = (
     "hermes_function",
     "hermes_truncated",
     "harmony_kv",
+    # v2.13.2 — placed BETWEEN harmony_kv and glm_brace. Proper
+    # harmony emissions match harmony_kv first; only the malformed
+    # GLM hybrid shape (no ``</arg_key>`` close) falls through here.
+    # Placed BEFORE glm_brace because the hybrid match is more
+    # specific (requires literal ``<arg_key>args``) and proper
+    # ``NAME}{JSON}`` shapes don't satisfy this pattern.
+    "glm_hybrid",
     "glm_brace",
     "bare_name_tag",
     "webfetch_inline",  # v15 M5 — last priority; wrapper-less, gated
@@ -230,6 +238,26 @@ def _match_glm_brace(raw: str) -> bool:
     The closing ``</arg_value>`` sits OUTSIDE the raw body in the
     wrapper-less case, so the match only looks at the body opening."""
     return _MATCH_GLM_BRACE_RE.match(raw) is not None
+
+
+# v2.13.2 — cheap precondition check for the GLM hybrid shape.
+# ``<arg_key>args`` is the structural marker; the full extraction
+# regex (``_GLM_HYBRID_TOOL_CALL_RE``) does the heavy work in the
+# parse function. This match predicate is permissive on purpose —
+# proper harmony_kv content with an explicit ``args`` argument
+# (``<arg_key>args</arg_key><arg_value>...</arg_value>``) WOULD also
+# return True here, but harmony_kv runs FIRST in the variant order
+# and parses those cleanly, so glm_hybrid only ever fires on the
+# malformed shape that harmony rejected.
+_MATCH_GLM_HYBRID_RE = re.compile(r"<arg_key>args[\"']?")
+
+
+def _match_glm_hybrid(raw: str) -> bool:
+    """v2.13.2 — GLM hybrid emission with ``<arg_key>args`` pseudo-key
+    wrapping the JSON args dict. Variant order ensures harmony_kv
+    handles proper emissions first; this predicate only needs a
+    cheap structural check."""
+    return _MATCH_GLM_HYBRID_RE.search(raw) is not None
 
 
 def _match_bare_name_tag(raw: str) -> bool:
@@ -290,6 +318,23 @@ def _parse_glm_variant_single(raw: str) -> ParsedToolCall | None:
     )
 
 
+def _parse_glm_hybrid_variant_single(raw: str) -> ParsedToolCall | None:
+    """v2.13.2 — single-call adapter for the GLM hybrid shape.
+
+    Mirrors :func:`_parse_glm_variant_single` — reconstructs the
+    ``<tool_call>...</arg_value>`` envelope when the stream parser
+    has stripped it, runs the multi-call scanner, returns the first
+    match. The per-block loop only ever lands here when harmony_kv
+    rejected the body (no ``</arg_key>`` pairs), so false-positives
+    against proper harmony emissions are structurally impossible.
+    """
+    candidate = raw.lstrip()
+    if not candidate.startswith("<tool_call>"):
+        candidate = f"<tool_call>{candidate}</arg_value>"
+    matches = _parse_glm_hybrid_variant(candidate)
+    return matches[0] if matches else None
+
+
 def _parse_bare_name_tag_single(raw: str) -> ParsedToolCall | None:
     """Single-call adapter: find the first valid ``<NAME>JSON</NAME>``
     match in the raw body and return one ``ParsedToolCall``.
@@ -347,6 +392,12 @@ harmony_kv_variant = ParserVariant(
     requires_standard_close_when=("<arg_key>",),
 )
 
+glm_hybrid_variant = ParserVariant(
+    name="glm_hybrid",
+    match=_match_glm_hybrid,
+    parse=_parse_glm_hybrid_variant_single,
+)
+
 glm_brace_variant = ParserVariant(
     name="glm_brace",
     match=_match_glm_brace,
@@ -371,6 +422,7 @@ register_variant(json_payload_variant)
 register_variant(hermes_function_variant)
 register_variant(hermes_truncated_variant)
 register_variant(harmony_kv_variant)
+register_variant(glm_hybrid_variant)
 register_variant(glm_brace_variant)
 register_variant(bare_name_tag_variant)
 register_variant(webfetch_inline_variant)
@@ -379,6 +431,13 @@ register_variant(webfetch_inline_variant)
 # Re-export multi-call fallback scanners so ``parsing._parse_xml`` can
 # reach them without a second import chain.
 _WRAPPER_LESS_SCANNERS: dict[str, Callable[[str, object], list[ParsedToolCall]] | Callable[[str], list[ParsedToolCall]]] = {
+    # v2.13.2 — glm_hybrid registered BEFORE glm_brace so chained
+    # parallel emissions whose only close tag is ``</arg_value>``
+    # (no ``</tool_call>`` to drive the per-block loop) reach the
+    # hybrid scanner before glm_brace, which would otherwise bail
+    # because the body has ``<arg_key>`` instead of the literal
+    # ``}{`` separator it expects.
+    "glm_hybrid": _parse_glm_hybrid_variant,
     "glm_brace": _parse_glm_variant,
     "bare_name_tag": _parse_bare_name_tag,
     # v15 M5 — wrapper-less inline WebFetch / WebSearch JSON detection.

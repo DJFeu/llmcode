@@ -1,5 +1,106 @@
 # Changelog
 
+## v2.13.2 — GLM hybrid parallel-emission parser (hotfix B + C)
+
+Real GLM-5.1 DEBUG smoke test exposed that the v2.13.0 Lever 1
+parallel-tool prompt nudge **was being adopted** by GLM, but the
+emission format was malformed in a way none of the existing parser
+variants could extract. Captured wire shape:
+
+```
+<tool_call>web_search<arg_key>args": {"query":"...","max_results":10}}</arg_value>
+→
+<tool_call>web_search<arg_key>args": {"query":"...","max_results":10}}</arg_value>
+```
+
+Tool name on the same line as `<tool_call>` (like variant 6 /
+`glm_brace`), but the args dict is wrapped under a literal `args`
+pseudo-key followed by `":` (no closing `</arg_key>`), and the
+close tag is `</arg_value>` not `</tool_call>`. Multiple sibling
+calls separated by U+2192 (→).
+
+`iter_timing` (v2.13.0 Lever 2) confirmed the regression:
+
+```
+iter=0  prefill_in=11410  out=66   thinking_chars=123  tool_calls=1
+iter=1  prefill_in=10343  out=102  thinking_chars=205  tool_calls=0
+turn:   iters=2  total=129.80s  provider_total=128.29s  tool_total=1.37s
+```
+
+`tool_calls=0` on iter 1 — model tried to emit two parallel
+searches, parser couldn't extract, agent loop ended without
+dispatching. v2.13.0 net effect on this path was a regression vs
+v2.12.1: same workload now sometimes terminates without an answer
+instead of completing sequentially.
+
+### Lever B — Parser tolerance
+
+New variant `glm_hybrid` registered between `harmony_kv` and
+`glm_brace` in `DEFAULT_VARIANT_ORDER`:
+
+* `_GLM_HYBRID_TOOL_CALL_RE` matches the observed shape;
+  `re.finditer` walks chained sibling calls without explicit
+  U+2192 handling (the regex anchors on `<tool_call>` and skips
+  separators automatically).
+* `_parse_glm_hybrid_variant` extracts `(name, args)` with a
+  defensive unwrap when GLM goes one level deeper and wraps the
+  real args under a single `"args"` key inside the JSON dict.
+* `_match_glm_hybrid` is a cheap structural check
+  (`<arg_key>args` substring); the variant order ensures harmony
+  runs first and proper harmony emissions never reach the hybrid
+  parser.
+
+Codex stop-time review (3rd true positive of session) verified the
+regex is safe — proper harmony's `</arg_key><arg_value>` between
+key and value disambiguates from the new alternate; the registry's
+match-then-parse-then-fall-through pipeline does the rest.
+
+### Lever C — Few-shot example in GLM template
+
+`llm_code/engine/prompts/models/glm.j2` `# Tool call efficiency`
+section now includes a complete `<tool_call>...</tool_call>`
+example showing the proper harmony_kv shape with **real argument
+names** (`query`, `max_results`) — explicitly warning against the
+`<arg_key>args": {JSON}}` malformed wrapper that triggered v2.13.0's
+regression. The example also shows two parallel calls so the model
+sees the expected shape for batched emission.
+
+### Regression coverage
+
+`tests/test_tools/test_parsing.py::TestV2132GlmHybridVariant`
+adds 8 new tests:
+
+* Single hybrid call extraction (exact log capture)
+* Chained parallel calls (U+2192-separated)
+* Defensive unwrap when args nested under `"args"` key
+* No false positive on proper harmony with legitimate `args`
+  argument key
+* No false positive on proper `glm_brace` (`NAME}{JSON}`) shape
+* Reserved-name guard still fires for hybrid shape
+* Invalid JSON skipped silently
+* Unicode args round-trip preserved
+
+All 166 parser + retry + GLM-template + parity gate tests stay
+green. Ruff clean.
+
+### Compatibility
+
+* v2.13.1 → v2.13.2 — drop-in; only the parser registry adds a
+  variant and the GLM template gains a few-shot example.
+* Build on top of v2.12.1's loader inheritance — `pip install -U`
+  reaches every existing user without `llmcode profiles update`.
+* No profile changes; no schema changes.
+
+### Codex catch credibility
+
+This is the third TRUE positive from codex stop-time review this
+session (after v2.12.1 loader gap and v2.13.1 URL-stripper). User
+explicitly invoked `codex-rescue` for pre-implementation review of
+the proposed B+C fix; codex confirmed diagnosis, validated the
+regex safety (harmony-first variant order disambiguates), and
+specified the few-shot example shape (real arg names, not `args`
+wrapper). The 1-2 minute verification cost was fully repaid.
+
 ## v2.13.1 — URL-list stripper preserves markdown title links (hotfix)
 
 Codex stop-time review (8th catch this session, second TRUE positive
