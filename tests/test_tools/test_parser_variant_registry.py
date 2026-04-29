@@ -85,9 +85,12 @@ class TestBuiltinsRegistered:
         for name in DEFAULT_VARIANT_ORDER:
             assert name in REGISTRY, f"missing built-in: {name}"
 
-    def test_default_order_has_seven_entries(self) -> None:
-        # v15 M5 added ``webfetch_inline`` at the end; total = 7.
-        assert len(DEFAULT_VARIANT_ORDER) == 7
+    def test_default_order_has_eight_entries(self) -> None:
+        # v15 M5 added ``webfetch_inline`` at the end (total = 7).
+        # v2.13.2 added ``glm_hybrid`` between harmony_kv and
+        # glm_brace to recognise GLM-5.1's malformed parallel-
+        # emission shape (total = 8).
+        assert len(DEFAULT_VARIANT_ORDER) == 8
 
     def test_default_order_json_first(self) -> None:
         """json_payload is cheapest + most common for llm-code's

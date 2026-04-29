@@ -104,7 +104,7 @@ web_search
 </tool_call>
 ```
 
-Each `<tool_call>` opens its own block and closes with `</tool_call>`. Each argument is one `<arg_key>NAME</arg_key><arg_value>VALUE</arg_value>` pair — the key is the literal argument NAME the tool expects (`query`, `max_results`, `url`, ...), not `args` or `parameters`. Do NOT place a JSON object directly inside a single `<arg_key>` — that shape (`<arg_key>args": {...JSON...}}`) is malformed and the runtime parser will silently drop it.
+Each `<tool_call>` opens its own block and closes with `</tool_call>`. Each argument is one `<arg_key>NAME</arg_key><arg_value>VALUE</arg_value>` pair — the key is the literal argument NAME the tool expects (`query`, `max_results`, `url`, ...), not `args` or `parameters`. Do NOT place a JSON object directly inside a single `<arg_key>` (e.g. wrapping the entire args dict under a literal `args` pseudo-key with no `</arg_key>` close); that shape is malformed and the runtime parser will silently drop it.
 
 # Common GLM mistakes — avoid these
 
