@@ -35,6 +35,7 @@ from llm_code.runtime.model_profile import (
     ProfileRegistry,
     _DEFAULT_PROFILE,
     _load_bundled_profile_base,
+    _merge_variant_lists,
 )
 
 
@@ -270,3 +271,150 @@ class TestV2133GlmProfileVariantsList:
                 f"from bundled built-in via v2.12.1 loader. "
                 f"Got: {profile.parser_variants!r}"
             )
+
+
+# ── v2.13.4 hotfix — list-element merge for stale explicit lists ────
+
+
+_STALE_GLM_WITH_EXPLICIT_PARSER_LIST = """
+name = "GLM-5.1 (stale v2.9-era explicit parser list)"
+
+[provider]
+type = "openai-compat"
+
+[parser]
+variants = [
+    "json_payload",
+    "hermes_function",
+    "hermes_truncated",
+    "harmony_kv",
+    "glm_brace",
+    "bare_name_tag",
+]
+"""
+
+
+class TestV2134MergeVariantLists:
+    """v2.13.4 — list-element merge so a stale user copy with an
+    EXPLICIT ``[parser] variants = [...]`` list (the v2.9-era 6-entry
+    shape) auto-picks up new variants added to the bundled list in
+    subsequent releases.
+
+    Codex stop-time review caught that v2.13.3 only fixed the case
+    where the user's list inherited bundled FIELDS — for explicit
+    list-typed values the user's tuple won as a whole, so a stale
+    copy with the old 6-variant list never received ``glm_hybrid``.
+    The merge helper injects missing bundled entries at their
+    bundled-relative position, preserving any user customisations.
+    """
+
+    def test_merge_injects_missing_glm_hybrid(self) -> None:
+        """The exact regression — stale 6-variant list gains
+        ``glm_hybrid`` at the bundled position (between harmony_kv
+        and glm_brace)."""
+        user = (
+            "json_payload",
+            "hermes_function",
+            "hermes_truncated",
+            "harmony_kv",
+            "glm_brace",
+            "bare_name_tag",
+        )
+        bundled = (
+            "json_payload",
+            "hermes_function",
+            "hermes_truncated",
+            "harmony_kv",
+            "glm_hybrid",
+            "glm_brace",
+            "bare_name_tag",
+        )
+        merged = _merge_variant_lists(user, bundled)
+        assert merged == bundled
+        # Specifically: glm_hybrid landed between harmony_kv and glm_brace
+        assert merged[merged.index("harmony_kv") + 1] == "glm_hybrid"
+        assert merged[merged.index("glm_hybrid") + 1] == "glm_brace"
+
+    def test_merge_idempotent_when_lists_match(self) -> None:
+        """User list = bundled → no merge work, return user unchanged."""
+        ident = (
+            "json_payload",
+            "harmony_kv",
+            "glm_hybrid",
+            "glm_brace",
+        )
+        merged = _merge_variant_lists(ident, ident)
+        assert merged == ident
+
+    def test_merge_preserves_user_only_custom_variant(self) -> None:
+        """Power user with a custom variant in their list keeps it,
+        AND still gets bundled additions appended at the right
+        bundled-relative position."""
+        user = ("json_payload", "my_custom_variant", "hermes_function", "glm_brace")
+        bundled = (
+            "json_payload",
+            "hermes_function",
+            "hermes_truncated",
+            "harmony_kv",
+            "glm_hybrid",
+            "glm_brace",
+            "bare_name_tag",
+        )
+        merged = _merge_variant_lists(user, bundled)
+        assert "my_custom_variant" in merged
+        assert "glm_hybrid" in merged
+        assert "hermes_truncated" in merged
+        assert "harmony_kv" in merged
+        assert "bare_name_tag" in merged
+
+    def test_merge_empty_bundled_returns_user(self) -> None:
+        """Defensive — bundled missing or empty → user list passes through."""
+        user = ("json_payload", "harmony_kv")
+        assert _merge_variant_lists(user, ()) == user
+
+    def test_stale_explicit_list_inherits_glm_hybrid_e2e(self) -> None:
+        """End-to-end — load a stale local GLM profile with the
+        v2.9-era explicit 6-variant list and assert the resulting
+        ``ModelProfile.parser_variants`` includes ``glm_hybrid``
+        after merge. This is the exact case codex stop-time review
+        flagged as still-bypassing v2.13.3."""
+        with tempfile.TemporaryDirectory() as td:
+            user_dir = Path(td)
+            (user_dir / "glm-5.1.toml").write_text(
+                _STALE_GLM_WITH_EXPLICIT_PARSER_LIST
+            )
+            registry = ProfileRegistry(user_profile_dir=user_dir)
+            profile = registry._profiles["glm-5.1"]
+            assert "glm_hybrid" in profile.parser_variants, (
+                f"v2.13.4 list-element merge must inject glm_hybrid "
+                f"into stale explicit user list. "
+                f"Got: {profile.parser_variants!r}"
+            )
+
+    def test_stale_explicit_list_plus_runtime_extraction(self) -> None:
+        """Closes the loop — stale explicit list → load → merge →
+        parse_tool_calls successfully extracts the GLM hybrid shape
+        through that merged profile path. This is the test that
+        would have caught v2.13.3's element-bypass gap before
+        codex did."""
+        from llm_code.tools.parsing import parse_tool_calls
+
+        with tempfile.TemporaryDirectory() as td:
+            user_dir = Path(td)
+            (user_dir / "glm-5.1.toml").write_text(
+                _STALE_GLM_WITH_EXPLICIT_PARSER_LIST
+            )
+            registry = ProfileRegistry(user_profile_dir=user_dir)
+            profile = registry._profiles["glm-5.1"]
+
+            sample = (
+                '<tool_call>web_search<arg_key>args": '
+                '{"query": "x", "max_results": 5}}'
+                '</arg_value>'
+            )
+            calls = parse_tool_calls(sample, None, profile=profile)
+            assert len(calls) == 1, (
+                f"merged stale profile must extract via glm_hybrid; "
+                f"got {len(calls)}: {calls!r}"
+            )
+            assert calls[0].name == "web_search"

@@ -1,5 +1,94 @@
 # Changelog
 
+## v2.13.4 — List-element merge for stale explicit user variant lists (hotfix)
+
+Codex stop-time review (5th true positive of session) caught that
+v2.13.3 only fixed HALF the delivery gap. v2.12.1's loader
+inheritance fills in MISSING fields, but for list-typed fields the
+user's explicit value wins as a whole — so a stale local GLM
+profile with the v2.9-era explicit 6-variant `[parser] variants`
+list never receives `glm_hybrid` even after `pip install -U
+llmcode-cli==2.13.3`.
+
+> **Stale local GLM profiles with explicit parser lists still
+> bypass `glm_hybrid`.**
+
+This is the **third occurrence in three releases** of the same
+profile-driven delivery-gap pattern (file → field → list element).
+Each release narrowed the bypass surface; v2.13.4 is the
+list-element layer.
+
+### Fix
+
+`llm_code/runtime/model_profile.py::_merge_variant_lists` —
+inject bundled variant entries missing from a user list at their
+bundled-relative position. Called at profile-load time when the
+user's `parser_variants` differs from the bundled list:
+
+```python
+if (
+    bundled is not None
+    and profile.parser_variants
+    and bundled.parser_variants
+    and tuple(profile.parser_variants) != tuple(bundled.parser_variants)
+):
+    merged = _merge_variant_lists(
+        profile.parser_variants, bundled.parser_variants,
+    )
+    profile = dataclasses.replace(profile, parser_variants=merged)
+```
+
+The merge is conservative — only ADDS missing bundled entries.
+A power user who customised the list to include a non-bundled
+variant keeps that customisation; only the gaps relative to
+bundled get filled. Idempotent: if the user list already contains
+every bundled entry, nothing changes regardless of order
+differences.
+
+### Regression coverage
+
+`tests/test_runtime/test_profile_inheritance_v2121.py::TestV2134MergeVariantLists`
+adds 6 new tests:
+
+* `_merge_variant_lists` injects `glm_hybrid` at the correct
+  bundled position (between `harmony_kv` and `glm_brace`) for the
+  exact regression
+* Idempotent when lists match
+* Custom user-only variant preserved alongside bundled additions
+* Empty bundled → user list passes through unchanged
+* End-to-end: stale local GLM profile with explicit 6-variant list
+  → load → merge → resulting `parser_variants` contains
+  `glm_hybrid`
+* End-to-end + parser dispatch: same stale profile actually
+  extracts the GLM hybrid sample through the merged variant list
+  (the test that would have caught the v2.13.3 element-bypass gap)
+
+### Compatibility
+
+* v2.13.3 → v2.13.4 — drop-in; only the loader gains a list-element
+  merge step, no schema changes, no profile changes.
+* Power users with custom variants keep their customisations —
+  merge only ADDS, never removes.
+* All 17 inheritance tests + 159 sibling tests pass; ruff clean.
+
+### Codex catch credibility (running tally)
+
+| Release | Codex finding | Real? | Class |
+|---------|----|-----|----|
+| v2.12.1 | "GLM retry not enabled by runtime resolver" | TRUE | loader gap (file) |
+| v2.13.1 | "URL-stripper removes primary URL fields" | TRUE | regex too aggressive |
+| v2.13.2 | (pre-impl review of B+C plan) | TRUE | confirmed diagnosis |
+| v2.13.3 | "GLM profile bypasses the new hybrid parser" | TRUE | profile bypass (field) |
+| v2.13.4 | "Stale lists with explicit parser still bypass" | TRUE | profile bypass (element) |
+
+Running ratio this session: **5 true / 8 false ≈ 38% precision** —
+the trend is up, plausibly because successive releases are
+peeling back the same architectural delivery-gap onion. Each
+catch is real and the verify-before-fix-or-dismiss protocol from
+`feedback_codex_review_credibility.md` continues to repay its
+cost. New corollary added at
+`feedback_profile_driven_delivery_gap.md`.
+
 ## v2.13.3 — Wire glm_hybrid into the GLM profile variants list (hotfix)
 
 Codex stop-time review (4th true positive of session) caught

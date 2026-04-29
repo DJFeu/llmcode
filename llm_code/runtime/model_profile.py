@@ -17,6 +17,7 @@ All fields have sensible defaults so a missing profile still works.
 from __future__ import annotations
 
 import logging
+import dataclasses
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
@@ -815,6 +816,61 @@ def _load_toml(path: Path) -> dict[str, Any]:
         return tomllib.load(f)
 
 
+def _merge_variant_lists(
+    user: tuple[str, ...], bundled: tuple[str, ...]
+) -> tuple[str, ...]:
+    """v2.13.4 — inject bundled variant entries missing from a user list
+    at their bundled-relative position.
+
+    Used at profile-load time to self-heal stale user copies that
+    enumerated ``[parser] variants`` from a previous release: when a
+    new variant lands in the bundled list (e.g. v2.13.3 added
+    ``glm_hybrid``), the user's explicit list otherwise wins as a
+    whole, so the new variant never reaches runtime. This helper
+    appends each missing bundled entry just before its
+    bundled-successor in the user list (or at the end if no
+    successor is present), preserving the user's overall ordering
+    while ensuring every bundled entry is present.
+
+    Idempotent: calling with ``user == bundled`` returns the user
+    tuple unchanged. Order-preserving: if the user list already
+    contains every bundled entry, no insertion happens regardless
+    of order differences.
+
+    Conservative: only ADDS missing entries. Never removes anything
+    the user explicitly listed (a power user who customised the
+    list to include a non-bundled variant keeps that customisation).
+    """
+    if not bundled:
+        return user
+    user_set = set(user)
+    if user_set.issuperset(bundled):
+        return user
+    result = list(user)
+    for i, entry in enumerate(bundled):
+        if entry in user_set:
+            continue
+        # Insert ``entry`` before the first user item whose bundled
+        # position comes after ``i`` — preserving the user's order
+        # for entries already present and slotting the new one at
+        # the bundled-relative position for everything else.
+        insert_at = len(result)
+        for j, current in enumerate(result):
+            try:
+                current_pos = bundled.index(current)
+            except ValueError:
+                # User entry not in bundled at all — skip it for
+                # the position search; we shouldn't slot the new
+                # entry before a user-only customisation.
+                continue
+            if current_pos > i:
+                insert_at = j
+                break
+        result.insert(insert_at, entry)
+        user_set.add(entry)
+    return tuple(result)
+
+
 def _load_bundled_profile_base(key: str) -> "ModelProfile | None":
     """v2.12.1 — resolve the wheel-bundled built-in profile for ``key``.
 
@@ -1035,6 +1091,7 @@ class ProfileRegistry:
                 data = _load_toml(toml_path)
                 key = toml_path.stem.lower()
                 base = self._profiles.get(key)
+                bundled: ModelProfile | None = None
                 if base is None:
                     # v2.12.1 — when the user has a local profile copy
                     # of a wheel-bundled built-in (e.g. a stale GLM-5.1
@@ -1046,7 +1103,48 @@ class ProfileRegistry:
                     # is not a known built-in (genuine custom profile).
                     bundled = _load_bundled_profile_base(key)
                     base = bundled if bundled is not None else _DEFAULT_PROFILE
+                else:
+                    # v2.13.4 — when the key IS in hardcoded built-ins
+                    # but ALSO has a bundled TOML copy, preload bundled
+                    # so the list-element merge below still has the
+                    # canonical "all known variants this release" list
+                    # to inject from. Tolerates missing bundled cleanly.
+                    bundled = _load_bundled_profile_base(key)
                 profile = _profile_from_dict(data, base=base)
+                # v2.13.4 — list-element merge for ``parser_variants``.
+                # Field-level inheritance (v2.12.1) only fills in
+                # MISSING fields; for list-typed fields the user's
+                # explicit value still wins as a whole. So a stale
+                # local copy with ``[parser] variants = [...]`` from
+                # a v2.9-era example never picks up new variants
+                # added to the bundled list in subsequent releases
+                # (the v2.13.3 ``glm_hybrid`` regression).
+                #
+                # Inject any bundled-list entries missing from the
+                # user's list at their bundled-relative position so
+                # new variants automatically reach existing users
+                # without requiring ``llmcode profiles update``.
+                if (
+                    bundled is not None
+                    and getattr(profile, "parser_variants", None)
+                    and getattr(bundled, "parser_variants", None)
+                    and tuple(profile.parser_variants) != tuple(bundled.parser_variants)
+                ):
+                    merged = _merge_variant_lists(
+                        tuple(profile.parser_variants),
+                        tuple(bundled.parser_variants),
+                    )
+                    if merged != tuple(profile.parser_variants):
+                        profile = dataclasses.replace(
+                            profile, parser_variants=merged
+                        )
+                        _logger.debug(
+                            "merged %d new variant(s) into user profile %s "
+                            "(stale list lacked: %s)",
+                            len(merged) - len(profile.parser_variants) + len(merged),  # informative
+                            key,
+                            tuple(v for v in bundled.parser_variants if v not in tuple(profile.parser_variants)),
+                        )
                 self._profiles[key] = profile
                 _logger.debug("loaded user profile: %s from %s", key, toml_path)
             except Exception as exc:
