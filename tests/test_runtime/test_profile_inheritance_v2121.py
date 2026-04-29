@@ -178,3 +178,95 @@ class TestStaleLocalProfileInheritsFromBundled:
             registry = ProfileRegistry(user_profile_dir=missing_dir)
             # Hardcoded built-ins still present.
             assert len(registry._profiles) > 0
+
+
+# ── v2.13.3 hotfix — GLM profile carries glm_hybrid variant ─────────
+
+
+class TestV2133GlmProfileVariantsList:
+    """v2.13.3 — codex stop-time review (4th true positive of session)
+    caught that v2.13.2's parser-registry change did NOT reach the
+    GLM runtime path because the GLM profile carries an EXPLICIT
+    ``[parser] variants`` list (v13 profile-driven adapter design)
+    that overrides ``DEFAULT_VARIANT_ORDER`` in ``parsing._parse_xml``.
+    Without ``glm_hybrid`` in the profile's list, the malformed
+    parallel-emission shape stays unrecognised even after upgrade.
+
+    These tests pin the GLM profile's variant list so a future PR
+    that drops ``glm_hybrid`` (or another release adds a variant
+    without updating the profile) fails CI loudly.
+    """
+
+    def test_bundled_glm_profile_includes_glm_hybrid(self) -> None:
+        """Pin the actual shipped TOML — both bundled and example
+        copies must carry ``glm_hybrid`` in their variants list."""
+        bundled = _load_bundled_profile_base("glm-5.1")
+        assert bundled is not None
+        assert "glm_hybrid" in bundled.parser_variants, (
+            f"GLM bundled profile missing glm_hybrid in variants — "
+            f"v2.13.2 parser-registry change won't reach runtime. "
+            f"Got: {bundled.parser_variants!r}"
+        )
+
+    def test_glm_hybrid_position_between_harmony_and_glm_brace(self) -> None:
+        """Variant order matters — glm_hybrid must come AFTER
+        harmony_kv (so proper harmony emissions extract first) and
+        BEFORE glm_brace (so the hybrid shape is tried before the
+        ``NAME}{JSON}`` matcher rejects it)."""
+        bundled = _load_bundled_profile_base("glm-5.1")
+        assert bundled is not None
+        variants = list(bundled.parser_variants)
+        harmony_idx = variants.index("harmony_kv")
+        hybrid_idx = variants.index("glm_hybrid")
+        glm_brace_idx = variants.index("glm_brace")
+        assert harmony_idx < hybrid_idx < glm_brace_idx, (
+            f"glm_hybrid must be between harmony_kv and glm_brace; "
+            f"got order: {variants!r}"
+        )
+
+    def test_glm_profile_extracts_hybrid_shape_end_to_end(self) -> None:
+        """End-to-end regression — load the GLM profile via the
+        bundled-built-in path, feed the real captured malformed
+        shape, assert extraction succeeds. This is the test that
+        would have caught v2.13.2's profile-bypass gap before
+        codex did."""
+        from llm_code.tools.parsing import parse_tool_calls
+
+        profile = _load_bundled_profile_base("glm-5.1")
+        assert profile is not None
+
+        sample = (
+            '<tool_call>web_search<arg_key>args": '
+            '{"query": "今日熱門新聞 2026年4月29日", "max_results": 10}}'
+            '</arg_value>'
+            '\u2192'
+            '<tool_call>web_search<arg_key>args": '
+            '{"query": "hot news today April 29 2026", "max_results": 10}}'
+            '</arg_value>'
+        )
+        calls = parse_tool_calls(sample, None, profile=profile)
+        assert len(calls) == 2, (
+            f"GLM profile + glm_hybrid variant must extract both "
+            f"parallel calls; got {len(calls)}: {calls!r}"
+        )
+        assert all(c.name == "web_search" for c in calls)
+        assert calls[0].args["query"] == "今日熱門新聞 2026年4月29日"
+        assert calls[1].args["query"] == "hot news today April 29 2026"
+
+    def test_stale_local_glm_inherits_glm_hybrid(self) -> None:
+        """v2.12.1 loader inheritance — stale user copy lacking the
+        v2.13.3 ``glm_hybrid`` entry should pick it up from the
+        bundled built-in (same self-healing path that fixed the
+        v2.10–v2.12 field-delivery gap)."""
+        with tempfile.TemporaryDirectory() as td:
+            user_dir = Path(td)
+            (user_dir / "glm-5.1.toml").write_text(_stale_glm_toml_text())
+            registry = ProfileRegistry(user_profile_dir=user_dir)
+            profile = registry._profiles["glm-5.1"]
+            # The stale user copy doesn't even mention parser_variants;
+            # inheritance pulls the bundled list (with glm_hybrid).
+            assert "glm_hybrid" in profile.parser_variants, (
+                f"Stale local GLM profile must inherit glm_hybrid "
+                f"from bundled built-in via v2.12.1 loader. "
+                f"Got: {profile.parser_variants!r}"
+            )

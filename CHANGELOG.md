@@ -1,5 +1,95 @@
 # Changelog
 
+## v2.13.3 — Wire glm_hybrid into the GLM profile variants list (hotfix)
+
+Codex stop-time review (4th true positive of session) caught
+that v2.13.2's parser-registry change did NOT reach the GLM
+runtime path:
+
+> **GLM profile bypasses the new hybrid parser.**
+
+The GLM profile (`examples/model_profiles/65-glm-5.1.toml` and
+`llm_code/_builtins/profiles/65-glm-5.1.toml`) carries an
+EXPLICIT `[parser] variants = [...]` list — a v13 profile-driven
+adapter feature that overrides `DEFAULT_VARIANT_ORDER` in
+`parsing._parse_xml`:
+
+```python
+raw_order = getattr(profile, "parser_variants", None) if profile else None
+order: tuple[str, ...] = (
+    tuple(raw_order) if raw_order else DEFAULT_VARIANT_ORDER
+)
+```
+
+v2.13.2 added `glm_hybrid` to `DEFAULT_VARIANT_ORDER`, but the
+GLM profile's explicit list was unchanged — so for GLM users the
+parser still walked the old 6-variant list and the malformed
+parallel-emission shape continued to land as `tool_calls=0`. The
+v2.13.2 fix shipped clean code that nobody ever ran.
+
+This is the **same delivery-gap class** as v2.12.1's loader fix:
+runtime change + bundled profile correct + tests pass, but the
+profile-driven adapter path bypasses the registry change at
+runtime.
+
+### Fix
+
+Add `glm_hybrid` to the GLM profile's `[parser] variants` list,
+positioned BETWEEN `harmony_kv` and `glm_brace`:
+
+```toml
+variants = [
+    "json_payload",
+    "hermes_function",
+    "hermes_truncated",
+    "harmony_kv",
+    "glm_hybrid",   # v2.13.3
+    "glm_brace",
+    "bare_name_tag",
+]
+```
+
+Both copies updated (bundled + example) per v2.10 convention.
+
+### Regression coverage
+
+`tests/test_runtime/test_profile_inheritance_v2121.py::TestV2133GlmProfileVariantsList`
+adds 4 new tests:
+
+* `glm_hybrid` is in the bundled GLM profile's variants list
+* Position is between `harmony_kv` and `glm_brace` (variant order
+  matters for disambiguation)
+* End-to-end: load bundled GLM profile, parse the captured malformed
+  parallel-emission sample, assert both calls extract — this is
+  the test that would have caught v2.13.2's profile-bypass gap
+* Stale local user profile (lacking the new entry) inherits
+  `glm_hybrid` from the bundled built-in via v2.12.1's loader
+  inheritance — `pip install -U` is self-healing
+
+### Compatibility
+
+* v2.13.2 → v2.13.3 — drop-in; only the GLM profile's variants list
+  changes.
+* Build on v2.12.1's loader inheritance — every existing user with
+  a stale local copy auto-picks the new variant entry.
+* No code changes; no schema changes.
+
+### Codex catch credibility (running tally)
+
+| Release | Codex finding | Real? | Class |
+|---------|----|-----|----|
+| v2.12.1 | "GLM retry not enabled by runtime resolver" | TRUE | loader gap |
+| v2.13.1 | "URL-stripper removes primary URL fields" | TRUE | regex too aggressive |
+| v2.13.2 | "GLM prompt still contains serial instructions" | FALSE | misread clarifying text |
+| v2.13.2 | (pre-impl review of B+C plan) | TRUE | confirmed diagnosis |
+| v2.13.3 | "GLM profile bypasses the new hybrid parser" | TRUE | profile-driven adapter delivery gap |
+
+Running ratio this session: 4 true / 8 false ≈ 33% precision —
+slightly above the historical 20%, plausibly because each release
+exposes a tighter delivery surface for codex to inspect. The
+1-2 minute verify-before-fix-or-dismiss rule from
+`feedback_codex_review_credibility.md` remains correct.
+
 ## v2.13.2 — GLM hybrid parallel-emission parser (hotfix B + C)
 
 Real GLM-5.1 DEBUG smoke test exposed that the v2.13.0 Lever 1

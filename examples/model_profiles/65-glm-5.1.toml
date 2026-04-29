@@ -113,14 +113,23 @@ match = ["glm", "zhipu"]
 dedupe_with_template = true
 
 [parser]
-# Full default order — GLM streams emit any of the six variants
+# Full default order — GLM streams emit any of the variants
 # depending on the chat template + tool path, so the registry walks
-# the full list. Order matches DEFAULT_VARIANT_ORDER.
+# the full list. Order mirrors DEFAULT_VARIANT_ORDER.
+#
+# v2.13.3 hotfix — ``glm_hybrid`` added between ``harmony_kv`` and
+# ``glm_brace`` to recognise the malformed parallel-emission shape
+# GLM-5.1 sometimes produces under the v2.13.0 prompt nudge:
+# ``<tool_call>NAME<arg_key>args": {JSON}}</arg_value>``. Without
+# this entry the profile's explicit variants list bypasses the
+# v2.13.2 parser-registry change (the profile-driven adapter
+# overrides ``DEFAULT_VARIANT_ORDER`` in ``parsing._parse_xml``).
 variants = [
     "json_payload",
     "hermes_function",
     "hermes_truncated",
     "harmony_kv",
+    "glm_hybrid",
     "glm_brace",
     "bare_name_tag",
 ]
