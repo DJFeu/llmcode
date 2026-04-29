@@ -1,5 +1,81 @@
 # Changelog
 
+## v2.13.6 — Accurate merge / strict-suppress logging (polish)
+
+External codex review of v2.13.5 returned a "no blocking issue"
+verdict but flagged a real diagnostic bug and a logging gap:
+
+> Logging: add a DEBUG log when strict suppresses an otherwise-
+> applicable merge, but only if there are actually missing
+> bundled variants. Also make sure any merge DEBUG log captures
+> the pre-merge list before `dataclasses.replace`; otherwise
+> count/missing diagnostics can become wrong after replacement.
+
+### Bug fix — pre-merge log capture
+
+The v2.13.5 merge DEBUG log emitted **after** `dataclasses.replace`
+overwrote `profile.parser_variants` with the merged list, so:
+
+```python
+# v2.13.5 — wrong:
+profile = dataclasses.replace(profile, parser_variants=merged)
+_logger.debug(
+    "merged %d new variant(s) ... (stale list lacked: %s)",
+    len(merged) - len(profile.parser_variants) + len(merged),  # = len(merged)
+    key,
+    tuple(v for v in bundled.parser_variants if v not in profile.parser_variants),
+    # always () because profile.parser_variants IS now the merged list
+)
+```
+
+`stale list lacked: ()` always — the diagnostic was consistently
+wrong. v2.13.6 captures the pre-merge user list before
+`dataclasses.replace` and computes both the count and missing
+list against that snapshot.
+
+### New log path — strict-suppress diagnostic
+
+When `parser_variants_strict = true` blocks an otherwise-
+applicable merge, emit a DEBUG log naming the skipped variants:
+
+```
+parser_variants_strict suppressed merge for profile glm-5.1
+(skipped: ('glm_hybrid',))
+```
+
+Only fires when there are ACTUALLY missing bundled variants —
+profiles whose list is already up-to-date stay quiet.
+
+### Regression coverage
+
+3 new tests in `TestV2136MergeLogDiagnostics`:
+
+* Merge log reports the correct missing variant names (not `()`)
+  AND a non-zero count
+* Strict-suppress log fires with skipped variant names when
+  applicable
+* Strict-suppress stays silent when nothing was actually missing
+  (no spurious noise)
+
+All 25 inheritance tests + 104 sibling tests stay green; ruff
+clean.
+
+### Compatibility
+
+* v2.13.5 → v2.13.6 — drop-in; only DEBUG-level log shapes
+  change. No runtime behaviour difference.
+* The new strict-suppress log adds a single DEBUG line per stale
+  profile load when strict is set — invisible at INFO level
+  and above.
+
+### Closing notes
+
+This is the v2.13 chain's polish release. The architectural
+delivery-gap pattern (file → field → element → contract) is
+documented in `feedback_profile_driven_delivery_gap.md`. Future
+profile-default additions should check all four layers up front
+and verify diagnostic logs capture pre-mutation state.
+
 ## v2.13.5 — `parser_variants_strict` opt-out + doc alignment (hotfix)
 
 Codex stop-time review (6th true positive of session) flagged that

@@ -521,3 +521,131 @@ class TestV2135ParserVariantsStrictOptOut:
         profile = _profile_from_dict(raw)
         assert profile.parser_variants_strict is True
         assert profile.parser_variants == ()  # empty → registry uses DEFAULT
+
+
+# ── v2.13.6 polish — accurate merge / strict-suppress logging ───────
+
+
+class TestV2136MergeLogDiagnostics:
+    """v2.13.6 — fix the merge DEBUG log to capture pre-merge state
+    (codex stop-time review noticed the post-replace diagnostic was
+    computing wrong values), and add a parallel DEBUG log when
+    ``parser_variants_strict`` suppresses an otherwise-applicable
+    merge so power users can verify the flag took effect.
+    """
+
+    def test_merge_log_reports_correct_missing_variants(
+        self, caplog
+    ) -> None:
+        """The pre-merge log must list the variants ACTUALLY missing
+        from the user's stale list — not an empty tuple computed
+        after ``dataclasses.replace`` overwrote the user list with
+        the merged one (the v2.13.5 bug)."""
+        import logging
+
+        with tempfile.TemporaryDirectory() as td:
+            user_dir = Path(td)
+            (user_dir / "glm-5.1.toml").write_text(
+                _STALE_GLM_WITH_EXPLICIT_PARSER_LIST  # 6-variant stale
+            )
+            with caplog.at_level(
+                logging.DEBUG, logger="llm_code.runtime.model_profile"
+            ):
+                ProfileRegistry(user_profile_dir=user_dir)
+
+        merge_logs = [
+            rec.getMessage()
+            for rec in caplog.records
+            if "merged" in rec.getMessage() and "new variant" in rec.getMessage()
+        ]
+        assert len(merge_logs) >= 1, (
+            f"expected at least one merge log; got: {[r.getMessage() for r in caplog.records]!r}"
+        )
+        # The log must contain the actually-missing variant name.
+        # v2.13.5's bug: this would say "stale list lacked: ()" because
+        # the diff was computed after replace.
+        assert any("glm_hybrid" in msg for msg in merge_logs), (
+            f"merge log must name the missing variant; got: {merge_logs!r}"
+        )
+        # Must also report a non-zero count of merged variants.
+        assert any(
+            "merged 1 new variant" in msg or "merged 2 new variant" in msg
+            for msg in merge_logs
+        ), f"merge log count must be non-zero; got: {merge_logs!r}"
+
+    def test_strict_suppress_logs_skipped_variants(self, caplog) -> None:
+        """When strict=true blocks an otherwise-applicable merge,
+        a DEBUG log records the suppression so power users can
+        confirm the flag is doing what they expect."""
+        import logging
+
+        with tempfile.TemporaryDirectory() as td:
+            user_dir = Path(td)
+            (user_dir / "glm-5.1.toml").write_text(
+                _STRICT_GLM_SUBSET_PARSER_LIST  # strict=true + 3-variant
+            )
+            with caplog.at_level(
+                logging.DEBUG, logger="llm_code.runtime.model_profile"
+            ):
+                ProfileRegistry(user_profile_dir=user_dir)
+
+        suppress_logs = [
+            rec.getMessage()
+            for rec in caplog.records
+            if "parser_variants_strict suppressed" in rec.getMessage()
+        ]
+        assert len(suppress_logs) >= 1, (
+            f"expected at least one strict-suppress log; got: "
+            f"{[r.getMessage() for r in caplog.records]!r}"
+        )
+        # Must name at least one of the variants strict skipped.
+        assert any(
+            "glm_hybrid" in msg
+            or "harmony_kv" in msg
+            or "hermes_function" in msg
+            for msg in suppress_logs
+        ), f"strict-suppress log must name skipped variants; got: {suppress_logs!r}"
+
+    def test_strict_suppress_silent_when_no_missing_variants(
+        self, caplog
+    ) -> None:
+        """When strict=true on a profile whose list ALREADY contains
+        every bundled entry, no log is emitted (nothing to skip).
+        Avoids spamming users whose profile is already up-to-date."""
+        import logging
+
+        # User list = bundled list exactly (no merge needed in either
+        # direction). With strict=true, suppression has nothing to
+        # report.
+        full_list_with_strict = (
+            'name = "GLM-5.1 (full list, strict)"\n'
+            '[provider]\ntype = "openai-compat"\n'
+            '[parser]\n'
+            'parser_variants_strict = true\n'
+            'variants = [\n'
+            '    "json_payload",\n'
+            '    "hermes_function",\n'
+            '    "hermes_truncated",\n'
+            '    "harmony_kv",\n'
+            '    "glm_hybrid",\n'
+            '    "glm_brace",\n'
+            '    "bare_name_tag",\n'
+            ']\n'
+        )
+        with tempfile.TemporaryDirectory() as td:
+            user_dir = Path(td)
+            (user_dir / "glm-5.1.toml").write_text(full_list_with_strict)
+            with caplog.at_level(
+                logging.DEBUG, logger="llm_code.runtime.model_profile"
+            ):
+                ProfileRegistry(user_profile_dir=user_dir)
+
+        suppress_logs = [
+            rec.getMessage()
+            for rec in caplog.records
+            if "parser_variants_strict suppressed" in rec.getMessage()
+        ]
+        assert len(suppress_logs) == 0, (
+            f"strict-suppress log must NOT fire when nothing is "
+            f"missing; got: {suppress_logs!r}"
+        )

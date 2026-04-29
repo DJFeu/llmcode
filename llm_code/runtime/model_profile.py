@@ -1144,26 +1144,52 @@ class ProfileRegistry:
                 # behaviour for the 99% case.
                 if (
                     bundled is not None
-                    and not getattr(profile, "parser_variants_strict", False)
                     and getattr(profile, "parser_variants", None)
                     and getattr(bundled, "parser_variants", None)
                     and tuple(profile.parser_variants) != tuple(bundled.parser_variants)
                 ):
-                    merged = _merge_variant_lists(
-                        tuple(profile.parser_variants),
-                        tuple(bundled.parser_variants),
+                    # v2.13.6 — capture pre-merge state for accurate
+                    # diagnostics. The previous version computed the
+                    # missing-variant list AFTER ``dataclasses.replace``,
+                    # at which point ``profile.parser_variants`` already
+                    # held the merged list and the diff against bundled
+                    # was always empty.
+                    pre_merge_user = tuple(profile.parser_variants)
+                    missing_from_user = tuple(
+                        v
+                        for v in bundled.parser_variants
+                        if v not in pre_merge_user
                     )
-                    if merged != tuple(profile.parser_variants):
-                        profile = dataclasses.replace(
-                            profile, parser_variants=merged
+                    if getattr(profile, "parser_variants_strict", False):
+                        # v2.13.6 — when strict suppresses an otherwise-
+                        # applicable merge, log it (DEBUG only) so power
+                        # users debugging "why isn't my profile getting
+                        # the new variant" can confirm the flag took
+                        # effect. Only emit when there's actually
+                        # something we WOULD have merged in.
+                        if missing_from_user:
+                            _logger.debug(
+                                "parser_variants_strict suppressed merge "
+                                "for profile %s (skipped: %s)",
+                                key,
+                                missing_from_user,
+                            )
+                    else:
+                        merged = _merge_variant_lists(
+                            pre_merge_user,
+                            tuple(bundled.parser_variants),
                         )
-                        _logger.debug(
-                            "merged %d new variant(s) into user profile %s "
-                            "(stale list lacked: %s)",
-                            len(merged) - len(profile.parser_variants) + len(merged),  # informative
-                            key,
-                            tuple(v for v in bundled.parser_variants if v not in tuple(profile.parser_variants)),
-                        )
+                        if merged != pre_merge_user:
+                            _logger.debug(
+                                "merged %d new variant(s) into user "
+                                "profile %s (stale list lacked: %s)",
+                                len(merged) - len(pre_merge_user),
+                                key,
+                                missing_from_user,
+                            )
+                            profile = dataclasses.replace(
+                                profile, parser_variants=merged
+                            )
                 self._profiles[key] = profile
                 _logger.debug("loaded user profile: %s from %s", key, toml_path)
             except Exception as exc:
