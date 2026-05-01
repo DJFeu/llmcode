@@ -1,5 +1,54 @@
 # Changelog
 
+## v2.14.0 — VSCode formal server chat + REPL UX polish
+
+This release picks up the post-v2.13 project-health pass and the
+first opt-in VSCode integration with the formal `llmcode server`
+session protocol.
+
+### Added
+
+* **VSCode formal server chat** — the VSCode sidebar chat can now
+  opt into `llmcode server start` JSON-RPC sessions instead of the
+  legacy debug REPL transport. New settings:
+  `llmcode.chatProtocol`, `llmcode.formalServerUrl`,
+  `llmcode.formalServerToken`, `llmcode.formalSessionId`, and
+  `llmcode.formalRole`. The existing debug chat path remains the
+  default for backwards compatibility.
+
+* **Formal protocol client tests** — the VSCode extension now has a
+  zero-dependency `npm run test:unit` check covering formal event
+  mapping, URL normalization, and disconnect status reporting.
+
+### Improved
+
+* **REPL status rail** — the terminal status line now presents model,
+  mode, cwd/branch, compact context usage, and cost in a denser
+  status-first layout.
+
+* **Tool event readability** — tool progress lines now explicitly
+  show `running`, `ok`, and `failed`, with tighter argument truncation
+  to reduce noisy wrapping.
+
+### Fixed
+
+* Pydantic v2 config deprecation in Hayhooks OpenAI compatibility
+  models.
+* e2e REPL tests now isolate `HOME` under pytest temp directories.
+* Snapshot rendering ignores external `NO_COLOR` so golden tests stay
+  stable across shells.
+* Hayhooks IDE RPC socket-bind tests skip cleanly in local sandboxes
+  that block TCP bind.
+* Prompt routing tests now exercise the non-deprecated
+  `load_intro_prompt(resolve_profile_for_model(...))` path.
+
+### Verification
+
+* Python full suite: `8801 passed, 41 skipped`.
+* VSCode extension unit/compile: `4 passed`.
+* Formal server tests: `34 passed`.
+* Ruff and `git diff --check` clean.
+
 ## v2.13.7 — CI failure fix (post-v2.13 test alignment)
 
 GitHub Actions CI failed on v2.13.6 with three pre-existing tests
