@@ -15,8 +15,35 @@
         "llmcode.bridgePort": { "type": "number", "default": 9876, "description": "Port for llmcode IDE bridge server" },
         "llmcode.autoConnect": { "type": "boolean", "default": true, "description": "Auto-connect to bridge server on startup" },
         "llmcode.autoSpawn": { "type": "boolean", "default": true, "description": "Auto-spawn llmcode --serve for chat panel" },
-        "llmcode.serverUrl": { "type": "string", "default": "", "description": "Manual remote server URL (e.g. ws://host:8765)" },
-        "llmcode.pythonPath": { "type": "string", "default": "", "description": "Path to llmcode binary or Python interpreter" }
+        "llmcode.serverUrl": { "type": "string", "default": "", "description": "Manual debug REPL server URL (e.g. ws://host:8765)" },
+        "llmcode.pythonPath": { "type": "string", "default": "", "description": "Path to llmcode binary or Python interpreter" },
+        "llmcode.chatProtocol": {
+          "type": "string",
+          "enum": ["debug", "formal"],
+          "default": "debug",
+          "description": "Chat backend protocol. debug uses llmcode --serve; formal uses llmcode server start JSON-RPC sessions."
+        },
+        "llmcode.formalServerUrl": {
+          "type": "string",
+          "default": "ws://127.0.0.1:8080",
+          "description": "Formal llmcode server URL used when chatProtocol is formal."
+        },
+        "llmcode.formalServerToken": {
+          "type": "string",
+          "default": "",
+          "description": "Bearer token for the formal llmcode server. If empty, LLMCODE_SERVER_TOKEN from the extension host environment is used."
+        },
+        "llmcode.formalSessionId": {
+          "type": "string",
+          "default": "",
+          "description": "Existing formal server session id. Leave empty to create a new session; token must allow session.create."
+        },
+        "llmcode.formalRole": {
+          "type": "string",
+          "enum": ["writer", "observer"],
+          "default": "writer",
+          "description": "Role used when attaching to the formal llmcode server session."
+        }
       }
     },
     "commands": [
@@ -39,6 +66,7 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
+    "test:unit": "npm run compile && node --test test/*.test.js",
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
     "package": "npx @vscode/vsce package"

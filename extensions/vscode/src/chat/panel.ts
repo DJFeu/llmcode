@@ -2,12 +2,14 @@ import * as vscode from 'vscode';
 import WebSocket from 'ws';
 import { LlmcodeProcess } from './process';
 import { getConfig } from '../config';
+import { FormalServerClient } from './formal-client';
 
 export class ChatPanelProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'llmcode.chatView';
 
   private view?: vscode.WebviewView;
   private ws: WebSocket | null = null;
+  private formalClient: FormalServerClient | null = null;
   private proc: LlmcodeProcess | null = null;
   private extensionUri: vscode.Uri;
 
@@ -48,6 +50,29 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
   private async connectToServer(): Promise<void> {
     const config = getConfig();
+    this.disconnectServer();
+
+    if (config.chatProtocol === 'formal') {
+      this.formalClient = new FormalServerClient(
+        {
+          url: config.formalServerUrl,
+          token: config.formalServerToken,
+          sessionId: config.formalSessionId,
+          role: config.formalRole,
+        },
+        (message) => this.postToWebview(message),
+      );
+      try {
+        await this.formalClient.connect();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.formalClient.close();
+        this.formalClient = null;
+        this.postToWebview({ type: 'error', message: msg });
+      }
+      return;
+    }
+
     let url = config.serverUrl;
 
     if (!url) {
@@ -92,12 +117,25 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private sendToServer(text: string): void {
+    if (this.formalClient) {
+      this.formalClient.send(text).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.postToWebview({ type: 'error', message: msg });
+      });
+      return;
+    }
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type: 'user_input', text }));
+    } else {
+      this.postToWebview({ type: 'error', message: 'Not connected to llmcode server' });
     }
   }
 
   private disconnectServer(): void {
+    if (this.formalClient) {
+      this.formalClient.close();
+      this.formalClient = null;
+    }
     if (this.ws) {
       this.ws.close();
       this.ws = null;
