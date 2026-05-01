@@ -134,6 +134,7 @@ def test_default_render_shows_all_fields():
     assert "main" in text
     assert "16k" in text
     assert "128k" in text
+    assert "█" in text or "░" in text
     assert "$0.00" in text
 
 
@@ -148,15 +149,15 @@ def test_permission_mode_shown_for_non_default():
     sl = StatusLine()
     sl.merge(StatusUpdate(model="M", permission_mode="plan"))
     text = _text(sl.render_formatted_text())
-    assert "[plan]" in text
+    assert "mode:plan" in text
 
 
 def test_permission_mode_hidden_for_normal():
     sl = StatusLine()
     sl.merge(StatusUpdate(model="M", permission_mode="normal"))
     text = _text(sl.render_formatted_text())
-    assert "[normal]" not in text
-    assert "[" not in text
+    assert "mode:normal" not in text
+    assert "mode:" not in text
 
 
 # === Streaming mode ===

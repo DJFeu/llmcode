@@ -63,6 +63,7 @@ def capture(
         file=buf,
         force_terminal=True,
         color_system="truecolor",
+        no_color=False,
         width=width,
         record=False,
     )

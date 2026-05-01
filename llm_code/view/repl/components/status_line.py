@@ -25,6 +25,7 @@ from typing import List, Optional, Tuple
 
 from prompt_toolkit.formatted_text import FormattedText
 
+from llm_code.view.repl.components.context_meter import render_context_meter
 from llm_code.view.types import StatusUpdate
 
 
@@ -228,16 +229,22 @@ class StatusLine:
         ctx_limit = _format_tokens(s.context_limit_tokens)
         cost = _format_cost(s.cost_usd)
 
-        parts: List[Tuple[str, str]] = [
-            ("class:status", f" {model} · {cwd}({branch}) · "),
-            ("class:status", f"{ctx_used}/{ctx_limit} tok · "),
-            ("class:status", f"{cost} "),
-        ]
+        parts: List[Tuple[str, str]] = [("class:status", f" {model}")]
 
         if s.permission_mode and s.permission_mode not in {"normal", "default", None}:
-            parts.insert(
-                1, ("class:status.mode bold", f"[{s.permission_mode}] ")
-            )
+            parts.append(("class:status.mode bold", f" · mode:{s.permission_mode}"))
+
+        parts.append(("class:status", f" · {cwd}({branch}) · "))
+        if s.context_used_tokens is not None and s.context_limit_tokens is not None:
+            parts.extend(render_context_meter(
+                s.context_used_tokens,
+                s.context_limit_tokens,
+                compact=True,
+            ))
+            parts.append(("class:status", " · "))
+        else:
+            parts.append(("class:status", f"{ctx_used}/{ctx_limit} tok · "))
+        parts.append(("class:status", cost))
 
         if s.is_streaming:
             frame = SPINNER_FRAMES[self._spinner_frame]

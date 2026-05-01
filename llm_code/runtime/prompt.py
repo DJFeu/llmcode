@@ -120,8 +120,9 @@ def select_intro_prompt(model: str) -> str:
     """
     warnings.warn(
         "select_intro_prompt(model) is deprecated; use "
-        "load_intro_prompt(resolve_profile_for_model(model)) from "
-        "llm_code.runtime.profile_registry — removed in v14.",
+        "llm_code.runtime.prompt.load_intro_prompt("
+        "llm_code.runtime.profile_registry.resolve_profile_for_model(model)) "
+        "— removed in v14.",
         DeprecationWarning,
         stacklevel=2,
     )

@@ -17,7 +17,20 @@ _FILLED = "█"
 _EMPTY = "░"
 
 
-def render_context_meter(used: int, limit: int) -> List[Tuple[str, str]]:
+def _format_compact(n: int) -> str:
+    if n < 1000:
+        return str(n)
+    if n < 10000:
+        return f"{n / 1000:.1f}k"
+    return f"{n // 1000}k"
+
+
+def render_context_meter(
+    used: int,
+    limit: int,
+    *,
+    compact: bool = False,
+) -> List[Tuple[str, str]]:
     """Return a PT-compatible style list for ``N/M tok ▁▃▅▇█``.
 
     The bar is always 5 characters wide; each block is filled
@@ -32,7 +45,10 @@ def render_context_meter(used: int, limit: int) -> List[Tuple[str, str]]:
     # Number of fully-filled bar cells.
     filled = min(5, max(0, int(round(pct * 5))))
     bar_chars = [_FILLED if i < filled else _EMPTY for i in range(5)]
-    label = f"{used}/{limit} tok "
+    if compact:
+        label = f"{_format_compact(used)}/{_format_compact(limit)} tok "
+    else:
+        label = f"{used}/{limit} tok "
     bar = "".join(bar_chars)
     # Emit the number in token_count color, the bar in the graded color.
     return [

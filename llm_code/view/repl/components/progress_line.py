@@ -47,13 +47,14 @@ def _truncate_args(args: Dict[str, Any], max_len: int = 60) -> str:
 
 
 def render_start(tool: str, args: Dict[str, Any]) -> Text:
-    """Tool start line: ``tool_name  args_summary``."""
+    """Tool start line: ``tool_name  args_summary  running``."""
     out = Text()
     out.append(tool, style=f"bold {style.palette.tool_name_fg}")
-    args_text = _truncate_args(args)
+    args_text = _truncate_args(args, max_len=48)
     if args_text:
         out.append("  ", style="")
         out.append(args_text, style=style.palette.tool_args_fg)
+    out.append("  running", style=style.palette.tool_elapsed_fg)
     return out
 
 
@@ -71,10 +72,13 @@ def render_success(
     """Success line: ``  ⎿  ✓ summary  (Ns)``."""
     out = Text()
     out.append(f"  {HOOK}  ", style=style.palette.tool_progress_hook)
-    out.append(f"{style.ICON_SUCCESS} ", style=f"bold {style.palette.tool_ok_fg}")
+    out.append(f"{style.ICON_SUCCESS} ok", style=f"bold {style.palette.tool_ok_fg}")
+    if summary:
+        out.append("  ", style="")
     if summary:
         out.append(summary, style=style.palette.system_fg)
     else:
+        out.append("  ", style="")
         out.append(tool, style=style.palette.system_fg)
     if elapsed is not None:
         out.append(f"  ({elapsed:.1f}s)", style=style.palette.tool_elapsed_fg)
@@ -90,7 +94,8 @@ def render_failure(
     """Failure line: ``  ⎿  ✗ error  (Ns)  exit N``."""
     out = Text()
     out.append(f"  {HOOK}  ", style=style.palette.tool_progress_hook)
-    out.append(f"{style.ICON_FAILURE} ", style=f"bold {style.palette.tool_fail_fg}")
+    out.append(f"{style.ICON_FAILURE} failed", style=f"bold {style.palette.tool_fail_fg}")
+    out.append("  ", style="")
     out.append(error, style=style.palette.tool_fail_fg)
     if exit_code is not None:
         out.append(f"  (exit {exit_code})", style=style.palette.tool_args_fg)

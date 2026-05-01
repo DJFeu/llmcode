@@ -23,13 +23,14 @@ from typing import Any
 try:  # pragma: no cover — FastAPI only at runtime
     from fastapi import Depends, FastAPI, HTTPException, Request, status
     from fastapi.responses import JSONResponse
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel, ConfigDict, Field
 
     _FASTAPI_AVAILABLE = True
 except ImportError:  # pragma: no cover
     FastAPI = Depends = HTTPException = Request = status = None  # type: ignore[assignment]
     JSONResponse = None  # type: ignore[assignment]
     BaseModel = object  # type: ignore[assignment,misc]
+    ConfigDict = dict  # type: ignore[assignment,misc]
 
     def Field(*args, **kwargs):  # type: ignore[no-redef]
         return None
@@ -60,14 +61,13 @@ class ChatMessage(BaseModel):  # type: ignore[misc]
 
 
 class ChatRequest(BaseModel):  # type: ignore[misc]
+    model_config = ConfigDict(extra="allow")
+
     model: str = "llmcode-default"
     messages: list[ChatMessage]
     stream: bool = False
     max_tokens: int | None = None
     temperature: float | None = None
-
-    class Config:
-        extra = "allow"
 
 
 def _require_fastapi() -> None:

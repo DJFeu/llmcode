@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import inspect
+import sys
 from unittest.mock import MagicMock
 
 import pytest
@@ -61,6 +62,7 @@ class TestDebugReplServerLifecycle:
         class _FakeWs:
             serve = staticmethod(fake_serve)
 
+        monkeypatch.setitem(sys.modules, "websockets", _FakeWs)
         monkeypatch.setitem(mod.__dict__, "websockets", _FakeWs)
         monkeypatch.setitem(mod.__dict__, "asyncio_Future", short_future)
         # Replace asyncio.Future() by patching it on the module's asyncio alias.

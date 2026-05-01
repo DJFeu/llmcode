@@ -25,11 +25,12 @@ from typing import Any
 
 # Make the project importable when run from the repo root.
 _REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_REPO))
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
 
-from llm_code.api.anthropic_provider import AnthropicProvider
-from llm_code.api.openai_compat import OpenAICompatProvider
-from llm_code.api.types import (
+from llm_code.api.anthropic_provider import AnthropicProvider  # noqa: E402
+from llm_code.api.openai_compat import OpenAICompatProvider  # noqa: E402
+from llm_code.api.types import (  # noqa: E402
     ImageBlock,
     Message,
     ServerToolResultBlock,

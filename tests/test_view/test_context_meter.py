@@ -15,6 +15,11 @@ def test_returns_label_and_bar() -> None:
     assert "1000/4000 tok" in _flat(out)
 
 
+def test_compact_label() -> None:
+    out = render_context_meter(16400, 128000, compact=True)
+    assert "16k/128k tok" in _flat(out)
+
+
 def test_low_fill_uses_success_color() -> None:
     out = render_context_meter(100, 1000)
     assert style.palette.status_success in out[1][0]

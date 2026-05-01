@@ -75,7 +75,7 @@ def llmcode_cwd(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def llmcode_env() -> dict:
+def llmcode_env(llmcode_cwd: Path) -> dict:
     """Minimal env — no real API calls, fake test config path."""
     env = os.environ.copy()
     # Strip PYTHONPATH/PYTHONHOME so a parent shell with a user
@@ -89,11 +89,14 @@ def llmcode_env() -> dict:
     # Telemetry client gets instantiated. No code actually reads this
     # env var today but setting it costs nothing and documents intent.
     env["LLMCODE_NO_TELEMETRY"] = "1"
-    # Point at an empty config so we don't load the user's real
-    # ~/.llmcode/config.json during smoke testing.
-    env["LLMCODE_CONFIG"] = str(
-        Path.home() / ".llmcode" / "test-config.toml"
-    )
+    # Keep all implicit Path.home() state inside the pytest temp repo.
+    # This avoids touching the developer's real ~/.llmcode and keeps
+    # the smoke suite runnable in sandboxes that block home-dir writes.
+    test_home = llmcode_cwd / ".home"
+    (test_home / ".llmcode").mkdir(parents=True, exist_ok=True)
+    env["HOME"] = str(test_home)
+    # Point at an empty config so we don't load the user's real config.
+    env["LLMCODE_CONFIG"] = str(test_home / ".llmcode" / "test-config.toml")
     # prompt_toolkit honors TERM when deciding which capabilities to
     # emit. A plain xterm-256color keeps the output readable under
     # pexpect's pseudo-TTY.

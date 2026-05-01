@@ -111,6 +111,8 @@ dev = [
     "pytest-cov>=5.0",
     "respx>=0.22",
     "ruff>=0.5",
+    "libcst>=1.1.0",
+    "tomlkit>=0.13.0",
     "pexpect>=4.9.0",  # M12 pexpect smoke tests
 ]
 

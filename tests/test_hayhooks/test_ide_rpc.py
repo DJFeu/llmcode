@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import errno
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -68,7 +69,12 @@ class TestIDERpcServer:
     @pytest.fixture
     async def server(self):
         srv = IDERpcServer(port=0)
-        await srv.start()
+        try:
+            await srv.start()
+        except PermissionError as exc:
+            if exc.errno == errno.EPERM:
+                pytest.skip("local TCP bind is blocked in this test environment")
+            raise
         yield srv
         await srv.stop()
 
