@@ -27,8 +27,31 @@ from typing import Any
 
 import click
 
-from llm_code.migrate.v12 import runner as v12_runner
-from llm_code.migrate.v12.rewriters import ALL_REWRITERS, describe_rewriters
+
+_REWRITER_DESCRIPTIONS: tuple[tuple[str, str], ...] = (
+    (
+        "tool_pipeline_subclass",
+        "ToolExecutionPipeline subclass -> @component Component",
+    ),
+    (
+        "prompt_mode_import",
+        "legacy prompt-mode imports -> PromptBuilder(template_path=...)",
+    ),
+    (
+        "prompt_format_call",
+        "prompt.format(**kw) -> PromptBuilder(template=prompt).run(**kw)['prompt']",
+    ),
+    (
+        "pyproject_constraint",
+        "bump llmcode dep constraint to >=2.0,<3.0 across poetry/PEP 621/hatch",
+    ),
+)
+ALL_REWRITERS: tuple[str, ...] = tuple(name for name, _ in _REWRITER_DESCRIPTIONS)
+
+
+def describe_rewriters() -> list[tuple[str, str]]:
+    """Return rewriter descriptions without importing optional libcst."""
+    return list(_REWRITER_DESCRIPTIONS)
 
 
 @click.group(name="migrate")
@@ -86,6 +109,8 @@ def v12_cmd(
     for per-rewriter details.
     """
     try:
+        from llm_code.migrate.v12 import runner as v12_runner
+
         rewriters = _parse_rewriter_list(rewriter_names)
         result = v12_runner.run(
             Path(path),
@@ -139,7 +164,7 @@ def _parse_rewriter_list(raw: str | None) -> tuple[str, ...] | None:
     return names
 
 
-def _emit_run_summary(result: "v12_runner.RunResult", *, dry_run: bool) -> None:
+def _emit_run_summary(result: Any, *, dry_run: bool) -> None:
     click.echo(
         f"files scanned: {result.files_seen}, changed: {result.files_changed}, "
         f"dry_run={dry_run}"

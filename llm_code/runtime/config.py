@@ -483,6 +483,23 @@ class RuntimeConfig:
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
 
 
+@dataclass(frozen=True)
+class ConfigSource:
+    """Where a winning config value came from."""
+
+    label: str
+    path: str = ""
+
+
+@dataclass(frozen=True)
+class ConfigLoadResult:
+    """Effective config plus raw merged data and per-leaf provenance."""
+
+    config: RuntimeConfig
+    raw: dict
+    sources: dict[str, ConfigSource]
+
+
 class ConfigSchema(BaseModel):
     """Pydantic schema for validating the merged config dict before conversion."""
 
@@ -538,6 +555,64 @@ def merge_configs(base: dict, override: dict) -> dict:
         else:
             result[key] = copy.deepcopy(value)
     return result
+
+
+def _merge_config_sources(
+    base: dict,
+    sources: dict[str, ConfigSource],
+    override: dict,
+    source: ConfigSource,
+    *,
+    prefix: str = "",
+) -> tuple[dict, dict[str, ConfigSource]]:
+    """Deep-merge ``override`` while tracking the winning source per leaf."""
+    result = copy.deepcopy(base)
+    merged_sources = dict(sources)
+    for key, value in override.items():
+        dotted = f"{prefix}.{key}" if prefix else str(key)
+        if (
+            key in result
+            and isinstance(result[key], dict)
+            and isinstance(value, dict)
+        ):
+            result[key], merged_sources = _merge_config_sources(
+                result[key],
+                merged_sources,
+                value,
+                source,
+                prefix=dotted,
+            )
+        else:
+            result[key] = copy.deepcopy(value)
+            for leaf in _leaf_paths(value, prefix=dotted):
+                merged_sources[leaf] = source
+    return result, merged_sources
+
+
+def _leaf_paths(value: object, *, prefix: str) -> tuple[str, ...]:
+    """Return dotted leaf paths for ``value`` rooted at ``prefix``."""
+    if isinstance(value, dict):
+        if not value:
+            return (prefix,) if prefix else ()
+        paths: list[str] = []
+        for key, child in value.items():
+            dotted = f"{prefix}.{key}" if prefix else str(key)
+            paths.extend(_leaf_paths(child, prefix=dotted))
+        return tuple(paths)
+    return (prefix,) if prefix else ()
+
+
+def _flatten_leaf_values(data: dict) -> dict[str, object]:
+    """Flatten a nested config dict to dotted leaf keys."""
+    flattened: dict[str, object] = {}
+    for path in _leaf_paths(data, prefix=""):
+        current: object = data
+        for part in path.split("."):
+            if not isinstance(current, dict):
+                break
+            current = current.get(part)
+        flattened[path] = current
+    return flattened
 
 
 def _load_json_file(path: Path) -> dict:
@@ -816,34 +891,7 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
     )
 
 
-def load_config(
-    user_dir: Path,
-    project_dir: Path,
-    local_path: Path,
-    cli_overrides: dict,
-) -> RuntimeConfig:
-    """Load from JSON files in order, deep merge, convert to RuntimeConfig.
-
-    Precedence (lowest to highest):
-      user_dir/config.json -> project_dir/config.json -> local_path -> cli_overrides
-    """
-    merged: dict = {}
-
-    user_cfg = _load_json_file(Path(user_dir) / "config.json")
-    merged = merge_configs(merged, user_cfg)
-
-    project_cfg = _load_json_file(Path(project_dir) / "config.json")
-    merged = merge_configs(merged, project_cfg)
-
-    local_cfg = _load_json_file(Path(local_path))
-    merged = merge_configs(merged, local_cfg)
-
-    merged = merge_configs(merged, cli_overrides)
-
-    # Apply pending config migrations
-    from llm_code.runtime.config_migration import apply_pending_migrations
-    merged = apply_pending_migrations(merged, config_dir=Path(user_dir))
-
+def _validate_and_convert_config(merged: dict) -> RuntimeConfig:
     # Validate merged config; on error, log warning and continue with best-effort defaults
     try:
         ConfigSchema.model_validate(merged)
@@ -853,3 +901,73 @@ def load_config(
         print(f"[WARNING] Config validation error: {exc}", file=sys.stderr)
 
     return _dict_to_runtime_config(merged)
+
+
+def load_config_with_provenance(
+    user_dir: Path,
+    project_dir: Path,
+    local_path: Path,
+    cli_overrides: dict,
+) -> ConfigLoadResult:
+    """Load config and report the source that won for each dotted leaf key.
+
+    Precedence (lowest to highest):
+      user_dir/config.json -> project_dir/config.json -> local_path -> cli_overrides
+    """
+    merged: dict = {}
+    sources: dict[str, ConfigSource] = {}
+
+    layers = (
+        ("user", Path(user_dir) / "config.json"),
+        ("project", Path(project_dir) / "config.json"),
+        ("local", Path(local_path)),
+    )
+    for label, path in layers:
+        cfg = _load_json_file(path)
+        merged, sources = _merge_config_sources(
+            merged,
+            sources,
+            cfg,
+            ConfigSource(label=label, path=str(path)),
+        )
+
+    merged, sources = _merge_config_sources(
+        merged,
+        sources,
+        cli_overrides,
+        ConfigSource(label="cli"),
+    )
+
+    raw_merged = copy.deepcopy(merged)
+    before_migration = _flatten_leaf_values(merged)
+
+    # Apply pending config migrations
+    from llm_code.runtime.config_migration import apply_pending_migrations
+    merged = apply_pending_migrations(merged, config_dir=Path(user_dir))
+
+    after_migration = _flatten_leaf_values(merged)
+    migration_source = ConfigSource(label="migration", path=str(user_dir))
+    for key, value in after_migration.items():
+        if key not in before_migration or before_migration[key] != value:
+            sources[key] = migration_source
+
+    return ConfigLoadResult(
+        config=_validate_and_convert_config(merged),
+        raw=raw_merged,
+        sources=sources,
+    )
+
+
+def load_config(
+    user_dir: Path,
+    project_dir: Path,
+    local_path: Path,
+    cli_overrides: dict,
+) -> RuntimeConfig:
+    """Load from JSON files in order, deep merge, convert to RuntimeConfig."""
+    return load_config_with_provenance(
+        user_dir=user_dir,
+        project_dir=project_dir,
+        local_path=local_path,
+        cli_overrides=cli_overrides,
+    ).config

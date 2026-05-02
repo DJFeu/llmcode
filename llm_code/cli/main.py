@@ -535,6 +535,21 @@ def _register_subcommands() -> None:
     except Exception:  # pragma: no cover — defensive
         pass
 
+    # Multi-model diagnostics: config provenance, provider/model probe,
+    # and active model/profile health checks. Kept read-only and lazy so
+    # the REPL startup path stays unchanged.
+    try:
+        from llm_code.cli.diagnostics import (
+            config_group,
+            doctor,
+            models_group,
+        )
+        main.add_command(config_group, name="config")
+        main.add_command(doctor, name="doctor")
+        main.add_command(models_group, name="models")
+    except Exception:  # pragma: no cover — defensive
+        pass
+
 
 _register_subcommands()
 

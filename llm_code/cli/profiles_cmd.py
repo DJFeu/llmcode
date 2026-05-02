@@ -1,11 +1,12 @@
 """``llmcode profiles`` click CLI group (v2.10.0).
 
-Provides four subcommands for managing built-in model profiles bundled
+Provides subcommands for managing built-in model profiles bundled
 with the wheel:
 
 * ``llmcode profiles list``   — show what's bundled vs. installed.
 * ``llmcode profiles diff``   — unified diff between bundled and user copy.
 * ``llmcode profiles update`` — copy bundled → user dir with safety rails.
+* ``llmcode profiles validate`` — parse profiles and check provider/parser refs.
 
 Wired into the top-level ``llmcode`` group via ``cli/main.py``'s
 ``_register_subcommands()`` indirection so this module's import doesn't
@@ -19,16 +20,19 @@ import datetime as _dt
 import difflib
 import shutil
 import sys
+import tomllib
 from pathlib import Path
 
 import click
 
+from llm_code.api.provider_registry import get_registry
 from llm_code.profiles.builtins import (
     builtin_profile_dir,
     builtin_profile_path,
     list_builtin_profile_paths,
     strip_numeric_prefix,
 )
+from llm_code.runtime.model_profile import _profile_from_dict
 
 __all__ = ["profiles"]
 
@@ -288,7 +292,119 @@ def update_command(
         sys.exit(1)
 
 
+# ── validate ──────────────────────────────────────────────────────────
+
+
+@profiles.command("validate")
+@click.argument("name", required=False)
+@click.option(
+    "--builtins",
+    "validate_builtins",
+    is_flag=True,
+    default=False,
+    help="Validate every bundled built-in profile.",
+)
+def validate_command(name: str | None, validate_builtins: bool) -> None:
+    """Validate model profile TOML files without installing them."""
+    if validate_builtins and name:
+        raise click.UsageError("Pass either a profile name or --builtins, not both.")
+
+    label = "user profiles"
+    if validate_builtins:
+        targets = list_builtin_profile_paths()
+        label = "built-in profiles"
+    elif name:
+        builtin = builtin_profile_path(name)
+        if builtin is not None:
+            targets = [builtin]
+            label = "profile"
+        else:
+            candidate = Path(name).expanduser()
+            if not candidate.suffix:
+                candidate = _user_profile_dir() / f"{name}.toml"
+            targets = [candidate]
+            label = "profile"
+    else:
+        user_dir = _user_profile_dir()
+        targets = sorted(user_dir.glob("*.toml")) if user_dir.is_dir() else []
+
+    if not targets:
+        click.echo(f"No {label} found.")
+        return
+
+    failures: list[str] = []
+    for path in targets:
+        failures.extend(_validate_profile_file(path))
+
+    if failures:
+        click.echo("Profile validation failed:", err=True)
+        for failure in failures:
+            click.echo(f"  {failure}", err=True)
+        sys.exit(1)
+
+    click.echo(f"Validated {len(targets)} {label}: OK")
+
+
 # ── Internal helpers ──────────────────────────────────────────────────
+
+
+def _validate_profile_file(path: Path) -> list[str]:
+    """Return validation failures for a single profile TOML file."""
+    if not path.is_file():
+        return [f"{path}: file not found"]
+
+    try:
+        with path.open("rb") as fh:
+            data = tomllib.load(fh)
+    except tomllib.TOMLDecodeError as exc:
+        return [f"{path}: invalid TOML: {exc}"]
+    except OSError as exc:
+        return [f"{path}: cannot read: {exc}"]
+
+    try:
+        profile = _profile_from_dict(data)
+    except Exception as exc:  # noqa: BLE001
+        return [f"{path}: cannot build ModelProfile: {exc}"]
+
+    failures: list[str] = []
+    if profile.provider_type and get_registry().get(profile.provider_type) is None:
+        failures.append(
+            f"{path}: unknown provider_type {profile.provider_type!r}"
+        )
+
+    template = (profile.prompt_template or "").strip()
+    if template:
+        name = template
+        if name.startswith("models/"):
+            name = name[len("models/"):]
+        if name.endswith(".j2"):
+            name = name[: -len(".j2")]
+        prompt_path = (
+            Path(__file__).resolve().parents[1]
+            / "engine"
+            / "prompts"
+            / "models"
+            / f"{name}.j2"
+        )
+        if not prompt_path.is_file():
+            failures.append(
+                f"{path}: prompt template {template!r} not found"
+            )
+
+    if profile.parser_variants:
+        from llm_code.tools.parser_variants import UnknownVariantError, get_variant
+
+        for variant in profile.parser_variants:
+            if ":" in variant:
+                continue
+            try:
+                get_variant(variant)
+            except UnknownVariantError:
+                failures.append(
+                    f"{path}: unknown parser variant {variant!r}"
+                )
+
+    return failures
 
 
 def _update_one(

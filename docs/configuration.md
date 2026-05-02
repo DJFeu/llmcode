@@ -9,6 +9,15 @@
 | `.llmcode/config.local.json` | Local (gitignore) | High |
 | CLI flags | Session | Highest |
 
+Inspect the merged result with:
+
+```bash
+llmcode config explain
+llmcode doctor
+```
+
+`config explain` prints each configured key with the winning source layer. `doctor` resolves the active model profile and provider descriptor so provider/profile mismatches are visible before starting a turn.
+
 ## Full Reference
 
 ```json

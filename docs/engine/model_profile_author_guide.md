@@ -1,11 +1,8 @@
 # Model Profile Author Guide
 
-> **Status:** v13 Phase A — profile schema extension (backward
-> compatible). Phase A ships new ``[prompt]`` authoring fields on the
-> profile TOML; the ``select_intro_prompt`` shim still honours every
-> pre-v13 model. Phase B migrates the shipped profiles. Phase C deletes
-> the legacy if-ladder. See the companion plans under
-> ``docs/superpowers/plans/2026-04-24-llm-code-v13-*``.
+> **Status:** current profile-driven system. Built-in TOMLs declare their
+> prompt, parser, provider, and model-behaviour settings; user TOMLs can
+> override or extend them from ``~/.llmcode/model_profiles``.
 
 ## Section table of contents
 
@@ -41,13 +38,17 @@ a safe default so you only need to declare what differs from defaults.
 
 | Location | Loader | When loaded |
 |---|---|---|
-| ``examples/model_profiles/*.toml`` | ``_load_builtin_profiles`` (v13) / ``ProfileRegistry._load_user_profiles`` (pre-v13) | Lazy — first call to the deprecated ``select_intro_prompt`` shim. Packaged with the repo. |
-| ``~/.llmcode/model_profiles/*.toml`` | ``ProfileRegistry`` (pre-v13 lookup by filename) | Runtime — discovered when the registry is constructed. Host-local overrides. |
+| ``llm_code/_builtins/profiles/*.toml`` | ``ProfileRegistry`` built-ins / ``llmcode profiles`` CLI | Packaged in the wheel. These are the bundled defaults. |
+| ``~/.llmcode/model_profiles/*.toml`` | ``ProfileRegistry`` user override loader | Runtime — discovered when the registry is constructed. Host-local overrides. |
 
 To activate a new profile as a user, drop it in
 ``~/.llmcode/model_profiles/<model_id>.toml`` and either restart
 llmcode or let the registry hot-reload (the directory's mtime is
 checked on every ``get_profile`` call).
+
+Use ``llmcode profiles validate <model_id>`` or
+``llmcode profiles validate --builtins`` to catch TOML syntax errors,
+unknown providers, missing prompt templates, and unknown parser variants.
 
 ## 3. Required and optional fields
 
@@ -190,16 +191,14 @@ built-in ``glm`` prompt in your user profile), register your profile
 **before** the built-ins load or pass ``check_collision=False``
 explicitly.
 
-### What happens in Phase A
+### Current prompt routing
 
-Phase A ships the schema and loader, but it does not migrate any of
-the shipped profiles. The built-in TOMLs under ``examples/
-model_profiles/`` still omit the ``[prompt]`` section, so every
-existing model continues to route through the historical if-ladder
-in ``_legacy_select_intro_prompt``. The deprecated shim
-``select_intro_prompt`` emits a ``DeprecationWarning`` on every
-call but preserves byte-level output. Phase B migrates the TOMLs;
-Phase C deletes the ladder.
+Built-in and user TOMLs can declare ``[prompt]``. ``template`` accepts a
+short name such as ``"qwen"`` or a path-like value such as
+``"models/qwen.j2"``; both resolve under
+``llm_code/engine/prompts/models``. Prompt routing is profile-driven, so
+adding a new model family should not require adding model-name checks to
+runtime prompt code.
 
 ## 5. Walkthrough — adding a new model family (FooChat-13B)
 
@@ -210,8 +209,8 @@ prompt because the style matches closely.
 
 **Step 1.** Write the TOML. Save it as
 ``~/.llmcode/model_profiles/foochat-13b.toml`` (or under
-``examples/model_profiles/`` if you are contributing to llmcode
-core):
+``llm_code/_builtins/profiles/NN-foochat-13b.toml`` if you are
+contributing to llmcode core):
 
 ```toml
 name = "FooChat-13B (OSS)"
@@ -260,41 +259,31 @@ Streaming, tool-call, thinking-budget, and context-window settings
 all come from the profile — zero code changes.
 
 **Step 4.** (Optional) Contribute upstream. Copy the file to
-``examples/model_profiles/foochat-13b.toml`` in a PR against the
-llmcode repository. The profile registry's
-``_load_builtin_profiles`` sweep picks it up without further edits.
+``llm_code/_builtins/profiles/NN-foochat-13b.toml`` in a PR against the
+llmcode repository, where ``NN`` preserves the bundled display order.
+Run ``llmcode profiles validate --builtins`` before submitting.
 
 ## 6. Troubleshooting
 
 **"My profile is never selected."**
-Verify ``prompt_match`` is lowercase and is a substring of the
-model id you pass to llmcode. The resolver lowercases the id but
-not the tokens; the TOML loader normalises tokens to lowercase.
-Print the registry to debug:
+For user profiles, the TOML filename stem is the primary match key.
+Use a stem that is either the exact model id or a prefix of the model id,
+for example ``foochat-13b.toml`` for ``foochat-13b-q4_0``. Then inspect
+the active resolution:
 
-```python
-from llm_code.runtime import profile_registry as pr
-pr._ensure_builtin_profiles_loaded()
-for p in pr._PROFILES:
-    print(p.name, p.prompt_match)
+```bash
+llmcode doctor
+llmcode config explain
 ```
 
-**"Two profiles fight for the same match token."**
-``register_profile`` raises
-``llm_code.runtime.profile_registry.ProfileMatchCollision`` with the
-colliding token + both profile names. Fix by narrowing one of the
-tokens (e.g. ``"glm-5"`` instead of ``"glm"``), or by loading your
-profile first with ``check_collision=False``.
-
-**"I migrated my profile but ``select_intro_prompt`` still returns
-the old text."**
-Phase A's shim only switches to the profile path when
-``profile.prompt_template`` is non-empty. Double-check the
-``[prompt]`` section parsed correctly by reading it back:
+**"My prompt template is not being used."**
+Double-check the ``[prompt]`` section parsed correctly and that the
+template exists:
 
 ```python
-profile = pr.resolve_profile_for_model("your-model-id")
-print(profile.prompt_template, profile.prompt_match)
+from llm_code.runtime.model_profile import get_profile
+profile = get_profile("your-model-id")
+print(profile.prompt_template)
 ```
 
 **"Template file not found — llmcode returned a generic fallback."**
@@ -309,12 +298,8 @@ ls llm_code/engine/prompts/models/   # compare to profile.prompt_template
 
 - ``docs/engine/prompt_template_author_guide.md`` — how the Jinja2
   templates under ``engine/prompts/`` are assembled.
-- ``docs/superpowers/specs/2026-04-24-llm-code-v13-profile-driven-adapters-design.md``
-  — full v13 design (Phase A / B / C roadmap).
 - ``llm_code/runtime/model_profile.py`` — ``ModelProfile`` dataclass +
   ``ProfileRegistry`` (per-model-id lookup by filename).
-- ``llm_code/runtime/profile_registry.py`` — v13 match-driven
-  resolver (``resolve_profile_for_model``).
 - ``tests/test_runtime/test_profile_registry.py`` +
   ``tests/test_runtime/test_prompt_loader.py`` — example usage and
   expected behaviour.
@@ -322,5 +307,5 @@ ls llm_code/engine/prompts/models/   # compare to profile.prompt_template
 ---
 
 *Parser variants (``[parser]`` section) and streaming hints
-(``[parser_hints]`` section) are authored the same way — covered in
-Plan #2's author guide once Phase A of that plan lands.*
+(``[parser_hints]`` section) are authored the same way and are checked
+by ``llmcode profiles validate``.*
