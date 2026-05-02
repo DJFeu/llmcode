@@ -772,12 +772,16 @@ def test_model_switch_mutates_config(
     cfg = RuntimeConfig(model="old-model")
     runtime = FakeRuntime()
     runtime._config = cfg
+    runtime._active_model = "old-model"
+    runtime._force_xml_mode = True
     state = _make_state(tmp_path, runtime=runtime, config=cfg)
     renderer = ViewStreamRenderer(view=backend, state=state)
     d = CommandDispatcher(view=backend, state=state, renderer=renderer)
     d.dispatch("model", "new-model")
     assert state.config.model == "new-model"
     assert runtime._config.model == "new-model"
+    assert runtime._active_model == "new-model"
+    assert not hasattr(runtime, "_force_xml_mode")
 
 
 def test_model_route_shows_routing_table(

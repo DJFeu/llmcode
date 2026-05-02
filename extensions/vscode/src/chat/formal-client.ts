@@ -33,7 +33,10 @@ interface PendingRequest {
 const KNOWN_EVENT_TYPES = new Set([
   'text_delta',
   'text_done',
+  'thinking_start',
+  'thinking_stop',
   'tool_start',
+  'tool_progress',
   'tool_result',
   'turn_done',
   'message',

@@ -22,7 +22,7 @@ export class LlmcodeProcess {
     return new Promise<number>((resolve, reject) => {
       const args = ['--serve', '--port', '0'];
       const isInterpreter = cmd.endsWith('python') || cmd.endsWith('python3');
-      const spawnArgs = isInterpreter ? ['-m', 'llm_code', ...args] : args;
+      const spawnArgs = isInterpreter ? ['-m', 'llm_code.cli.main', ...args] : args;
 
       this.proc = spawn(cmd, spawnArgs, {
         cwd,
@@ -38,7 +38,11 @@ export class LlmcodeProcess {
         const line = chunk.toString();
         const match = line.match(/listening on ws:\/\/[^:]+:(\d+)/);
         if (match && !this._ready) {
-          this._port = parseInt(match[1], 10);
+          const port = parseInt(match[1], 10);
+          if (port <= 0) {
+            return;
+          }
+          this._port = port;
           this._ready = true;
           clearTimeout(timeout);
           resolve(this._port);

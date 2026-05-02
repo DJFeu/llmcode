@@ -20,7 +20,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-blue" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/tests-7959%20passing-brightgreen" alt="Tests">
+  <img src="https://github.com/DJFeu/llmcode/actions/workflows/ci.yml/badge.svg" alt="CI">
   <img src="https://img.shields.io/badge/cold%20start-~400ms-brightgreen" alt="Cold start">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
   <img src="https://img.shields.io/pypi/v/llmcode-cli" alt="PyPI">
@@ -550,7 +550,8 @@ finishes; skill-scoped servers live for the session.
 ```bash
 pip install llmcode-cli[voice]          # Voice input via STT
 pip install llmcode-cli[computer-use]   # GUI automation
-pip install llmcode-cli[ide]            # IDE integration
+pip install llmcode-cli[websocket]      # Remote/debug chat over WebSocket
+pip install llmcode-cli[ide]            # IDE integration + WebSocket chat
 pip install llmcode-cli[observability]  # OTel exporters + Langfuse + Prometheus
 pip install llmcode-cli[treesitter]     # Tree-sitter multi-language repo map
 pip install llmcode-cli[memory]         # Local embeddings (torch stack)

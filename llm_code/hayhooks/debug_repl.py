@@ -28,6 +28,20 @@ from llm_code.runtime.model_aliases import resolve_model
 logger = logging.getLogger(__name__)
 
 
+def _bound_port(server: Any, fallback: int) -> int:
+    sockets = getattr(server, "sockets", None) or []
+    for sock in sockets:
+        try:
+            sockname = sock.getsockname()
+        except OSError:
+            continue
+        if isinstance(sockname, tuple) and len(sockname) >= 2:
+            port = sockname[1]
+            if isinstance(port, int):
+                return port
+    return fallback
+
+
 class DebugReplServer:
     """WebSocket REPL — exposes the llmcode conversation loop remotely.
 
@@ -61,11 +75,19 @@ class DebugReplServer:
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError(
                 "websockets is required for debug REPL; "
-                "install llmcode[websocket]"
+                "install llmcode-cli[websocket]"
             ) from exc
 
-        print(f"llm-code debug REPL listening on ws://{self._host}:{self._port}")
-        async with websockets.serve(self._handle_client, self._host, self._port):
+        async with websockets.serve(
+            self._handle_client,
+            self._host,
+            self._port,
+        ) as ws_server:
+            self._port = _bound_port(ws_server, self._port)
+            print(
+                f"llm-code debug REPL listening on ws://{self._host}:{self._port}",
+                flush=True,
+            )
             try:
                 await asyncio.Future()  # run forever
             finally:
@@ -84,8 +106,8 @@ class DebugReplServer:
             cwd = Path.cwd()
             self._config = load_config(
                 user_dir=Path.home() / ".llmcode",
-                project_dir=cwd,
-                local_path=cwd / ".llmcode" / "config.json",
+                project_dir=cwd / ".llmcode",
+                local_path=cwd / ".llmcode" / "config.local.json",
                 cli_overrides={},
             )
 
@@ -407,7 +429,7 @@ class DebugReplClient:
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError(
                 "websockets is required for debug REPL client; "
-                "install llmcode[websocket]"
+                "install llmcode-cli[websocket]"
             ) from exc
 
         from rich.console import Console

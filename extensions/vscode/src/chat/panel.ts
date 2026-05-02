@@ -3,6 +3,7 @@ import WebSocket from 'ws';
 import { LlmcodeProcess } from './process';
 import { getConfig } from '../config';
 import { FormalServerClient } from './formal-client';
+import { PendingMessageQueue } from './pending-message-queue';
 
 export class ChatPanelProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'llmcode.chatView';
@@ -11,6 +12,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private ws: WebSocket | null = null;
   private formalClient: FormalServerClient | null = null;
   private proc: LlmcodeProcess | null = null;
+  private pendingMessages = new PendingMessageQueue();
+  private connecting = false;
+  private connected = false;
   private extensionUri: vscode.Uri;
 
   constructor(extensionUri: vscode.Uri) {
@@ -45,11 +49,21 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   }
 
   sendMessage(text: string): void {
+    if (!this.view) {
+      this.pendingMessages.enqueue(text);
+      return;
+    }
     this.sendToServer(text);
   }
 
   private async connectToServer(): Promise<void> {
+    if (this.connecting) {
+      return;
+    }
     const config = getConfig();
+    this.connecting = true;
+    this.connected = false;
+    this.postToWebview({ type: 'status', state: 'connecting' });
     this.disconnectServer();
 
     if (config.chatProtocol === 'formal') {
@@ -69,7 +83,13 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         this.formalClient.close();
         this.formalClient = null;
         this.postToWebview({ type: 'error', message: msg });
+        this.connecting = false;
+        this.connected = false;
+        return;
       }
+      this.connecting = false;
+      this.connected = true;
+      this.flushPendingMessages();
       return;
     }
 
@@ -78,6 +98,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     if (!url) {
       if (!config.autoSpawn) {
         this.postToWebview({ type: 'error', message: 'No server URL configured and autoSpawn is disabled' });
+        this.connecting = false;
         return;
       }
 
@@ -88,17 +109,25 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this.postToWebview({ type: 'error', message: msg });
+        this.connecting = false;
         return;
       }
     }
 
-    this.ws = new WebSocket(url);
+    const socket = new WebSocket(url);
+    this.ws = socket;
 
-    this.ws.on('open', () => {
+    socket.on('open', () => {
+      if (this.ws !== socket) {
+        return;
+      }
+      this.connecting = false;
+      this.connected = true;
       this.postToWebview({ type: 'status', state: 'connected' });
+      this.flushPendingMessages();
     });
 
-    this.ws.on('message', (data: WebSocket.Data) => {
+    socket.on('message', (data: WebSocket.Data) => {
       try {
         const event = JSON.parse(data.toString());
         this.postToWebview(event);
@@ -107,16 +136,37 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       }
     });
 
-    this.ws.on('close', () => {
+    socket.on('close', () => {
+      if (this.ws !== socket) {
+        return;
+      }
+      this.connecting = false;
+      this.connected = false;
       this.postToWebview({ type: 'status', state: 'disconnected' });
     });
 
-    this.ws.on('error', () => {
+    socket.on('error', () => {
       // close will fire
     });
   }
 
   private sendToServer(text: string): void {
+    const value = text.trim();
+    if (!value) {
+      return;
+    }
+    if (!this.connected) {
+      this.pendingMessages.enqueue(value);
+      this.postToWebview({ type: 'status', state: this.connecting ? 'connecting' : 'queued' });
+      if (!this.connecting) {
+        void this.connectToServer();
+      }
+      return;
+    }
+    this.deliverToServer(value);
+  }
+
+  private deliverToServer(text: string): void {
     if (this.formalClient) {
       this.formalClient.send(text).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
@@ -127,11 +177,23 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type: 'user_input', text }));
     } else {
-      this.postToWebview({ type: 'error', message: 'Not connected to llmcode server' });
+      this.connected = false;
+      this.pendingMessages.enqueue(text);
+      this.postToWebview({ type: 'status', state: 'queued' });
+    }
+  }
+
+  private flushPendingMessages(): void {
+    if (!this.connected) {
+      return;
+    }
+    for (const text of this.pendingMessages.drain()) {
+      this.deliverToServer(text);
     }
   }
 
   private disconnectServer(): void {
+    this.connected = false;
     if (this.formalClient) {
       this.formalClient.close();
       this.formalClient = null;
@@ -167,6 +229,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
   <div id="chat-container">
+    <div id="status" data-state="idle">Not connected</div>
     <div id="messages"></div>
     <div id="input-area">
       <textarea id="input" rows="2" placeholder="Ask llmcode..."></textarea>
@@ -197,7 +260,20 @@ function getWebviewScript(): string {
     const messagesEl = document.getElementById('messages');
     const inputEl = document.getElementById('input');
     const sendBtn = document.getElementById('send-btn');
+    const statusEl = document.getElementById('status');
     let currentAssistant = null;
+
+    function setStatus(state) {
+      const labels = {
+        connected: 'Connected',
+        connecting: 'Connecting...',
+        queued: 'Queued until connected',
+        disconnected: 'Disconnected',
+        idle: 'Not connected'
+      };
+      statusEl.dataset.state = state || 'idle';
+      statusEl.textContent = labels[state] || labels.idle;
+    }
 
     function appendMessage(cls, text) {
       const div = document.createElement('div');
@@ -266,6 +342,9 @@ function getWebviewScript(): string {
         case 'tool_start':
           appendToolBadge(msg.name, msg.detail || '');
           break;
+        case 'tool_progress':
+          appendToolBadge(msg.name, msg.message || '');
+          break;
         case 'tool_result':
           if (msg.isError) {
             appendMessage('error', msg.output || 'Tool error');
@@ -278,6 +357,7 @@ function getWebviewScript(): string {
           appendMessage('error', msg.message || 'Unknown error');
           break;
         case 'status':
+          setStatus(msg.state);
           if (msg.state === 'disconnected') {
             appendMessage('error', 'Disconnected from server');
           }

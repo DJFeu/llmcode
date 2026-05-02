@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "llmcode-cli"
-version = "2.14.0"
+version = "2.14.1"
 description = "Open-source AI agent runtime for any LLM — production-grade coding agent with multi-layer memory, multi-agent orchestration, and defense-in-depth security"
 license = {text = "MIT"}
 authors = [{name = "Adam Hung"}]
@@ -61,7 +61,7 @@ voice = ["sounddevice>=0.5"]
 voice-local = ["sounddevice>=0.5", "faster-whisper>=1.0"]
 voice-google = ["google-cloud-speech>=2.0"]
 computer-use = ["pyautogui>=0.9", "Pillow>=10.0", "mss>=9.0"]
-ide = ["psutil>=5.9"]
+ide = ["psutil>=5.9", "websockets>=12.0"]
 # Optional observability stack: OTLP span exporter + Langfuse + Prometheus
 # metrics. The OTel API/SDK themselves stay in core (see `dependencies`
 # above) so tracing call sites always link; only the exporters / metrics
@@ -100,6 +100,7 @@ all = [
     "uvicorn>=0.29.0",
     "sse-starlette>=2.0.0",
     "mcp>=1.0.0",
+    "websockets>=12.0",
     "sentence-transformers>=2.7.0",
     "onnxruntime>=1.17.0",
     "libcst>=1.1.0",

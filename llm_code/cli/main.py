@@ -36,6 +36,16 @@ _PERMISSION_CHOICES = [
 ]
 
 
+def _config_paths(cwd: Path) -> tuple[Path, Path, Path]:
+    """Return user, project, and local config paths for CLI startup."""
+    project_config_dir = cwd / ".llmcode"
+    return (
+        Path.home() / ".llmcode",
+        project_config_dir,
+        project_config_dir / "config.local.json",
+    )
+
+
 class ReplGroup(click.Group):
     """Custom click group that lets un-registered positional tokens fall
     through to the group callback as a ``prompt`` kwarg.
@@ -312,11 +322,11 @@ def main(
         cli_overrides["model"] = selected_model
         cli_overrides.setdefault("provider", {})["base_url"] = base_url
 
-    user_dir = Path.home() / ".llmcode"
+    user_dir, project_config_dir, local_config_path = _config_paths(cwd)
     config = load_config(
         user_dir=user_dir,
-        project_dir=cwd,
-        local_path=cwd / ".llmcode" / "config.json",
+        project_dir=project_config_dir,
+        local_path=local_config_path,
         cli_overrides=cli_overrides,
     )
 

@@ -41,6 +41,18 @@ def _pid_file() -> Path:
     return _server_dir() / "server.pid"
 
 
+def _load_runtime_config():
+    from llm_code.runtime.config import load_config
+
+    cwd = Path.cwd()
+    return load_config(
+        user_dir=Path.home() / ".llmcode",
+        project_dir=cwd / ".llmcode",
+        local_path=cwd / ".llmcode" / "config.local.json",
+        cli_overrides={},
+    )
+
+
 @click.group(name="server", help="Manage the formal llmcode server.")
 def server_group() -> None:
     """Top-level ``llmcode server`` group."""
@@ -67,15 +79,40 @@ def server_start(host: str, port: int) -> None:
         raise SystemExit(2)
 
     tokens = TokenStore(_tokens_db_path())
-    manager = SessionManager(tokens=tokens)
+    config = _load_runtime_config()
+    manager_ref: dict[str, SessionManager] = {}
+
+    async def _runtime_factory(session_id: str):
+        from llm_code.runtime.app_state import AppState
+        from llm_code.server.runtime_bridge import ServerRuntimeBridge
+
+        state = AppState.from_config(config, cwd=Path.cwd())
+        if state.runtime is None:
+            return None
+        return ServerRuntimeBridge(
+            runtime=state.runtime,
+            manager=manager_ref["manager"],
+            session_id=session_id,
+        )
+
+    manager = SessionManager(tokens=tokens, runtime_factory=_runtime_factory)
+    manager_ref["manager"] = manager
     pid_file = _pid_file()
     pid_file.parent.mkdir(parents=True, exist_ok=True)
     pid_file.write_text(str(os.getpid()), encoding="utf-8")
-    click.echo(f"llmcode server listening on ws://{host}:{port}")
 
     async def _run() -> None:
         from llm_code.server import websocket_transport
-        await websocket_transport.serve(host=host, port=port, manager=manager)
+
+        def _announce(bound_host: str, bound_port: int) -> None:
+            click.echo(f"llmcode server listening on ws://{bound_host}:{bound_port}")
+
+        await websocket_transport.serve(
+            host=host,
+            port=port,
+            manager=manager,
+            on_listen=_announce,
+        )
 
     try:
         asyncio.run(_run())

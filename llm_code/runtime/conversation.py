@@ -669,6 +669,19 @@ class ConversationRuntime:
             except ImportError:
                 pass
 
+    def switch_model(self, model: str, config: Any | None = None) -> None:
+        """Switch the active model for subsequent turns."""
+        if config is not None:
+            self._config = config
+        elif getattr(self, "_config", None) is not None:
+            self._config = dataclasses.replace(self._config, model=model)
+        self._active_model = model
+        from llm_code.runtime.model_profile import get_profile
+        self._model_profile = get_profile(model)
+        if hasattr(self, "_force_xml_mode"):
+            delattr(self, "_force_xml_mode")
+        self._consecutive_failures = 0
+
     # ------------------------------------------------------------------
     # Backward-compatible properties delegating to HarnessEngine
     # ------------------------------------------------------------------
@@ -2852,4 +2865,3 @@ async def run_conversation_async(
     )
     agent = build_agent_from_config(agent_cfg, pipeline, chat_fn)
     return await agent.run_async(messages)
-

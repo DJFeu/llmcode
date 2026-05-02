@@ -1,5 +1,42 @@
 # Changelog
 
+## v2.14.1 — VSCode chat reliability + formal runtime bridge
+
+This patch release follows the v2.14.0 VSCode formal-chat release with
+correctness fixes for first-run chat, documented config precedence, and
+live model switching.
+
+### Added
+
+* **Formal server runtime bridge** — `llmcode server start` now creates
+  runtime-backed formal sessions and streams `ConversationRuntime`
+  events through the JSON-RPC session protocol.
+* **VSCode chat pending queue** — sidebar commands can queue prompts
+  while the webview or WebSocket connection is still initializing.
+* **VSCode chat connection status** — the chat view now shows
+  connecting, queued, connected, and disconnected states.
+
+### Fixed
+
+* `llmcode --serve --port 0` and `llmcode server start --port 0` now
+  report the actual bound ephemeral port instead of `:0`.
+* VSCode auto-spawn with a Python interpreter now launches
+  `python -m llm_code.cli.main` instead of the package root.
+* `/model <name>` now updates the runtime active model/profile used by
+  subsequent turns instead of only mutating config.
+* CLI, Hayhooks, and debug REPL config loading now honor the documented
+  `.llmcode/config.json` then `.llmcode/config.local.json` precedence.
+* VSCode install docs now point at `llmcode-cli[websocket]`; the `ide`
+  extra also includes the WebSocket dependency.
+* Formal event mapping now passes thinking and tool-progress events
+  through to the VSCode webview.
+
+### Verification
+
+* Python targeted release suite: `500 passed, 6 skipped`.
+* VSCode extension unit/compile: `6 passed`.
+* `git diff --check` clean.
+
 ## v2.14.0 — VSCode formal server chat + REPL UX polish
 
 This release picks up the post-v2.13 project-health pass and the

@@ -22,6 +22,27 @@ body {
   padding: 8px;
 }
 
+#status {
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+}
+
+#status[data-state="connected"] {
+  color: var(--vscode-testing-iconPassed);
+}
+
+#status[data-state="connecting"],
+#status[data-state="queued"] {
+  color: var(--vscode-charts-yellow);
+}
+
+#status[data-state="disconnected"] {
+  color: var(--vscode-testing-iconFailed);
+}
+
 .message {
   margin-bottom: 12px;
   padding: 8px 12px;

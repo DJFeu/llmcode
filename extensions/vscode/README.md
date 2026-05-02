@@ -12,7 +12,7 @@ AI coding agent powered by local LLMs, integrated into VS Code.
 
 ## Setup
 
-1. Install [llmcode](https://github.com/DJFeu/llmcode): `pip install llmcode-cli`
+1. Install [llmcode](https://github.com/DJFeu/llmcode): `pip install "llmcode-cli[websocket]"`
 2. Install this extension
 3. The extension auto-connects to the IDE bridge and auto-spawns the chat server
 

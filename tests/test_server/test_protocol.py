@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -167,6 +168,31 @@ async def test_session_create_then_close(
     assert close.error is None
     assert close.result == {"closed": True}
     assert manager.get(session_id) is None
+
+
+@pytest.mark.asyncio
+async def test_session_create_uses_runtime_factory(store: TokenStore) -> None:
+    created_for: list[str] = []
+
+    async def factory(session_id: str):
+        created_for.append(session_id)
+        return SimpleNamespace(session_id=session_id)
+
+    manager = SessionManager(tokens=store, runtime_factory=factory)
+    bearer = store.grant("*", SessionRole.WRITER)
+
+    create = await manager.dispatch(
+        token=bearer.token,
+        request=JsonRpcRequest(id=1, method="session.create"),
+        client_id="admin",
+    )
+
+    assert create.error is None
+    session_id = create.result["session_id"]
+    assert created_for == [session_id]
+    session = manager.get(session_id)
+    assert session is not None
+    assert session.runtime.session_id == session_id
 
 
 @pytest.mark.asyncio

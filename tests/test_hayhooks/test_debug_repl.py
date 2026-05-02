@@ -72,6 +72,49 @@ class TestDebugReplServerLifecycle:
         await server.start()
         server._runtime.shutdown.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_port_zero_reports_bound_port(
+        self, monkeypatch, capsys,
+    ) -> None:
+        from llm_code.hayhooks.debug_repl import DebugReplServer
+
+        server = DebugReplServer(host="127.0.0.1", port=0, config=None)
+
+        class _FakeSocket:
+            def getsockname(self):
+                return ("127.0.0.1", 43210)
+
+        class _FakeCtx:
+            sockets = [_FakeSocket()]
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+        def fake_serve(*args, **kwargs):  # noqa: ARG001
+            return _FakeCtx()
+
+        async def short_future():
+            return None
+
+        import llm_code.hayhooks.debug_repl as mod
+
+        class _FakeWs:
+            serve = staticmethod(fake_serve)
+
+        monkeypatch.setitem(sys.modules, "websockets", _FakeWs)
+        monkeypatch.setitem(mod.__dict__, "websockets", _FakeWs)
+        import asyncio as _asyncio
+        monkeypatch.setattr(_asyncio, "Future", short_future)
+
+        await server.start()
+
+        out = capsys.readouterr().out
+        assert "ws://127.0.0.1:43210" in out
+        assert "ws://127.0.0.1:0" not in out
+
 
 class TestDebugReplClient:
     def test_init_adds_ws_prefix(self):

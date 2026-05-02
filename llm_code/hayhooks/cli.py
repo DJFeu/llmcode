@@ -86,8 +86,12 @@ def _load_hayhooks_config(config_path: str | None):
     try:
         cfg = load_config(
             user_dir=Path.home() / ".llmcode",
-            project_dir=cwd,
-            local_path=Path(config_path) if config_path else cwd / ".llmcode" / "config.json",
+            project_dir=cwd / ".llmcode",
+            local_path=(
+                Path(config_path)
+                if config_path
+                else cwd / ".llmcode" / "config.local.json"
+            ),
             cli_overrides={},
         )
     except Exception:

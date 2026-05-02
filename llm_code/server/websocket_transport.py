@@ -17,10 +17,11 @@ from :func:`token_fingerprint` to satisfy the M9 R2 mitigation.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import urllib.parse
 import uuid
-from typing import Any
+from typing import Any, Callable
 
 from llm_code.server.proto import (
     EventNotification,
@@ -36,6 +37,20 @@ from llm_code.server.tokens import token_fingerprint
 
 
 logger = logging.getLogger(__name__)
+
+
+def _bound_port(server: Any, fallback: int) -> int:
+    sockets = getattr(server, "sockets", None) or []
+    for sock in sockets:
+        try:
+            sockname = sock.getsockname()
+        except OSError:
+            continue
+        if isinstance(sockname, tuple) and len(sockname) >= 2:
+            port = sockname[1]
+            if isinstance(port, int):
+                return port
+    return fallback
 
 
 def _extract_token(connection: Any, path: str | None = None) -> str | None:
@@ -158,12 +173,22 @@ async def handle_connection(connection: Any, manager: SessionManager) -> None:
             await manager.detach(attached_session, client_id)
 
 
-async def serve(host: str, port: int, manager: SessionManager) -> None:
+async def serve(
+    host: str,
+    port: int,
+    manager: SessionManager,
+    on_listen: Callable[[str, int], Any] | None = None,
+) -> None:
     """Bind a websocket server. Blocks until cancelled."""
     import websockets  # type: ignore[import-untyped]
 
     async def _handler(connection: Any) -> None:  # websockets >= 12 single-arg shape
         await handle_connection(connection, manager)
 
-    async with websockets.serve(_handler, host=host, port=port):
+    async with websockets.serve(_handler, host=host, port=port) as ws_server:
+        actual_port = _bound_port(ws_server, port)
+        if on_listen is not None:
+            result = on_listen(host, actual_port)
+            if inspect.isawaitable(result):
+                await result
         await asyncio.Future()  # run forever

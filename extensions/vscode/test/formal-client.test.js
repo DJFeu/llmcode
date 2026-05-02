@@ -23,6 +23,14 @@ test('passes known assistant stream events through unchanged', () => {
     mapFormalPayloadToWebviewMessage({ type: 'tool_start', name: 'read_file', detail: 'README.md' }),
     { type: 'tool_start', name: 'read_file', detail: 'README.md' },
   );
+  assert.deepEqual(
+    mapFormalPayloadToWebviewMessage({ type: 'thinking_stop', elapsed: 1.2, tokens: 7 }),
+    { type: 'thinking_stop', elapsed: 1.2, tokens: 7 },
+  );
+  assert.deepEqual(
+    mapFormalPayloadToWebviewMessage({ type: 'tool_progress', name: 'bash', message: 'running' }),
+    { type: 'tool_progress', name: 'bash', message: 'running' },
+  );
 });
 
 test('normalizes formal server URLs without changing explicit websocket URLs', () => {

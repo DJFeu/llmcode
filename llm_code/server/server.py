@@ -141,6 +141,8 @@ class SessionManager:
     async def create_session(self, runtime: Any | None = None) -> ServerSession:
         """Create a fresh session with a random id."""
         session_id = uuid.uuid4().hex[:12]
+        if runtime is None and self._runtime_factory is not None:
+            runtime = await self._runtime_factory(session_id)
         session = ServerSession(
             session_id=session_id,
             created_at=time.time(),
@@ -159,7 +161,10 @@ class SessionManager:
         forked_id = uuid.uuid4().hex[:12]
         # Deep copy the runtime so child mutations don't leak; observers
         # and event buffer start fresh because they are transport state.
-        forked_runtime = copy.deepcopy(source.runtime) if source.runtime is not None else None
+        if source.runtime is not None and hasattr(source.runtime, "fork_for_session"):
+            forked_runtime = source.runtime.fork_for_session(forked_id)
+        else:
+            forked_runtime = copy.deepcopy(source.runtime) if source.runtime is not None else None
         session = ServerSession(
             session_id=forked_id,
             created_at=time.time(),

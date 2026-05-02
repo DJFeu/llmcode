@@ -191,6 +191,45 @@ class TestReplFallthrough:
         # REPL path was taken (not a subcommand).
         assert mock_from_config.called
 
+    def test_documented_project_local_config_wins(self) -> None:
+        """CLI config precedence is documented as:
+
+        ``~/.llmcode/config.json`` < ``.llmcode/config.json`` <
+        ``.llmcode/config.local.json``.
+        """
+        async def _ret(*_args, **_kwargs):
+            return None
+
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            from pathlib import Path
+
+            config_dir = Path(".llmcode")
+            config_dir.mkdir()
+            (config_dir / "config.json").write_text(
+                '{"model": "project-model"}',
+                encoding="utf-8",
+            )
+            (config_dir / "config.local.json").write_text(
+                '{"model": "local-model"}',
+                encoding="utf-8",
+            )
+            with patch("llm_code.cli.main._run_repl") as mock_repl, patch(
+                "llm_code.runtime.app_state.AppState.from_config",
+                return_value=_SHELL_STATE,
+            ) as mock_from_config, patch(
+                "llm_code.view.repl.backend.REPLBackend",
+            ):
+                mock_repl.side_effect = _ret
+                result = runner.invoke(main, [])
+
+        assert result.exit_code == 0, (
+            f"exit={result.exit_code} output={result.output!r} "
+            f"exc={result.exception!r}"
+        )
+        cfg = mock_from_config.call_args.args[0]
+        assert cfg.model == "local-model"
+
 
 class TestSubcommandArgumentConflict:
     """The ``--`` separator should be able to force a prompt even when

@@ -645,13 +645,8 @@ class CommandDispatcher:
 
         - ``/model`` with no args → show current + profile info
         - ``/model route`` → list configured model routing
-        - ``/model <name>`` → switch (config mutation only — the
-          v1.x path rebuilt runtime; v2.0.0 just updates the
-          config reference on AppState and runtime. A full swap
-          requires AppState.from_config which the dispatcher
-          cannot do from sync context. For now, the config is
-          updated and the next run_turn picks up the new value
-          via runtime._config.)
+        - ``/model <name>`` → switch the config and runtime model
+          used by subsequent turns.
         """
         arg = args.strip()
         config = self._state.config
@@ -664,7 +659,7 @@ class CommandDispatcher:
                 return
             self._state.config = dataclasses.replace(config, model=arg)
             if self._state.runtime is not None:
-                self._state.runtime._config = self._state.config
+                self._apply_runtime_model_switch(self._state.runtime, arg)
             self._view.print_info(f"Model switched to: {arg}")
             self._view.print_info(self._format_profile_info(arg))
             return
@@ -672,6 +667,22 @@ class CommandDispatcher:
         self._view.print_info(f"Current model: {model}")
         if model and model != "(not set)":
             self._view.print_info(self._format_profile_info(model))
+
+    def _apply_runtime_model_switch(self, runtime: object, model: str) -> None:
+        switch_model = getattr(runtime, "switch_model", None)
+        if callable(switch_model):
+            switch_model(model, self._state.config)
+            return
+
+        setattr(runtime, "_config", self._state.config)
+        setattr(runtime, "_active_model", model)
+        try:
+            from llm_code.runtime.model_profile import get_profile
+            setattr(runtime, "_model_profile", get_profile(model))
+        except Exception:  # noqa: BLE001
+            pass
+        if hasattr(runtime, "_force_xml_mode"):
+            delattr(runtime, "_force_xml_mode")
 
     def _format_profile_info(self, model: str) -> str:
         """Format a model profile as a compact info string."""
