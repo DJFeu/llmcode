@@ -82,9 +82,13 @@ Update available: 1.17.0 → 1.18.0 (run /update)
 mkdir -p ~/.llmcode
 cat > ~/.llmcode/config.json << 'EOF'
 {
-  "model": "qwen3.5",
+  "model": "qwen3.6",
   "provider": {
     "base_url": "http://localhost:8000/v1"
+  },
+  "thinking": {
+    "mode": "adaptive",
+    "budget_tokens": 4096
   }
 }
 EOF
@@ -480,7 +484,7 @@ Sources: Official (`anthropics/claude-plugins-official`), Community, npm, GitHub
 
 ```json
 {
-  "model": "qwen3.5",
+  "model": "qwen3.6",
   "provider": {
     "base_url": "http://localhost:8000/v1",
     "timeout": 120
@@ -489,9 +493,9 @@ Sources: Official (`anthropics/claude-plugins-official`), Community, npm, GitHub
     "mode": "prompt"
   },
   "model_routing": {
-    "sub_agent": "qwen3.5-32b",
-    "compaction": "qwen3.5-7b",
-    "fallback": "qwen3.5-7b"
+    "sub_agent": "qwen3.6",
+    "compaction": "gemma4",
+    "fallback": "qwen3.6"
   },
   "skill_router": {
     "enabled": true,
@@ -509,11 +513,15 @@ Sources: Official (`anthropics/claude-plugins-official`), Community, npm, GitHub
     "synthesis_enabled": true,
     "max_members": 5
   },
-  "thinking": { "mode": "adaptive", "budget_tokens": 10000 },
+  "thinking": { "mode": "adaptive", "budget_tokens": 4096 },
   "dream": { "enabled": true, "min_turns": 3 },
   "hooks": []
 }
 ```
+
+If you only run one local model, point every `model_routing` entry at the
+same model. If you also run a smaller summarization model, using it for
+`compaction` keeps the main coding model reserved for foreground turns.
 
 ### Config locations (low → high precedence)
 
