@@ -44,7 +44,11 @@ def register_core_tools(
     from llm_code.tools.bash import BashTool
     from llm_code.tools.builtin import get_builtin_tools
 
-    base_url = config.provider_base_url or ""
+    try:
+        from llm_code.runtime.provider_routing import resolve_provider_target
+        base_url = resolve_provider_target(config).base_url
+    except Exception:
+        base_url = config.provider_base_url or ""
     is_local = any(
         h in base_url
         for h in (

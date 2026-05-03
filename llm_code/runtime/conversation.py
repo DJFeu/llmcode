@@ -632,11 +632,19 @@ class ConversationRuntime:
         self._query_profiler = QueryProfiler()
         self._consecutive_failures: int = 0
         self._compressor = ContextCompressor()
-        self._active_model: str = getattr(config, "model", "")
+        self._provider_cache: dict[str, Any] = {}
+        self._active_model: str = ""
+        self._request_model: str = ""
+        self._active_target: Any = None
         # Resolve the model profile — declarative capability + behaviour
-        # spec that replaces scattered hardcoded model adaptations.
-        from llm_code.runtime.model_profile import get_profile
-        self._model_profile = get_profile(self._active_model)
+        # spec that replaces scattered hardcoded model adaptations. The
+        # active model is logical (may be provider/model); request_model is
+        # what is sent to the provider API.
+        self._set_active_model(
+            getattr(config, "model", ""),
+            provider=provider,
+            reset_tool_mode=False,
+        )
         # Wave2-1c: consecutive empty assistant responses. We fire the
         # empty_assistant_response hook every time, inject a nudge
         # user-message after 2 (to prod the model into actually
@@ -675,11 +683,7 @@ class ConversationRuntime:
             self._config = config
         elif getattr(self, "_config", None) is not None:
             self._config = dataclasses.replace(self._config, model=model)
-        self._active_model = model
-        from llm_code.runtime.model_profile import get_profile
-        self._model_profile = get_profile(model)
-        if hasattr(self, "_force_xml_mode"):
-            delattr(self, "_force_xml_mode")
+        self._set_active_model(model)
         self._consecutive_failures = 0
 
     # ------------------------------------------------------------------
@@ -832,6 +836,42 @@ class ConversationRuntime:
         guard logic.
         """
         self._hook_dispatcher.fire(event, context)
+
+    def _set_active_model(
+        self,
+        model: str,
+        *,
+        provider: Any | None = None,
+        reset_tool_mode: bool = True,
+    ) -> None:
+        """Switch active logical model and provider endpoint together."""
+        from llm_code.runtime.provider_routing import (
+            create_provider_for_model,
+            resolve_profile_for_target,
+            resolve_provider_target,
+        )
+
+        target = resolve_provider_target(self._config, model)
+        if provider is not None:
+            self._provider_cache[target.logical_model] = provider
+        elif target.logical_model not in self._provider_cache:
+            provider_map = getattr(self._config, "provider_map", {}) or {}
+            if not target.uses_provider_map and not provider_map and hasattr(self, "_provider"):
+                self._provider_cache[target.logical_model] = self._provider
+            else:
+                self._provider_cache[target.logical_model] = create_provider_for_model(
+                    self._config,
+                    target.logical_model,
+                )
+
+        self._active_model = target.logical_model
+        self._request_model = target.request_model
+        self._active_target = target
+        self._provider = self._provider_cache[target.logical_model]
+        self._model_profile = resolve_profile_for_target(target)
+
+        if reset_tool_mode:
+            self._force_xml_mode = self._model_profile.force_xml_tools
 
     def _find_last_tool_result(self, tool_name: str) -> str | None:
         """Find the most recent successful ToolResultBlock for a tool.
@@ -1088,17 +1128,18 @@ class ConversationRuntime:
                     from llm_code.runtime.server_capabilities import (
                         load_native_tools_support,
                     )
+                    _base_url = getattr(self._active_target, "base_url", "") or ""
                     _cached = load_native_tools_support(
-                        base_url=getattr(self._config, "provider_base_url", "") or "",
-                        model=self._active_model,
+                        base_url=_base_url,
+                        model=self._request_model,
                     )
                     if _cached is False:
                         self._force_xml_mode = True
                         logger.debug(
                             "server_capabilities cache: %s (%s) marked "
                             "as not supporting native tool calling",
-                            getattr(self._config, "provider_base_url", ""),
-                            self._active_model,
+                            _base_url,
+                            self._request_model,
                         )
                 except Exception:
                     pass
@@ -1107,14 +1148,14 @@ class ConversationRuntime:
         # Determine if the model is locally-hosted (unlimited token upgrades).
         # Profile is authoritative; URL-based heuristic is the fallback for
         # models without an explicit profile.
-        _base_url = getattr(self._config, "provider_base_url", "") or ""
+        _base_url = getattr(self._active_target, "base_url", "") or ""
         _is_local = self._model_profile.is_local or self._model_profile.unlimited_token_upgrade
         if not _is_local:
             # Fallback: detect self-hosted models by URL pattern
             _is_local = (
                 any(h in _base_url for h in ("localhost", "127.0.0.1", "0.0.0.0", "192.168.", "10.", "172."))
                 or _base_url.startswith("http://")  # non-HTTPS = likely self-hosted
-                or self._active_model.startswith("/")  # path-based model name = vLLM
+                or self._request_model.startswith("/")  # path-based model name = vLLM
             )
         _TOKEN_UPGRADE_CAP = 0 if _is_local else 65536  # 0 means unlimited
 
@@ -1138,7 +1179,7 @@ class ConversationRuntime:
             # try to resolve a better one from the provider's model list.
             if self._model_profile.name in ("(default)", ""):
                 from llm_code.runtime.model_profile import probe_provider_profile
-                _discovered = probe_provider_profile(_base_url, self._active_model)
+                _discovered = probe_provider_profile(_base_url, self._request_model)
                 if _discovered is not None:
                     self._model_profile = _discovered
                     # Re-evaluate is_local with the new profile
@@ -1147,7 +1188,7 @@ class ConversationRuntime:
                         _is_local = (
                             any(h in _base_url for h in ("localhost", "127.0.0.1", "0.0.0.0", "192.168.", "10.", "172."))
                             or _base_url.startswith("http://")
-                            or self._active_model.startswith("/")
+                            or self._request_model.startswith("/")
                         )
                     _TOKEN_UPGRADE_CAP = 0 if _is_local else 65536
         if self._detected_context_window > 0:
@@ -1199,6 +1240,28 @@ class ConversationRuntime:
         # tool calls already and the next iteration is summarisation
         # work.
         _tool_calls_this_turn = 0
+
+        # Web RAG preflight: for prompts that explicitly need fresh or
+        # external knowledge, retrieve grounding before the first model call.
+        # Pure coding/static CS prompts intentionally skip this path.
+        _web_rag_context = ""
+        try:
+            from llm_code.runtime.web_rag import build_web_rag_context
+
+            _web_rag_context = await build_web_rag_context(
+                user_input,
+                self._tool_registry,
+            )
+            if _web_rag_context:
+                self._fire_hook(
+                    "web_rag",
+                    {
+                        "query": user_input[:200],
+                        "chars": len(_web_rag_context),
+                    },
+                )
+        except Exception as _exc:  # pragma: no cover - defensive
+            logger.debug("web RAG preflight skipped after failure: %s", _exc)
 
         # Fresh iteration budget for this turn — exposes an observable
         # ``used`` / ``exceeded`` counter and produces the max-steps
@@ -1420,6 +1483,13 @@ class ConversationRuntime:
                 _force_text_next_iteration = False
                 logger.debug("Forced-text mode: stripped tools for this iteration")
 
+            if _web_rag_context and tool_defs:
+                tool_defs = tuple(
+                    tool
+                    for tool in tool_defs
+                    if tool.name not in {"web_search", "web_fetch"}
+                )
+
             # Collect MCP instructions if manager is available
             _mcp_instructions: dict[str, str] | None = None
             if self._mcp_manager is not None:
@@ -1475,6 +1545,8 @@ class ConversationRuntime:
             )
             if _deferred_hint:
                 system_prompt = system_prompt + "\n\n" + _deferred_hint
+            if _web_rag_context:
+                system_prompt = system_prompt + "\n\n" + _web_rag_context
 
             # Inject harness guide context (repo map, analysis, etc.)
             for injection in self._harness.pre_turn():
@@ -1490,7 +1562,7 @@ class ConversationRuntime:
 
             # 3. Create request and stream
             request = MessageRequest(
-                model=self._active_model,
+                model=self._request_model,
                 messages=self.session.messages,
                 system=system_prompt,
                 tools=tool_defs if use_native else (),
@@ -1529,7 +1601,13 @@ class ConversationRuntime:
                 })
 
             # Error recovery: tool choice fallback + reactive compact
-            self._fire_hook("http_request", {"model": self._active_model, "url": getattr(self._config, "provider_base_url", "")})
+            self._fire_hook(
+                "http_request",
+                {
+                    "model": self._active_model,
+                    "url": getattr(self._active_target, "base_url", ""),
+                },
+            )
             _prompt_preview = _build_prompt_preview(self.session.messages)
             # Open the llm.completion span and KEEP IT OPEN across the entire
             # stream-consume loop so output-side attributes (preview, output
@@ -1602,8 +1680,8 @@ class ConversationRuntime:
                             mark_native_tools_unsupported,
                         )
                         mark_native_tools_unsupported(
-                            base_url=getattr(self._config, "provider_base_url", "") or "",
-                            model=self._active_model,
+                            base_url=getattr(self._active_target, "base_url", "") or "",
+                            model=self._request_model,
                         )
                     except Exception:
                         pass
@@ -1623,7 +1701,7 @@ class ConversationRuntime:
                         model_name=self._active_model,
                     )
                     request = MessageRequest(
-                        model=self._active_model,
+                        model=self._request_model,
                         messages=self.session.messages,
                         system=system_prompt,
                         tools=(),
@@ -1755,13 +1833,13 @@ class ConversationRuntime:
                             _next_model,
                             list(_chain),
                         )
-                        self._active_model = _next_model
+                        self._set_active_model(_next_model)
                         # Wave2-3 Fix 2: keep cost_tracker in sync so token
                         # usage after fallback is attributed to the correct
                         # model instead of the (failed) primary.
                         if self._cost_tracker is not None:
                             try:
-                                self._cost_tracker.model = _next_model
+                                self._cost_tracker.model = self._active_model
                             except Exception:
                                 logger.debug("cost_tracker.model sync skipped", exc_info=True)
                         self._consecutive_failures = 0

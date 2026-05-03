@@ -47,6 +47,24 @@ _ANTI_RECURSION = (
 )
 
 
+def _role_routed_model(parent: ConversationRuntime, role: AgentRole, explicit: str | None) -> str:
+    """Return model override for a subagent role, if any."""
+    if explicit:
+        return explicit
+    model_key = getattr(role, "model_key", "") or ""
+    if not model_key or model_key == "primary":
+        return ""
+    routing = getattr(parent._config, "model_routing", None)
+    routed = getattr(routing, model_key, "") if routing is not None else ""
+    if routed:
+        return str(routed)
+    if model_key != "sub_agent":
+        routed = getattr(routing, "sub_agent", "") if routing is not None else ""
+        if routed:
+            return str(routed)
+    return ""
+
+
 def make_subagent_runtime(
     parent: ConversationRuntime,
     role: AgentRole | None,
@@ -54,8 +72,9 @@ def make_subagent_runtime(
 ) -> ConversationRuntime:
     """Build a sub-ConversationRuntime for *role* under *parent*.
 
-    *model* overrides the parent's active model for this sub-agent.
-    Pass None to inherit the parent default.
+    *model* overrides role routing. Pass None to use the role's
+    ``model_key`` from ``config.model_routing``; ``primary`` inherits
+    the parent runtime.
 
     v16 M7 wiring (no behaviour change for wave-1 roles):
 
@@ -195,14 +214,18 @@ def make_subagent_runtime(
         project_path = Path.cwd()
     child_session = Session.create(project_path)
 
-    # Apply model override if specified
+    # Apply explicit or role-routed model override if specified.
     child_config = parent._config
-    if model:
+    child_provider = parent._provider
+    routed_model = _role_routed_model(parent, effective_role, model)
+    if routed_model:
         import dataclasses as _dc
-        child_config = _dc.replace(parent._config, model=model)
+        child_config = _dc.replace(parent._config, model=routed_model)
+        from llm_code.runtime.provider_routing import create_provider_for_model
+        child_provider = create_provider_for_model(child_config, routed_model)
 
     child = ConversationRuntime(
-        provider=parent._provider,
+        provider=child_provider,
         tool_registry=child_registry,
         permission_policy=parent._permissions,
         hook_runner=parent._hooks,

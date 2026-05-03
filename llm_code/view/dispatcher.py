@@ -54,6 +54,23 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _knowledge_compile_provider(cfg, runtime_provider):
+    """Return ``(compile_model, provider)`` for knowledge rebuilds."""
+    compile_model = ""
+    if cfg is not None:
+        if hasattr(cfg, "knowledge"):
+            compile_model = cfg.knowledge.compile_model
+        if not compile_model and hasattr(cfg, "model_routing"):
+            compile_model = cfg.model_routing.compaction
+        if not compile_model and getattr(cfg, "small_model", ""):
+            compile_model = cfg.small_model
+
+    if compile_model:
+        from llm_code.runtime.provider_routing import create_provider_for_model
+        return compile_model, create_provider_for_model(cfg, compile_model)
+    return compile_model, runtime_provider
+
+
 class CommandDispatcher:
     """Slash-command router for v2.0.0 REPL.
 
@@ -1379,16 +1396,14 @@ class CommandDispatcher:
         self._view.print_info("Rebuilding knowledge base…")
         try:
             from llm_code.runtime.knowledge_compiler import KnowledgeCompiler
-            compile_model = ""
             cfg = self._state.config
-            if cfg is not None:
-                if hasattr(cfg, "knowledge"):
-                    compile_model = cfg.knowledge.compile_model
-                if not compile_model and hasattr(cfg, "model_routing"):
-                    compile_model = cfg.model_routing.compaction
+            compile_model, compile_provider = _knowledge_compile_provider(
+                cfg,
+                runtime._provider,
+            )
             compiler = KnowledgeCompiler(
                 cwd=self._state.cwd,
-                llm_provider=runtime._provider,
+                llm_provider=compile_provider,
                 compile_model=compile_model,
             )
             ingest_data = compiler.ingest(facts=[], since_commit=None)

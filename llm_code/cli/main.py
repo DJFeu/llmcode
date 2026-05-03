@@ -84,6 +84,13 @@ class ReplGroup(click.Group):
     """
 
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        # Click 8.1 and 8.3 differ in when nested command tails are moved
+        # into ``ctx.args`` / ``ctx._protected_args``. Check the raw argv
+        # first so registered subcommands like ``config explain`` and
+        # ``profiles validate`` are always delegated to Click unchanged.
+        if args and args[0] in self.commands:
+            return super().parse_args(ctx, args)
+
         rest = super().parse_args(ctx, args)
 
         protected = list(getattr(ctx, "_protected_args", []) or [])

@@ -121,13 +121,22 @@ def doctor() -> None:
     """Check the active model/profile/provider configuration."""
     result = _load_current_config()
     cfg = result.config
-    model = cfg.model or "(not set)"
-    profile = get_profile(cfg.model) if cfg.model else None
-    descriptor = resolve_descriptor_for_model(cfg.model) if cfg.model else None
+    from llm_code.runtime.provider_routing import (
+        resolve_profile_for_target,
+        resolve_provider_target,
+    )
+    target = resolve_provider_target(cfg) if cfg.model else None
+    model = target.logical_model if target is not None else "(not set)"
+    request_model = target.request_model if target is not None else ""
+    profile = resolve_profile_for_target(target) if target is not None else None
+    descriptor = resolve_descriptor_for_model(request_model) if request_model else None
 
     click.echo("llmcode doctor")
     click.echo("")
     click.echo(f"model: {model}")
+    if target is not None and target.uses_provider_map:
+        click.echo(f"provider id: {target.provider_id}")
+        click.echo(f"request model: {target.request_model}")
     if profile is None:
         click.echo("profile: missing (set `model` in config or pass --model)")
     else:
@@ -151,15 +160,17 @@ def doctor() -> None:
         click.echo(f"provider descriptor: {descriptor.provider_type}")
         click.echo(f"provider tools_format: {descriptor.capabilities.tools_format}")
 
-    if cfg.provider_base_url:
-        click.echo(f"provider.base_url: {cfg.provider_base_url}")
+    if target is not None and target.base_url:
+        click.echo(f"provider.base_url: {target.base_url}")
     else:
         click.echo("provider.base_url: not set")
 
-    key_env = cfg.provider_api_key_env
+    key_env = target.api_key_env if target is not None else cfg.provider_api_key_env
     if key_env:
         state = "set" if os.environ.get(key_env) else "not set"
         click.echo(f"provider.api_key_env: {key_env} ({state})")
+    if cfg.provider_map:
+        click.echo("provider.map: " + ", ".join(sorted(cfg.provider_map)))
 
     if cfg.model_routing.fallbacks:
         click.echo(
@@ -180,7 +191,8 @@ def models_group() -> None:
 def models_probe(api_base: str | None, timeout: float) -> None:
     """Probe an OpenAI-compatible /v1/models endpoint."""
     if not api_base:
-        api_base = _load_current_config().config.provider_base_url
+        from llm_code.runtime.provider_routing import resolve_provider_target
+        api_base = resolve_provider_target(_load_current_config().config).base_url
     if not api_base:
         raise click.UsageError(
             "No provider base URL. Pass --api or set provider.base_url."

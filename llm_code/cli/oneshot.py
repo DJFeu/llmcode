@@ -5,8 +5,8 @@ import asyncio
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from llm_code.api.client import ProviderClient
 from llm_code.api.types import (
     Message,
     MessageRequest,
@@ -14,10 +14,11 @@ from llm_code.api.types import (
     TextBlock,
 )
 from llm_code.runtime.config import RuntimeConfig
-from llm_code.runtime.model_aliases import resolve_model
 from llm_code.view.dialog_types import Choice, DialogCancelled
 from llm_code.view.headless import HeadlessDialogs
 
+if TYPE_CHECKING:
+    from llm_code.api.provider import LLMProvider
 
 def _extract_text(response: MessageResponse) -> str:
     """Extract concatenated text from a MessageResponse."""
@@ -28,27 +29,15 @@ def _extract_text(response: MessageResponse) -> str:
     return "".join(parts).strip()
 
 
-def _create_provider(config: RuntimeConfig) -> ProviderClient:
+def _create_provider(config: RuntimeConfig) -> "LLMProvider":
     """Build an LLMProvider from RuntimeConfig.
 
     v16 M6 — auth registry supplies the API key when the configured
     env var is unset; env var still wins for explicit overrides.
     """
-    from llm_code.runtime.auth import resolve_api_key
+    from llm_code.runtime.provider_routing import create_provider_for_model
 
-    api_key = resolve_api_key(config.provider_api_key_env)
-    base_url = config.provider_base_url or ""
-    resolved_model = resolve_model(
-        config.model, custom_aliases=config.model_aliases,
-    )
-    return ProviderClient.from_model(
-        model=resolved_model,
-        base_url=base_url,
-        api_key=api_key,
-        timeout=config.timeout,
-        max_retries=config.max_retries,
-        native_tools=False,
-    )
+    return create_provider_for_model(config, native_tools=False)
 
 
 def _send_sync(
@@ -58,11 +47,10 @@ def _send_sync(
 ) -> str:
     """Send a single user message and return the text response."""
     provider = _create_provider(config)
-    resolved_model = resolve_model(
-        config.model, custom_aliases=config.model_aliases,
-    )
+    from llm_code.runtime.provider_routing import resolve_provider_target
+    target = resolve_provider_target(config)
     request = MessageRequest(
-        model=resolved_model,
+        model=target.request_model,
         messages=(
             Message(role="user", content=(TextBlock(text=user_text),)),
         ),

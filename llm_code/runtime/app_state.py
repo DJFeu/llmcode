@@ -155,9 +155,7 @@ class AppState:
         # Imports are deferred so building an empty shell (config=None)
         # stays cheap and so circular-import risks with modules that
         # pull in runtime transitively are limited to the happy path.
-        from llm_code.api.client import ProviderClient
         from llm_code.runtime.cost_tracker import CostTracker
-        from llm_code.runtime.model_aliases import resolve_model
         from llm_code.runtime.context import ProjectContext
         from llm_code.runtime.conversation import ConversationRuntime
         from llm_code.runtime.hooks import HookRunner
@@ -166,30 +164,18 @@ class AppState:
         from llm_code.runtime.session import Session
         from llm_code.tools.registry import ToolRegistry
 
-        # v16 M6 — env var still wins for power users, but if it's
-        # unset the auth registry's stored credentials supply the key.
-        # Env var override is checked first inside resolve_api_key.
-        from llm_code.runtime.auth import resolve_api_key
-        api_key = resolve_api_key(config.provider_api_key_env)
-        base_url = config.provider_base_url or ""
-
-        resolved_model = resolve_model(
-            config.model, custom_aliases=config.model_aliases
+        from llm_code.runtime.provider_routing import (
+            create_provider_for_model,
+            resolve_provider_target,
         )
+        target = resolve_provider_target(config)
         state.cost_tracker = CostTracker(
-            model=resolved_model,
+            model=target.logical_model,
             custom_pricing=config.pricing or None,
             max_budget_usd=config.max_budget_usd,
         )
 
-        provider = ProviderClient.from_model(
-            model=resolved_model,
-            base_url=base_url,
-            api_key=api_key,
-            timeout=config.timeout,
-            max_retries=config.max_retries,
-            native_tools=config.native_tools,
-        )
+        provider = create_provider_for_model(config)
 
         # Core tools — collaborator-free set shared with run_quick_mode.
         # The register function is injected by the caller, or we fall

@@ -1,5 +1,42 @@
 # Changelog
 
+## v2.15.0 — Provider-map routing + Web RAG preflight
+
+This release adds opencode-style multi-provider routing and a generic Web RAG
+preflight path for local models that need fresh external knowledge.
+
+### Added
+
+* `provider` can now be an opencode-style provider map. Logical refs such as
+  `planner/deepseek` and `worker/llama` route to different OpenAI-compatible
+  base URLs while preserving the request model sent to each endpoint.
+* `small_model` now provides a default for subagent and compaction routing when
+  explicit `model_routing` entries are omitted.
+* Web RAG preflight detects prompts that need current/external knowledge,
+  retrieves `web_search` results plus selected `web_fetch` excerpts, filters
+  weak homepage/JavaScript evidence, and injects grounded context before the
+  first model call.
+* Generic built-in runtime profiles for `deepseek` and `llama` now cover
+  provider-map request models without requiring private local profile copies.
+
+### Changed
+
+* When Web RAG preflight succeeds, the runtime hides `web_search` and
+  `web_fetch` from that model call so local models do not discard the curated
+  evidence by running a lower-quality snippet search again.
+* Subagents now resolve provider clients per routed model, so a DeepSeek main
+  model can delegate implementation, compaction, and fallback work to Llama or
+  another endpoint.
+* README and configuration docs now use generic self-hosted provider-map
+  examples instead of model-specific private endpoint names.
+
+### Verification
+
+* Full Python suite: `8795 passed, 60 skipped`.
+* Targeted provider-map/Web RAG tests and `ruff check`.
+* Live smoke: current-news prompt uses preflight evidence with no model-issued
+  `web_search` tool call.
+
 ## v2.14.3 — Headless tool telemetry + user profile aliases
 
 This patch release fixes headless quick-mode observability and makes

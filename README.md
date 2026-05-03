@@ -82,7 +82,7 @@ Update available: 1.17.0 → 1.18.0 (run /update)
 mkdir -p ~/.llmcode
 cat > ~/.llmcode/config.json << 'EOF'
 {
-  "model": "qwen3.6",
+  "model": "local-coder",
   "provider": {
     "base_url": "http://localhost:8000/v1"
   },
@@ -94,6 +94,46 @@ cat > ~/.llmcode/config.json << 'EOF'
 EOF
 
 llmcode
+```
+
+**With separate planning and implementation endpoints:**
+
+llmcode also accepts opencode-style `provider/model` refs. Use this when
+your main reasoning model and smaller implementation/summary model live behind
+different OpenAI-compatible base URLs.
+
+```json
+{
+  "model": "planner/deepseek",
+  "small_model": "worker/llama",
+  "provider": {
+    "planner": {
+      "name": "DeepSeek-R1 local",
+      "options": {
+        "baseURL": "https://deepseek.example.com/v1",
+        "apiKey": "{env:LOCAL_LLM_API_KEY}"
+      },
+      "models": {
+        "deepseek": { "name": "DeepSeek-R1" }
+      }
+    },
+    "worker": {
+      "name": "Llama-3.3 local",
+      "options": {
+        "baseURL": "https://llama.example.com/v1",
+        "apiKey": "{env:LOCAL_LLM_API_KEY}"
+      },
+      "models": {
+        "llama": { "name": "Llama-3.3 70B Instruct" }
+      }
+    }
+  },
+  "model_routing": {
+    "sub_agent": "worker/llama",
+    "compaction": "worker/llama",
+    "fallback": "planner/deepseek"
+  }
+}
 ```
 
 **With a cloud API:**
@@ -159,6 +199,8 @@ llmcode is **deeply influenced by Claude Code's architecture**, borrows proven p
 | Per-model system prompts | ✅ | N/A | ❌ | ❌ | ⚠️ | ✅ |
 | **Qwen/Llama/DeepSeek tuned** | ✅ | ❌ | ❌ | ❌ | ⚠️ | ❌ |
 | Model profile system (TOML) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Multi-provider routing | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Web RAG preflight | ✅ | ⚠️ | ✅ | ✅ | ⚠️ | ⚠️ |
 | Skill router (auto match) | **3-tier** | ❌ | ❌ | manual | manual | manual |
 | Memory system | **5-layer** | basic | ❌ | basic | basic | basic |
 | **Agent permission model** | **6-stage** | 6-stage | trait-based | policy-based | basic | basic |
@@ -215,6 +257,7 @@ This is llmcode's core focus. Local models behave very differently from Claude /
 - **They follow instructions too literally.** llmcode has separate per-model system prompts for Qwen, Llama, DeepSeek, Kimi, Codex, Gemini, GPT, and Claude — auto-selected from model name.
 - **They tend to repeat themselves.** llmcode's diminishing returns detection auto-stops when continuation produces < 500 new tokens for 3+ iterations in a row.
 - **They over-spawn agents.** llmcode's coordinator forces a synthesis step before delegation, asking "should I delegate at all?" before splitting work.
+- **They need current facts but are stuck at training time.** Web RAG preflight detects current/news/search/version/price prompts, retrieves search plus fetched source excerpts, filters weak homepage/JS evidence, and injects grounded context before the first model call. Pure coding and static CS prompts stay local and do not trigger web access.
 
 ### Memory system (5 layers)
 
@@ -287,7 +330,7 @@ See [docs/coordinator.md](docs/coordinator.md) for the full tutorial.
 |----------|-------|
 | **File I/O** | read_file, write_file, edit_file, multi_edit (with resolve_path workspace boundary check) |
 | **Search** | glob_search, grep_search, tool_search |
-| **Web** | web_search (DuckDuckGo / Brave / Exa / Jina / Linkup / Tavily / SearXNG / Serper backends), web_fetch (with optional Jina Reader extraction for JS-heavy pages, optional Firecrawl 3rd-fallback for SPAs), rerank (local cross-encoder / Cohere / Jina backends), research (high-level RAG pipeline: expand → search × N → fetch → rerank → top-K) |
+| **Web** | Web RAG preflight for current/external-knowledge prompts, web_search (DuckDuckGo / Brave / Exa / Jina / Linkup / Tavily / SearXNG / Serper backends), web_fetch (with optional Jina Reader extraction for JS-heavy pages, optional Firecrawl 3rd-fallback for SPAs), rerank (local cross-encoder / Cohere / Jina backends), research (high-level RAG pipeline: expand → search × N → fetch → rerank → top-K) |
 | **Execution** | bash (21-point security + Docker sandbox + PTY mode), agent (sub-agents with tier-based role routing: build / plan / explore / verify / general), enter_plan_mode, exit_plan_mode |
 | **LSP** | lsp_hover, lsp_document_symbol, lsp_workspace_symbol, lsp_go_to_definition, lsp_find_references, lsp_go_to_implementation, lsp_call_hierarchy, lsp_diagnostics (auto-detects 25+ language servers via walk-up root finder) |
 | **Git** | git_status, git_diff, git_log, git_commit, git_push, git_stash, git_branch |
@@ -313,7 +356,7 @@ Declarative per-model profiles replace scattered hardcoded model adaptations. Pr
 - **Routing** — per-model tier-C skill router model override
 - **Pricing** — per-1M-token input/output costs for cost tracking
 
-Built-in profiles for Qwen3/3.5, Claude, GPT-4o, DeepSeek-R1, o3/o4-mini. User overrides via `~/.llmcode/model_profiles/*.toml`; bundled templates live in `llm_code/_builtins/profiles/` and can be copied with `llmcode profiles update`.
+Built-in profiles for Qwen3/3.5, Llama, DeepSeek/DeepSeek-R1, Claude, GPT-4o, o3/o4-mini, GLM, Kimi, Gemini, Codex, and other common local/cloud families. User overrides via `~/.llmcode/model_profiles/*.toml`; bundled templates live in `llm_code/_builtins/profiles/` and can be copied with `llmcode profiles update`.
 
 #### Updating model profiles
 
@@ -484,18 +527,29 @@ Sources: Official (`anthropics/claude-plugins-official`), Community, npm, GitHub
 
 ```json
 {
-  "model": "qwen3.6",
+  "model": "planner/deepseek",
+  "small_model": "worker/llama",
   "provider": {
-    "base_url": "http://localhost:8000/v1",
-    "timeout": 120
+    "planner": {
+      "options": {
+        "baseURL": "https://deepseek.example.com/v1",
+        "apiKey": "{env:LOCAL_LLM_API_KEY}"
+      }
+    },
+    "worker": {
+      "options": {
+        "baseURL": "https://llama.example.com/v1",
+        "apiKey": "{env:LOCAL_LLM_API_KEY}"
+      }
+    }
   },
   "permissions": {
     "mode": "prompt"
   },
   "model_routing": {
-    "sub_agent": "qwen3.6",
-    "compaction": "gemma4",
-    "fallback": "qwen3.6"
+    "sub_agent": "worker/llama",
+    "compaction": "worker/llama",
+    "fallback": "planner/deepseek"
   },
   "skill_router": {
     "enabled": true,
@@ -519,9 +573,22 @@ Sources: Official (`anthropics/claude-plugins-official`), Community, npm, GitHub
 }
 ```
 
-If you only run one local model, point every `model_routing` entry at the
-same model. If you also run a smaller summarization model, using it for
-`compaction` keeps the main coding model reserved for foreground turns.
+If you only run one local model, use the legacy `provider.base_url` shape and
+point every `model_routing` entry at the same model. If you also run a smaller
+model, set `small_model`; it becomes the default for `sub_agent` and
+`compaction` unless those routing entries are explicitly set.
+
+For endpoint-specific model profiles, match the logical provider ref instead of
+the whole model family:
+
+```toml
+[prompt]
+template = "deepseek"
+match = ["planner/deepseek"]
+```
+
+llmcode resolves profiles against `provider/model` first, then falls back to the
+request model id (`deepseek`) when no endpoint-specific profile exists.
 
 ### Config locations (low → high precedence)
 

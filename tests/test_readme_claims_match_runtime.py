@@ -74,6 +74,14 @@ CLAIM_TO_MODULES: dict[str, tuple[tuple[str, str | None], ...]] = {
         ("llm_code.runtime.profile_registry", "register_profile"),
         ("llm_code.runtime.model_profile", "ProfileRegistry"),
     ),
+    "Multi-provider routing": (
+        ("llm_code.runtime.provider_routing", "resolve_provider_target"),
+        ("llm_code.runtime.config", "ProviderEndpointConfig"),
+    ),
+    "Web RAG preflight": (
+        ("llm_code.runtime.web_rag", "build_web_rag_context"),
+        ("llm_code.runtime.conversation", "ConversationRuntime"),
+    ),
     "User-defined agents (.md)": (
         # M1 closes this gap: the registry now feeds AgentTool's enum.
         ("llm_code.runtime.agent_registry", "AgentRegistry"),

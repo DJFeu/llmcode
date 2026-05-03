@@ -1,0 +1,42 @@
+{
+  "model": "planner/deepseek",
+  "small_model": "worker/llama",
+  "provider": {
+    "planner": {
+      "name": "DeepSeek-R1 local",
+      "options": {
+        "baseURL": "https://deepseek.example.com/v1",
+        "apiKey": "{env:LOCAL_LLM_API_KEY}"
+      },
+      "models": {
+        "deepseek": {
+          "name": "DeepSeek-R1"
+        }
+      }
+    },
+    "worker": {
+      "name": "Llama-3.3 local",
+      "options": {
+        "baseURL": "https://llama.example.com/v1",
+        "apiKey": "{env:LOCAL_LLM_API_KEY}"
+      },
+      "models": {
+        "llama": {
+          "name": "Llama-3.3 70B Instruct"
+        }
+      }
+    }
+  },
+  "permissions": {
+    "mode": "prompt"
+  },
+  "model_routing": {
+    "sub_agent": "worker/llama",
+    "compaction": "worker/llama",
+    "fallback": "planner/deepseek"
+  },
+  "thinking": {
+    "mode": "adaptive",
+    "budget_tokens": 4096
+  }
+}

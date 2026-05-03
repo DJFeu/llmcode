@@ -1,5 +1,5 @@
 {
-  "model": "qwen3.5-122b",
+  "model": "local-coder",
   "provider": {
     "base_url": "http://localhost:8000/v1"
   },
@@ -7,7 +7,7 @@
     "mode": "prompt"
   },
   "model_routing": {
-    "sub_agent": "qwen3.5-32b",
-    "compaction": "qwen3.5-7b"
+    "sub_agent": "local-coder",
+    "compaction": "local-coder"
   }
 }

@@ -130,6 +130,19 @@ class ModelRoutingConfig:
 
 
 @dataclass(frozen=True)
+class ProviderEndpointConfig:
+    """Per-provider endpoint config for opencode-style provider maps."""
+
+    id: str
+    name: str = ""
+    base_url: str = ""
+    api_key_env: str = ""
+    api_key: str = ""
+    models: dict = field(default_factory=dict)
+    options: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class CompactionThresholdsConfig:
     trigger_pct: float = 0.85
     min_messages: int = 30
@@ -428,8 +441,10 @@ class KeywordsConfig:
 class RuntimeConfig:
     config_version: str = ""
     model: str = ""
+    small_model: str = ""
     provider_base_url: str | None = None
     provider_api_key_env: str = "LLM_API_KEY"
+    provider_map: dict[str, ProviderEndpointConfig] = field(default_factory=dict)
     permission_mode: str = "prompt"
     max_turn_iterations: int = 5
     max_tokens: int = 4096
@@ -504,6 +519,7 @@ class ConfigSchema(BaseModel):
     """Pydantic schema for validating the merged config dict before conversion."""
 
     model: str = ""
+    small_model: str = ""
     provider: dict = {}
     permissions: dict = {}
     model_routing: dict = {}
@@ -640,6 +656,87 @@ def _parse_telemetry_config(raw: dict) -> TelemetryConfig:
     )
 
 
+_LEGACY_PROVIDER_KEYS = {
+    "base_url",
+    "baseURL",
+    "api_key_env",
+    "apiKeyEnv",
+    "api_key",
+    "apiKey",
+    "timeout",
+}
+
+
+def _parse_api_key_ref(value: object) -> tuple[str, str]:
+    """Return ``(api_key_env, api_key)`` for raw or ``{env:NAME}`` refs."""
+    if not isinstance(value, str) or not value:
+        return "", ""
+    stripped = value.strip()
+    if stripped.startswith("{env:") and stripped.endswith("}"):
+        env_name = stripped[5:-1].strip()
+        return env_name, ""
+    return "", stripped
+
+
+def _parse_provider_map(raw: dict) -> dict[str, ProviderEndpointConfig]:
+    """Parse opencode-style ``provider.<id>`` endpoint declarations.
+
+    The legacy single-provider shape keeps scalar keys directly under
+    ``provider``. Only nested dict values under non-legacy keys become
+    provider-map entries.
+    """
+    if not isinstance(raw, dict):
+        return {}
+
+    result: dict[str, ProviderEndpointConfig] = {}
+    for provider_id, value in raw.items():
+        if provider_id in _LEGACY_PROVIDER_KEYS or not isinstance(value, dict):
+            continue
+
+        options = value.get("options", {})
+        if not isinstance(options, dict):
+            options = {}
+
+        base_url = (
+            options.get("baseURL")
+            or options.get("base_url")
+            or value.get("baseURL")
+            or value.get("base_url")
+            or ""
+        )
+        api_key_env = (
+            options.get("apiKeyEnv")
+            or options.get("api_key_env")
+            or value.get("apiKeyEnv")
+            or value.get("api_key_env")
+            or ""
+        )
+        raw_api_key = (
+            options.get("apiKey")
+            or options.get("api_key")
+            or value.get("apiKey")
+            or value.get("api_key")
+            or ""
+        )
+        ref_env, api_key = _parse_api_key_ref(raw_api_key)
+        api_key_env = str(api_key_env or ref_env or "")
+
+        models = value.get("models", {})
+        if not isinstance(models, dict):
+            models = {}
+
+        result[str(provider_id)] = ProviderEndpointConfig(
+            id=str(provider_id),
+            name=str(value.get("name", "")),
+            base_url=str(base_url or ""),
+            api_key_env=api_key_env,
+            api_key=api_key,
+            models=dict(models),
+            options=dict(options),
+        )
+    return result
+
+
 def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
     """Convert a merged config dict to a RuntimeConfig instance."""
     provider = data.get("provider", {})
@@ -667,12 +764,13 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
     )
 
     routing_raw = data.get("model_routing", {})
+    small_model = data.get("small_model", "")
     _fallbacks_raw = routing_raw.get("fallbacks", ()) or ()
     if isinstance(_fallbacks_raw, str):
         _fallbacks_raw = (_fallbacks_raw,)
     model_routing = ModelRoutingConfig(
-        sub_agent=routing_raw.get("sub_agent", ""),
-        compaction=routing_raw.get("compaction", ""),
+        sub_agent=routing_raw.get("sub_agent", "") or small_model,
+        compaction=routing_raw.get("compaction", "") or small_model,
         fallback=routing_raw.get("fallback", ""),
         fallbacks=tuple(str(m) for m in _fallbacks_raw if m),
     )
@@ -832,8 +930,10 @@ def _dict_to_runtime_config(data: dict) -> RuntimeConfig:
 
     return RuntimeConfig(
         model=data.get("model", ""),
+        small_model=small_model,
         provider_base_url=provider.get("base_url", None),
         provider_api_key_env=provider.get("api_key_env", "LLM_API_KEY"),
+        provider_map=_parse_provider_map(provider),
         permission_mode=permissions.get("mode", data.get("permission_mode", "prompt")),
         max_turn_iterations=data.get("max_turn_iterations", 10),
         max_tokens=data.get("max_tokens", 4096),

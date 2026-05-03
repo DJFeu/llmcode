@@ -1,21 +1,42 @@
 # Meta Llama — llama.j2 prompt
 #
-# Catches llama-3.1, llama-3.3-70b, and any future ids containing the
-# ``llama`` substring. Most ids in the wild are self-hosted via vLLM /
-# Ollama / LM Studio, so the prompt assumes a local deployment and the
-# parser walks the full variant list because chat templates vary.
+# Generic local/self-hosted Llama profile. Llama is usually used here as a
+# fast non-reasoning model for edits, refactors, summaries, subagents, and
+# compaction.
 
 name = "Meta Llama"
 
 [provider]
 type = "openai-compat"
-native_tools = true
+native_tools = false
 supports_reasoning = false
 supports_images = false
+force_xml_tools = true
+
+[streaming]
+implicit_thinking = false
+reasoning_field = ""
+
+[thinking]
+thinking_extra_body_format = "chat_template_kwargs"
+default_thinking_budget = 0
+post_tool_thinking_budget = 0
+
+[sampling]
+default_temperature = 0.3
+reasoning_effort = "medium"
+
+[deployment]
+is_local = true
+
+[limits]
+context_window = 128000
+max_output_tokens = 8192
 
 [prompt]
 template = "llama"
 match = ["llama"]
+dedupe_with_template = true
 
 [parser]
 variants = [
@@ -23,6 +44,20 @@ variants = [
     "hermes_function",
     "hermes_truncated",
     "harmony_kv",
+    "glm_hybrid",
     "glm_brace",
     "bare_name_tag",
 ]
+
+[tool_consumption]
+reminder_after_each_call = true
+strip_prior_reasoning = false
+retry_on_denial = true
+empty_compile_retry = true
+malformed_tool_retry = true
+compress_old_tool_results = true
+compile_after_tool_calls = 3
+compile_thinking_budget = 0
+
+[parallel_tools]
+enable_parallel_tools = true

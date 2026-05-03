@@ -1,21 +1,43 @@
 # DeepSeek — deepseek.j2 prompt
 #
-# Catches deepseek-v3, deepseek-r1, deepseek-chat, and any future ids
-# containing the ``deepseek`` substring. The reasoning subset
-# (``deepseek-r1``) emits long CoT in the dedicated ``reasoning_content``
-# field — the prompt warns against leaking it into the answer channel.
+# Generic local/self-hosted DeepSeek profile. Endpoint-specific profiles can
+# still override this with a narrower [prompt].match such as
+# "planner/deepseek". For hosted DeepSeek Chat, the hardcoded
+# ``deepseek-chat`` runtime profile keeps native tools enabled.
 
 name = "DeepSeek"
 
 [provider]
 type = "openai-compat"
-native_tools = true
+native_tools = false
 supports_reasoning = true
 supports_images = false
+force_xml_tools = true
+
+[streaming]
+implicit_thinking = false
+reasoning_field = "reasoning_content"
+
+[thinking]
+thinking_extra_body_format = "chat_template_kwargs"
+default_thinking_budget = 4096
+post_tool_thinking_budget = 512
+
+[sampling]
+default_temperature = 0.6
+reasoning_effort = "high"
+
+[deployment]
+is_local = true
+
+[limits]
+context_window = 128000
+max_output_tokens = 8192
 
 [prompt]
 template = "deepseek"
 match = ["deepseek"]
+dedupe_with_template = true
 
 [parser]
 variants = [
@@ -23,6 +45,20 @@ variants = [
     "hermes_function",
     "hermes_truncated",
     "harmony_kv",
+    "glm_hybrid",
     "glm_brace",
     "bare_name_tag",
 ]
+
+[tool_consumption]
+reminder_after_each_call = true
+strip_prior_reasoning = true
+retry_on_denial = true
+empty_compile_retry = true
+malformed_tool_retry = true
+compress_old_tool_results = true
+compile_after_tool_calls = 3
+compile_thinking_budget = 512
+
+[parallel_tools]
+enable_parallel_tools = true

@@ -452,6 +452,7 @@
     "provider_base_url": {
       "type": "string"
     },
+    "provider_map": {},
     "registries": {},
     "sandbox": {},
     "skill_router": {
@@ -493,6 +494,9 @@
         "type": "string"
       },
       "type": "array"
+    },
+    "small_model": {
+      "type": "string"
     },
     "swarm": {
       "additionalProperties": false,
@@ -713,6 +717,9 @@
         "brave_api_key_env": {
           "type": "string"
         },
+        "cohere_api_key_env": {
+          "type": "string"
+        },
         "default_backend": {
           "type": "string"
         },
@@ -729,6 +736,9 @@
           "type": "array"
         },
         "exa_api_key_env": {
+          "type": "string"
+        },
+        "firecrawl_api_key_env": {
           "type": "string"
         },
         "jina_api_key_env": {
