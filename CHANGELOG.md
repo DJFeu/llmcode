@@ -1,5 +1,36 @@
 # Changelog
 
+## v2.14.3 — Headless tool telemetry + user profile aliases
+
+This patch release fixes headless quick-mode observability and makes
+ordered user model profile filenames work reliably with runtime model
+matching.
+
+### Fixed
+
+* `llmcode --headless/-q` now runs streamed text through the same
+  `StreamParser` used by the REPL, so leaked thinking tags such as
+  bare `</think>` are filtered from visible output.
+* Headless JSON now records XML/runtime tool execution events
+  (`web_search`, `web_fetch`, etc.) in `tool_calls`, not only
+  provider-native tool starts.
+* User profile `[prompt].match` entries are now registered as runtime
+  aliases, so ordered filenames such as `41-gemma4.toml` correctly
+  match `llmcode --model gemma4`.
+* `web_search` falls back to automatic backend selection when an
+  explicitly requested backend is configured without a required API key.
+
+### Docs
+
+* Documented ordered user profile filenames plus `[prompt].match`
+  aliases in the model profile author guide.
+
+### Verification
+
+* `pytest tests/test_cli/test_headless_json_output.py tests/test_runtime/test_model_profile.py`
+* `ruff check` on modified runtime, CLI, tests, and docs.
+* Live smoke tests for `qwen3.6`, `gemma4`, and headless `web_search`.
+
 ## v2.14.1 — VSCode chat reliability + formal runtime bridge
 
 This patch release follows the v2.14.0 VSCode formal-chat release with

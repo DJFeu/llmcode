@@ -181,7 +181,11 @@ def run_quick_mode(
         full_prompt = f"{prompt}\n\n```\n{stdin_text}\n```"
 
     from llm_code.api.errors import ProviderAuthError, ProviderError
-    from llm_code.api.types import StreamTextDelta, StreamToolUseStart
+    from llm_code.api.types import (
+        StreamTextDelta,
+        StreamToolExecStart,
+        StreamToolUseStart,
+    )
     from llm_code.runtime.context import ProjectContext
     from llm_code.runtime.conversation import ConversationRuntime
     from llm_code.runtime.core_tools import register_core_tools
@@ -233,17 +237,55 @@ def run_quick_mode(
 
     tool_calls: list[dict] = []
 
+    def _record_tool_call(
+        *,
+        name: str,
+        tool_id: str = "",
+        args_summary: str | None = None,
+    ) -> None:
+        payload = {"name": name, "id": tool_id}
+        if args_summary is not None:
+            payload["args_summary"] = args_summary
+        if tool_id:
+            for existing in tool_calls:
+                if existing.get("id") == tool_id:
+                    existing.update(payload)
+                    return
+        tool_calls.append(payload)
+
     async def _drive() -> str:
         events = await runtime.run_one_turn(full_prompt)
         parts: list[str] = []
+        from llm_code.view.stream_parser import StreamEventKind, StreamParser
+
+        profile = getattr(runtime, "_model_profile", None)
+        parser = StreamParser(
+            implicit_thinking=getattr(profile, "implicit_thinking", False),
+            known_tool_names=frozenset(t.name for t in registry.all_tools()),
+        )
+
+        def _append_visible_text(text: str) -> None:
+            for parsed_ev in parser.feed(text):
+                if parsed_ev.kind == StreamEventKind.TEXT:
+                    parts.append(parsed_ev.text)
+
         for ev in events:
             if isinstance(ev, StreamTextDelta):
-                parts.append(ev.text)
+                _append_visible_text(ev.text)
             elif isinstance(ev, StreamToolUseStart):
-                tool_calls.append({
-                    "name": getattr(ev, "name", ""),
-                    "id": getattr(ev, "id", ""),
-                })
+                _record_tool_call(
+                    name=getattr(ev, "name", ""),
+                    tool_id=getattr(ev, "id", ""),
+                )
+            elif isinstance(ev, StreamToolExecStart):
+                _record_tool_call(
+                    name=getattr(ev, "tool_name", ""),
+                    tool_id=getattr(ev, "tool_id", ""),
+                    args_summary=getattr(ev, "args_summary", ""),
+                )
+        for parsed_ev in parser.flush():
+            if parsed_ev.kind == StreamEventKind.TEXT:
+                parts.append(parsed_ev.text)
         return "".join(parts)
 
     visible = ""

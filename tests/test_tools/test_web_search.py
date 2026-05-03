@@ -253,6 +253,28 @@ class TestWebSearchToolExecute:
 
         mock_create.assert_called_once_with("duckduckgo")
 
+    def test_explicit_backend_missing_key_falls_back_to_auto(self) -> None:
+        mock_results = (
+            SearchResult(title="Fallback Result", url="https://example.com", snippet="A snippet"),
+        )
+
+        def fake_create(name: str, **kwargs: object) -> MagicMock:
+            if name == "linkup":
+                raise ValueError("api_key must not be empty")
+            backend = MagicMock()
+            backend.search.return_value = mock_results
+            return backend
+
+        with patch("llm_code.tools.web_search.create_backend", side_effect=fake_create) as mock_create:
+            result = self.tool.execute(
+                {"query": "今日熱門新聞", "max_results": 3, "backend": "linkup"}
+            )
+
+        assert result.is_error is False
+        assert "Fallback Result" in result.output
+        assert mock_create.call_args_list[0].args == ("linkup",)
+        assert mock_create.call_args_list[1].args == ("duckduckgo",)
+
 
 # ---------------------------------------------------------------------------
 # DuckDuckGo rate limit and fallback

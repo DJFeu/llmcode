@@ -44,7 +44,10 @@ a safe default so you only need to declare what differs from defaults.
 To activate a new profile as a user, drop it in
 ``~/.llmcode/model_profiles/<model_id>.toml`` and either restart
 llmcode or let the registry hot-reload (the directory's mtime is
-checked on every ``get_profile`` call).
+checked on every ``get_profile`` call). The filename is still a valid
+profile key, but runtime matching also honours ``[prompt].match`` aliases,
+so ordered filenames such as ``41-gemma4.toml`` can cleanly register
+``match = ["gemma4", "gemma-4"]`` and work with ``llmcode --model gemma4``.
 
 Use ``llmcode profiles validate <model_id>`` or
 ``llmcode profiles validate --builtins`` to catch TOML syntax errors,

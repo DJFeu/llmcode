@@ -1079,6 +1079,7 @@ class ProfileRegistry:
     ) -> None:
         # Merge built-ins + extras
         self._profiles: dict[str, ModelProfile] = dict(_BUILTIN_PROFILES)
+        self._profile_aliases: dict[str, ModelProfile] = {}
         if extra_profiles:
             self._profiles.update(extra_profiles)
 
@@ -1191,6 +1192,10 @@ class ProfileRegistry:
                                 profile, parser_variants=merged
                             )
                 self._profiles[key] = profile
+                for alias in profile.prompt_match:
+                    alias_key = str(alias).strip().lower()
+                    if alias_key:
+                        self._profile_aliases[alias_key] = profile
                 _logger.debug("loaded user profile: %s from %s", key, toml_path)
             except Exception as exc:
                 _logger.warning("failed to load profile %s: %s", toml_path, exc)
@@ -1213,24 +1218,26 @@ class ProfileRegistry:
         _logger.info("model_profiles directory changed, reloading")
         # Reset to built-ins before reloading
         self._profiles = dict(_BUILTIN_PROFILES)
+        self._profile_aliases = {}
         self._load_user_profiles()
         return True
 
     def resolve(self, model: str) -> ModelProfile:
         """Resolve a model name to its profile."""
         key = model.lower()
+        candidates = {**self._profiles, **self._profile_aliases}
 
         # 1. Exact match
-        if key in self._profiles:
-            result = self._profiles[key]
+        if key in candidates:
+            result = candidates[key]
         else:
             # 2. Prefix match (longest prefix wins)
             best_match: str = ""
-            for profile_key in self._profiles:
+            for profile_key in candidates:
                 if key.startswith(profile_key) and len(profile_key) > len(best_match):
                     best_match = profile_key
             if best_match:
-                result = self._profiles[best_match]
+                result = candidates[best_match]
             else:
                 # 3. Family defaults
                 result = _DEFAULT_PROFILE

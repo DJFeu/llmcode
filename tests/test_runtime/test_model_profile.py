@@ -135,6 +135,27 @@ class TestTomlLoading:
         assert p.force_xml_tools is True
         assert p.supports_reasoning is True
 
+    def test_user_profile_prompt_match_alias(self, tmp_path: Path) -> None:
+        toml_file = tmp_path / "41-gemma4.toml"
+        toml_file.write_text(textwrap.dedent("""\
+            name = "Gemma 4"
+
+            [streaming]
+            implicit_thinking = true
+
+            [sampling]
+            default_temperature = 0.3
+
+            [prompt]
+            match = ["gemma4", "gemma-4"]
+        """))
+
+        reg = ProfileRegistry(user_profile_dir=tmp_path)
+        p = reg.resolve("gemma4")
+        assert p.name == "Gemma 4"
+        assert p.implicit_thinking is True
+        assert p.default_temperature == 0.3
+
     def test_user_override_merges_with_builtin(self, tmp_path: Path) -> None:
         """User TOML overrides specific fields, keeps rest from built-in."""
         toml_file = tmp_path / "claude-sonnet-4-6.toml"

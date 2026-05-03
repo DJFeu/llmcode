@@ -158,6 +158,27 @@ class TestQuickModeJson:
         assert payload["error"] is None
         assert exit_code == 0
 
+    def test_success_filters_implicit_thinking_tags(
+        self,
+        stub_config: RuntimeConfig,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        from llm_code.api.types import StreamTextDelta
+
+        events = [StreamTextDelta(text="hidden reasoning</think>visible")]
+        _patch_runtime_with(events, monkeypatch)
+
+        exit_code = run_quick_mode(
+            "Say hi", stub_config,
+            output_format="json", headless=True,
+        )
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out.strip())
+        _validate_schema(payload)
+        assert payload["output"] == "visible"
+        assert exit_code == 0
+
     def test_provider_error_returns_exit_2(
         self,
         stub_config: RuntimeConfig,
@@ -267,6 +288,38 @@ class TestToolCallCapture:
         payload = json.loads(captured.out.strip())
         assert len(payload["tool_calls"]) == 1
         assert payload["tool_calls"][0]["name"] == "read_file"
+
+    def test_xml_tool_exec_starts_are_captured(
+        self,
+        stub_config: RuntimeConfig,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture,
+    ) -> None:
+        from llm_code.api.types import StreamTextDelta, StreamToolExecStart
+
+        events = [
+            StreamToolExecStart(
+                tool_name="web_search",
+                args_summary="query='today news'",
+                tool_id="xml-1",
+            ),
+            StreamTextDelta(text="done"),
+        ]
+        _patch_runtime_with(events, monkeypatch)
+
+        run_quick_mode(
+            "Search news", stub_config,
+            output_format="json", headless=True,
+        )
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out.strip())
+        assert payload["tool_calls"] == [
+            {
+                "name": "web_search",
+                "id": "xml-1",
+                "args_summary": "query='today news'",
+            }
+        ]
 
 
 # ---------------------------------------------------------------------------

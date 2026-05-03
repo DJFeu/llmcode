@@ -292,17 +292,25 @@ class WebSearchTool(Tool):
             try:
                 backend, _name = self._resolve_backend(backend_arg)
             except (ValueError, Exception) as exc:
-                return ToolResult(
-                    output=f"Error: Failed to initialize search backend: {exc}",
-                    is_error=True,
-                )
-            try:
-                results = backend.search(query, max_results=max_results)
-            except Exception as exc:
-                return ToolResult(
-                    output=f"Error: Search failed: {exc}",
-                    is_error=True,
-                )
+                if "api_key must not be empty" in str(exc):
+                    logger.info(
+                        "web_search: backend %s missing API key; falling back to auto",
+                        backend_arg,
+                    )
+                    results = self._search_with_fallback(query, max_results, cfg)
+                else:
+                    return ToolResult(
+                        output=f"Error: Failed to initialize search backend: {exc}",
+                        is_error=True,
+                    )
+            else:
+                try:
+                    results = backend.search(query, max_results=max_results)
+                except Exception as exc:
+                    return ToolResult(
+                        output=f"Error: Search failed: {exc}",
+                        is_error=True,
+                    )
 
         results = self._filter_results(results, domain_allowlist=allowlist, domain_denylist=denylist)
         output = self._format_results(query, results)
