@@ -92,6 +92,44 @@ def test_models_probe_reports_remote_models(monkeypatch):
     assert "Qwen3-Coder" in result.output
 
 
+def test_models_probe_uses_provider_map_auth(monkeypatch):
+    def fake_get(url, timeout, headers=None):
+        assert url == "https://planner.example/v1/models"
+        assert timeout == 3.0
+        assert headers == {"Authorization": "Bearer local-secret"}
+        return httpx.Response(200, json={"data": [{"id": "deepseek"}]})
+
+    monkeypatch.setenv("LOCAL_LLM_API_KEY", "local-secret")
+    monkeypatch.setattr("llm_code.cli.diagnostics.httpx.get", fake_get)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        config_dir = Path(".llmcode")
+        config_dir.mkdir()
+        (config_dir / "config.json").write_text(
+            json.dumps({
+                "model": "planner/deepseek",
+                "provider": {
+                    "planner": {
+                        "options": {
+                            "baseURL": "https://planner.example/v1",
+                            "apiKey": "{env:LOCAL_LLM_API_KEY}",
+                        }
+                    }
+                },
+            }),
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(main, ["models", "probe"])
+
+    assert result.exit_code == 0, result.output
+    assert "Models at https://planner.example/v1" in result.output
+    assert "deepseek" in result.output
+
+
 def test_profiles_validate_builtins_succeeds():
     runner = CliRunner()
     result = runner.invoke(main, ["profiles", "validate", "--builtins"])

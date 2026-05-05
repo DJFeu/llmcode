@@ -499,3 +499,27 @@ class TestStreamingRetrySemantics:
             assert route.call_count == 1
         finally:
             await provider.close()
+
+    @respx.mock
+    async def test_empty_connect_error_reports_url_and_type(self) -> None:
+        from llm_code.api.errors import ProviderConnectionError
+
+        route = respx.post(f"{BASE_URL}/chat/completions")
+        route.side_effect = httpx.ConnectError("")
+        provider = _make_provider(max_retries=0)
+        try:
+            req = MessageRequest(
+                model="qwen3",
+                messages=(Message(role="user", content=(TextBlock(text="x"),)),),
+                stream=True,
+            )
+            with pytest.raises(ProviderConnectionError) as excinfo:
+                async for _ in await provider.stream_message(req):
+                    pass
+
+            msg = str(excinfo.value)
+            assert "ConnectError" in msg
+            assert f"{BASE_URL}/chat/completions" in msg
+            assert route.call_count == 1
+        finally:
+            await provider.close()

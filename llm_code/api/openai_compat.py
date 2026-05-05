@@ -53,6 +53,14 @@ _thinking_drop_warned = False
 _MAX_RETRY_AFTER_SECONDS = 60.0
 
 
+def _httpx_error_message(exc: BaseException, url: str) -> str:
+    """Build a non-empty provider-facing message for low-level HTTP errors."""
+    detail = str(exc).strip()
+    if not detail:
+        detail = type(exc).__name__
+    return f"{type(exc).__name__} while connecting to {url}: {detail}"
+
+
 # v15 M3 — these helpers moved into ``llm_code.api.conversion``
 # (single source of truth for cross-provider message conversion).
 # Re-exported here as module-level names so existing imports
@@ -416,7 +424,9 @@ class OpenAICompatProvider(LLMProvider):
             except (ProviderAuthError, ProviderModelNotFoundError):
                 raise
             except httpx.ConnectError as exc:
-                last_exc = ProviderConnectionError(str(exc))
+                last_exc = ProviderConnectionError(
+                    _httpx_error_message(exc, url)
+                )
                 if attempt < self._max_retries:
                     await asyncio.sleep(2 ** attempt)
                     attempt += 1
@@ -427,7 +437,7 @@ class OpenAICompatProvider(LLMProvider):
                 # ProviderTimeoutError (retryable) instead of falling
                 # through to a generic Exception in conversation.py
                 # that skipped the retry budget entirely.
-                last_exc = ProviderTimeoutError(str(exc) or type(exc).__name__)
+                last_exc = ProviderTimeoutError(_httpx_error_message(exc, url))
                 if attempt < self._max_retries:
                     await asyncio.sleep(2 ** attempt)
                     attempt += 1
@@ -651,7 +661,9 @@ class OpenAICompatProvider(LLMProvider):
             except (ProviderAuthError, ProviderModelNotFoundError):
                 raise
             except httpx.ConnectError as exc:
-                last_exc = ProviderConnectionError(str(exc))
+                last_exc = ProviderConnectionError(
+                    _httpx_error_message(exc, url)
+                )
                 if attempt < self._max_retries:
                     await asyncio.sleep(2 ** attempt)
                     attempt += 1
@@ -664,7 +676,7 @@ class OpenAICompatProvider(LLMProvider):
                 httpx.PoolTimeout,
             ) as exc:
                 last_exc = ProviderTimeoutError(
-                    str(exc) or type(exc).__name__
+                    _httpx_error_message(exc, url)
                 )
                 if attempt < self._max_retries:
                     await asyncio.sleep(2 ** attempt)

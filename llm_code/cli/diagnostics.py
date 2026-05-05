@@ -190,9 +190,17 @@ def models_group() -> None:
 @click.option("--timeout", type=float, default=3.0, show_default=True)
 def models_probe(api_base: str | None, timeout: float) -> None:
     """Probe an OpenAI-compatible /v1/models endpoint."""
+    headers: dict[str, str] = {}
     if not api_base:
-        from llm_code.runtime.provider_routing import resolve_provider_target
-        api_base = resolve_provider_target(_load_current_config().config).base_url
+        from llm_code.runtime.provider_routing import (
+            resolve_api_key_for_target,
+            resolve_provider_target,
+        )
+        target = resolve_provider_target(_load_current_config().config)
+        api_base = target.base_url
+        api_key = resolve_api_key_for_target(target)
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
     if not api_base:
         raise click.UsageError(
             "No provider base URL. Pass --api or set provider.base_url."
@@ -200,7 +208,10 @@ def models_probe(api_base: str | None, timeout: float) -> None:
 
     url = _models_url(api_base)
     try:
-        response = httpx.get(url, timeout=timeout)
+        kwargs: dict[str, Any] = {"timeout": timeout}
+        if headers:
+            kwargs["headers"] = headers
+        response = httpx.get(url, **kwargs)
         if response.status_code >= 400:
             raise RuntimeError(f"HTTP {response.status_code}: {response.text[:200]}")
         data = response.json()

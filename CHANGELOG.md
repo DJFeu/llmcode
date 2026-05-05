@@ -1,5 +1,25 @@
 # Changelog
 
+## v2.15.1 — Provider diagnostics reliability
+
+This patch release improves diagnostics for multi-provider local deployments.
+
+### Fixed
+
+* `llmcode models probe` now sends the routed provider-map Bearer token when
+  probing the active provider endpoint from config.
+* OpenAI-compatible connect and timeout failures now include the exception
+  type and `/chat/completions` URL instead of surfacing as a blank
+  `error:` line when the underlying `httpx` exception has no message.
+
+### Verification
+
+* Full Python suite: `8800 passed, 60 skipped`.
+* `pytest tests/test_cli/test_diagnostics_commands.py tests/test_runtime/test_provider_map_routing.py`
+* `pytest tests/test_api/test_openai_compat.py tests/test_api/test_openai_compat_streaming_v261.py`
+* `ruff check` on modified provider, diagnostics, and tests.
+* `twine check` passed for wheel and sdist.
+
 ## v2.15.0 — Provider-map routing + Web RAG preflight
 
 This release adds opencode-style multi-provider routing and a generic Web RAG
