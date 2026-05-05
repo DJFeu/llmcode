@@ -57,6 +57,28 @@ if TYPE_CHECKING:
 _MAX_CONSECUTIVE_COMPACT_FAILURES = 3
 
 
+def _initial_max_tokens_for_turn(
+    configured_max_tokens: int,
+    model_profile: Any,
+    *,
+    is_local: bool,
+) -> int:
+    """Choose the first request's output cap for a turn.
+
+    Slow self-hosted reasoning models should not spend minutes proving
+    that the default 4096-token cap is too small.  Remote models keep the
+    configured conservative default unless the user explicitly raises it.
+    """
+    profile_max = int(getattr(model_profile, "max_output_tokens", 0) or 0)
+    if (
+        is_local
+        and bool(getattr(model_profile, "supports_reasoning", False))
+        and profile_max > configured_max_tokens
+    ):
+        return profile_max
+    return configured_max_tokens
+
+
 def _build_prompt_preview(messages, max_chars: int = 2000) -> str:
     """Build a short preview of the most recent user/assistant turns."""
     if not messages:
@@ -1143,8 +1165,11 @@ class ConversationRuntime:
                         )
                 except Exception:
                     pass
-        # Token limit auto-upgrade state: reset each turn, doubles on max_tokens stop
-        _current_max_tokens: int = self._config.max_tokens
+        # Token limit state: reset each turn.  The initial request may
+        # use a profile-level cap for slow local reasoning models; later
+        # max_tokens/length stops can still upgrade from that starting
+        # point.
+        _configured_max_tokens: int = self._config.max_tokens
         # Determine if the model is locally-hosted (unlimited token upgrades).
         # Profile is authoritative; URL-based heuristic is the fallback for
         # models without an explicit profile.
@@ -1194,6 +1219,19 @@ class ConversationRuntime:
         if self._detected_context_window > 0:
             # Use 70% of model's context window as compaction threshold
             _context_limit = min(_context_limit, int(self._detected_context_window * 0.7))
+        _current_max_tokens = _initial_max_tokens_for_turn(
+            _configured_max_tokens,
+            self._model_profile,
+            is_local=_is_local,
+        )
+        if _current_max_tokens != _configured_max_tokens:
+            logger.info(
+                "local reasoning profile output cap: starting turn at "
+                "max_tokens=%d (configured=%d, profile=%s)",
+                _current_max_tokens,
+                _configured_max_tokens,
+                self._model_profile.name or "(unnamed)",
+            )
 
         _prev_output_tokens = 0
         _continuation_count = 0

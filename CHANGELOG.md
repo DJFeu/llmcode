@@ -1,5 +1,26 @@
 # Changelog
 
+## v2.15.2 — Local reasoning output budget startup
+
+This patch release reduces wasted retries on slow local thinking models.
+
+### Changed
+
+* Local/self-hosted profiles that declare `supports_reasoning = true`,
+  `is_local = true`, and a larger `[limits].max_output_tokens` now start each
+  turn at the profile output cap instead of the global 4096-token default.
+  Hosted/remote models keep the configured `max_tokens` unless the user raises
+  it explicitly.
+* Added a bundled `qwen3-235b-thinking` / `r235` profile with a 32768-token
+  local reasoning output cap.
+* Profile documentation now calls out how `[deployment]` and `[limits]` affect
+  first-request output budgets.
+
+### Verification
+
+* Added runtime regression coverage for local reasoning output caps and remote
+  conservative defaults.
+
 ## v2.15.1 — Provider diagnostics reliability
 
 This patch release improves diagnostics for multi-provider local deployments.

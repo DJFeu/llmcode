@@ -352,7 +352,8 @@ Declarative per-model profiles replace scattered hardcoded model adaptations. Pr
 
 - **Provider capabilities** — native tools, image support, reasoning mode
 - **Streaming behavior** — implicit thinking, reasoning field names, thinking budget format (`chat_template_kwargs` vs `anthropic_native`)
-- **Deployment** — local model detection (unlimited token upgrades), auto-discovery via `/v1/models` probe
+- **Deployment** — local model detection, profile-sized output budgets for slow reasoning models, auto-discovery via `/v1/models` probe
+- **Limits** — context window and max output tokens used for diagnostics, compaction reserves, and local reasoning output caps
 - **Routing** — per-model tier-C skill router model override
 - **Pricing** — per-1M-token input/output costs for cost tracking
 

@@ -58,6 +58,7 @@ class TestListBuiltinProfilePaths:
         names = {p.name for p in list_builtin_profile_paths()}
         # Spot-check a representative slice of the bundled profiles.
         assert "65-glm-5.1.toml" in names
+        assert "44-qwen3-235b-thinking.toml" in names
         assert "45-qwen3.5-122b.toml" in names
         assert "30-claude-sonnet.toml" in names
 
@@ -107,6 +108,11 @@ class TestBuiltinProfilePath:
         p = builtin_profile_path("glm-5.1.toml")
         assert p is not None
         assert p.name == "65-glm-5.1.toml"
+
+    def test_resolves_qwen3_235b_profile(self) -> None:
+        p = builtin_profile_path("qwen3-235b-thinking")
+        assert p is not None
+        assert p.name == "44-qwen3-235b-thinking.toml"
 
     def test_returns_none_for_unknown(self) -> None:
         assert builtin_profile_path("does-not-exist") is None

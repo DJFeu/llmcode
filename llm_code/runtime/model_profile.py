@@ -452,8 +452,46 @@ class ModelProfile:
 
 # ── Built-in profiles ─────────────────────────────────────────────────
 
+_QWEN3_235B_THINKING_PROFILE = ModelProfile(
+    name="Qwen3-235B-A22B Thinking",
+    provider_type="openai-compat",
+    native_tools=False,
+    supports_reasoning=True,
+    supports_images=False,
+    force_xml_tools=True,
+    implicit_thinking=False,
+    reasoning_field="reasoning_content",
+    thinking_extra_body_format="chat_template_kwargs",
+    default_thinking_budget=8192,
+    post_tool_thinking_budget=1024,
+    default_temperature=0.6,
+    reasoning_effort="high",
+    is_local=True,
+    context_window=262144,
+    max_output_tokens=32768,
+    prompt_template="qwen",
+    prompt_match=(
+        "qwen3-235b",
+        "qwen3-235",
+        "235b-a22b",
+        "r235",
+    ),
+    parser_variants=(
+        "json_payload",
+        "hermes_function",
+        "hermes_truncated",
+        "harmony_kv",
+        "glm_brace",
+        "bare_name_tag",
+    ),
+)
+
+
 _BUILTIN_PROFILES: dict[str, ModelProfile] = {
     # ── Qwen family ───────────────────────────────────────────────────
+    "qwen3-235b": _QWEN3_235B_THINKING_PROFILE,
+    "qwen3-235b-a22b": _QWEN3_235B_THINKING_PROFILE,
+    "r235": _QWEN3_235B_THINKING_PROFILE,
     "qwen3.5-122b": ModelProfile(
         name="Qwen3.5-122B-A10B",
         provider_type="openai-compat",

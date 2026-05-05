@@ -99,8 +99,15 @@ max_output_tokens = 16384
 context_window = 200000
 
 [deployment]
-is_local = true              # enables unlimited token upgrades
+is_local = true              # enables local reasoning output cap + token upgrades
 ```
+
+For local/self-hosted profiles that set both `supports_reasoning = true` and
+`is_local = true`, llmcode starts each turn at the larger of the configured
+`max_tokens` and the profile's `[limits].max_output_tokens`. This avoids slow
+thinking models spending a full turn at the conservative 4096-token default
+before retrying with a larger budget. Remote profiles keep the configured
+`max_tokens` unless the user raises it explicitly.
 
 ### Tool consumption (v14)
 

@@ -92,6 +92,23 @@ This keeps a local endpoint profile from overriding every model whose id happens
 to contain `llama` or `deepseek`. If no logical-ref profile matches, llmcode falls
 back to the request model id.
 
+Local reasoning profiles can also declare a larger output budget:
+
+```toml
+[provider]
+supports_reasoning = true
+
+[limits]
+max_output_tokens = 32768
+
+[deployment]
+is_local = true
+```
+
+When those fields are present, llmcode starts the first request for each turn at
+the profile output cap instead of the global `max_tokens` default. Remote models
+keep the configured `max_tokens` so hosted API costs do not expand silently.
+
 The `provider/model` form is only split when `provider` contains a matching
 provider id. Unknown slash-based model ids are left untouched for backward
 compatibility.

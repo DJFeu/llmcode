@@ -26,7 +26,7 @@ thinking_extra_body_format = "chat_template_kwargs"
 default_thinking_budget = 8192
 
 [deployment]
-is_local = true             # enables unlimited token upgrades
+is_local = true             # local reasoning output caps + token upgrades
 
 [limits]
 max_output_tokens = 4096

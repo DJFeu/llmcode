@@ -1,2 +1,2 @@
 """llm-code: CLI coding agent for local LLMs."""
-__version__ = "2.15.1"
+__version__ = "2.15.2"

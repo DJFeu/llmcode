@@ -25,6 +25,7 @@ from llm_code.api.types import (
 )
 from llm_code.runtime.context import ProjectContext
 from llm_code.runtime.conversation import ConversationRuntime
+from llm_code.runtime.model_profile import ModelProfile
 from llm_code.runtime.permissions import PermissionMode, PermissionPolicy
 from llm_code.runtime.prompt import SystemPromptBuilder
 from llm_code.runtime.session import Session
@@ -213,6 +214,64 @@ class TestOverload529Recovery:
 
 class TestTokenLimitAutoUpgrade:
     """After max_tokens stop, doubles limit and retries; caps at 65536."""
+
+    @pytest.mark.asyncio
+    async def test_local_reasoning_profile_starts_at_profile_output_limit(
+        self, tmp_path: Path
+    ) -> None:
+        """Slow local thinking models should not waste warm-up turns at 4096."""
+        recorded_max_tokens = []
+
+        class _TrackingProvider:
+            def supports_native_tools(self): return True
+            def supports_images(self): return False
+
+            async def stream_message(self, request: MessageRequest):
+                recorded_max_tokens.append(request.max_tokens)
+                return _make_text_stream(stop_reason="end_turn")
+
+        provider = _TrackingProvider()
+        runtime = _make_runtime(tmp_path, provider, max_tokens=4096)
+        runtime._model_profile = ModelProfile(
+            name="Local Thinking",
+            supports_reasoning=True,
+            is_local=True,
+            max_output_tokens=32768,
+        )
+
+        async for _ in runtime.run_turn("solve a hard coding problem"):
+            pass
+
+        assert recorded_max_tokens == [32768]
+
+    @pytest.mark.asyncio
+    async def test_remote_reasoning_profile_keeps_config_output_limit(
+        self, tmp_path: Path
+    ) -> None:
+        """Remote models keep conservative output defaults unless configured."""
+        recorded_max_tokens = []
+
+        class _TrackingProvider:
+            def supports_native_tools(self): return True
+            def supports_images(self): return False
+
+            async def stream_message(self, request: MessageRequest):
+                recorded_max_tokens.append(request.max_tokens)
+                return _make_text_stream(stop_reason="end_turn")
+
+        provider = _TrackingProvider()
+        runtime = _make_runtime(tmp_path, provider, max_tokens=4096)
+        runtime._model_profile = ModelProfile(
+            name="Remote Thinking",
+            supports_reasoning=True,
+            is_local=False,
+            max_output_tokens=32768,
+        )
+
+        async for _ in runtime.run_turn("solve a hard coding problem"):
+            pass
+
+        assert recorded_max_tokens == [4096]
 
     @pytest.mark.asyncio
     async def test_doubles_max_tokens_on_max_tokens_stop(self, tmp_path: Path) -> None:

@@ -94,6 +94,20 @@ class TestProfileRegistry:
         p = reg.resolve("qwen3.5-122b-something")
         assert p.name == "Qwen3.5-122B-A10B"  # most specific
 
+    def test_qwen3_235b_thinking_profile(self) -> None:
+        reg = ProfileRegistry(user_profile_dir=Path("/nonexistent"))
+        p = reg.resolve("qwen3-235b-a22b-thinking-2507")
+        assert p.name == "Qwen3-235B-A22B Thinking"
+        assert p.supports_reasoning is True
+        assert p.is_local is True
+        assert p.max_output_tokens == 32768
+
+    def test_r235_alias_profile(self) -> None:
+        reg = ProfileRegistry(user_profile_dir=Path("/nonexistent"))
+        p = reg.resolve("r235")
+        assert p.name == "Qwen3-235B-A22B Thinking"
+        assert p.max_output_tokens == 32768
+
     def test_extra_profiles(self) -> None:
         custom = {"my-model": ModelProfile(name="Custom", price_input=99.0)}
         reg = ProfileRegistry(
